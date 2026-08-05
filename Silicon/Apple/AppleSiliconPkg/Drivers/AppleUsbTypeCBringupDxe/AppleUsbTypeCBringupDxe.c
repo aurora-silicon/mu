@@ -359,6 +359,8 @@ STATIC EFI_STATUS AtcPhyReleaseDwc3AfterDart(IN UINT32 PortIndex,
   UINT64     PipeHandlerBase;
   UINT64     Usb2PhyBase;
   UINT32     Aon;
+  UINT32     MuxCtrl;
+  BOOLEAN    RoutedPort;
   EFI_STATUS Status;
 
   Status = UsbDartVerifyControllerBypass(PortIndex);
@@ -394,13 +396,47 @@ STATIC EFI_STATUS AtcPhyReleaseDwc3AfterDart(IN UINT32 PortIndex,
     return EFI_NOT_READY;
   }
 
-  if (MmioRead32((UINTN)PipeHandlerBase + ATCPHY_PIPEHANDLER_MUX_CTRL) !=
-      (ATCPHY_PIPEHANDLER_MUX_CLK_DUMMY << ATCPHY_PIPEHANDLER_MUX_CLK_SHIFT |
-       ATCPHY_PIPEHANDLER_MUX_DATA_DUMMY << ATCPHY_PIPEHANDLER_MUX_DATA_SHIFT)) {
-    DEBUG((DEBUG_ERROR, "AtcPhyReleaseDwc3AfterDart: port %d PIPE is not DUMMY; "
-           "refusing release\n", PortIndex));
+  //
+  // A port carrying a routed USB4 tunnel may legitimately arrive with the PIPE
+  // mux ALREADY committed to 0x11, because m1n1 owns the ACIO/NHI router and
+  // can complete firmware -> router -> USB3 tunnel -> PIPE commit before it
+  // launches us. Refusing that state was a real end-to-end blocker rather than
+  // a theoretical one: this function returned EFI_NOT_READY, the caller's
+  // `if (EFI_ERROR(Status)) continue;` skipped the whole controller, and so
+  // Dwc3XhciCoreInit, AtcPhyFinishDeferredUsb4Switch and
+  // RegisterNonDiscoverableMmioDevice all never ran. The routed path could not
+  // reach Windows no matter how well the tunnel came up.
+  //
+  // The acceptance is deliberately narrow, and the narrowness is the point:
+  // only DUMMY, or exactly ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED on a port
+  // the platform explicitly opted in through the routed mask. Any other value,
+  // and any value at all on a port not in that mask, still refuses. A mux this
+  // code does not recognise is not evidence that the lanes are safe to hand to
+  // a DWC3.
+  //
+  // Note also what is NOT done on the accepting path: AtcPhyHoldDwc3Reset is
+  // not called. Re-clamping a port whose lanes are already routed to a live
+  // ACIO host router is the destructive action here, not the release.
+  //
+  MuxCtrl = MmioRead32((UINTN)PipeHandlerBase + ATCPHY_PIPEHANDLER_MUX_CTRL);
+  RoutedPort = (PcdGet32(PcdAppleUsb4RoutedPipeSwitchPortMask) & (1u << PortIndex)) != 0;
+  if (MuxCtrl != ATCPHY_PIPEHANDLER_MUX_VALUE_DUMMY &&
+      !(RoutedPort && (MuxCtrl == ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED))) {
+    DEBUG((DEBUG_ERROR, "AtcPhyReleaseDwc3AfterDart: port %d PIPE is 0x%x, which is "
+           "neither DUMMY (0x%x) nor an accepted routed handoff (0x%x, routed mask "
+           "%a); refusing release\n", PortIndex, MuxCtrl,
+           ATCPHY_PIPEHANDLER_MUX_VALUE_DUMMY, ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED,
+           RoutedPort ? "opted in" : "not opted in"));
     AtcPhyHoldDwc3Reset((UINTN)PipeHandlerBase);
     return EFI_NOT_READY;
+  }
+  if (MuxCtrl == ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED) {
+    DEBUG((DEBUG_INFO, "AtcPhyReleaseDwc3AfterDart: port %d arrived with the routed PIPE "
+           "already committed (MUX_CTRL=0x%x); releasing DWC3 without re-clamping. "
+           "DWC3 core init resets the PIPE, so AtcPhyFinishDeferredUsb4Switch must "
+           "re-apply the mux afterwards -- it accepts 0x%x as an input state for "
+           "exactly this reason.\n", PortIndex, MuxCtrl,
+           ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED));
   }
 
   // Asahi atcphy_dwc3_reset_deassert(): unclamp first, then release reset.

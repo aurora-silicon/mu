@@ -59,6 +59,125 @@ def function_body(source: str, signature: str) -> str:
     raise AssertionError(f"unbalanced braces after {signature!r}")
 
 
+class RoutedArrivalStateTests(unittest.TestCase):
+    """`AtcPhyReleaseDwc3AfterDart` must not refuse an already-routed port.
+
+    This was an end-to-end blocker, not a theoretical one. m1n1 owns the
+    ACIO/NHI router and can complete firmware -> router -> USB3 tunnel -> PIPE
+    commit before it launches Mu, so on a routed run port 1 arrives with
+    MUX_CTRL already reading 0x11. The release gate accepted only DUMMY, so it
+    returned EFI_NOT_READY; the caller's `if (EFI_ERROR(Status)) continue;`
+    then skipped the entire controller, and `Dwc3XhciCoreInit`,
+    `AtcPhyFinishDeferredUsb4Switch` and `RegisterNonDiscoverableMmioDevice`
+    never ran. The tunnel could be perfect and Windows would still see nothing.
+
+    The half-shape is what makes this worth pinning: the FINISHER already
+    accepted 0x11 as an input state (it has to -- DWC3 core init resets the
+    PIPE, so the mux must be re-applied afterwards), while the RELEASE gate
+    rejected it. Two halves of one handoff disagreeing about the same register
+    value is the kind of thing that reads as correct in either file alone.
+    """
+
+    def setUp(self) -> None:
+        self.source = DRIVER.read_text(encoding="utf-8")
+        self.release = function_body(
+            self.source, "STATIC EFI_STATUS AtcPhyReleaseDwc3AfterDart"
+        )
+
+    def test_the_release_gate_accepts_an_already_routed_arrival(self):
+        self.assertIn("ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED", self.release)
+        self.assertIn("ATCPHY_PIPEHANDLER_MUX_VALUE_DUMMY", self.release)
+
+    def test_the_acceptance_is_scoped_to_ports_in_the_routed_mask(self):
+        """0x11 on a port nobody opted in is still refused.
+
+        Without this the gate would degrade from "DUMMY only" to "DUMMY or
+        0x11 anywhere", which would let a stray routed mux release a DWC3 on
+        the port carrying this machine's Ethernet.
+        """
+        self.assertIn(f"PcdGet32({PCD})", self.release)
+        self.assertRegex(
+            self.release,
+            r"RoutedPort\s*=\s*\(PcdGet32\(" + PCD + r"\)\s*&\s*\(1u\s*<<\s*PortIndex\)\)",
+            "the routed acceptance must be keyed on THIS port's mask bit",
+        )
+        self.assertRegex(
+            self.release,
+            r"!\(\s*RoutedPort\s*&&\s*\(\s*MuxCtrl\s*==\s*"
+            r"ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED\s*\)\s*\)",
+            "0x11 is accepted only in conjunction with the port's mask bit, "
+            "never on its own",
+        )
+
+    def test_an_unrecognised_mux_is_still_refused(self):
+        """A whitelist, not a blacklist.
+
+        An unknown mux value is not evidence that the lanes are safe to hand
+        to a DWC3, for the same reason an unknown crossbar encoding is not
+        evidence that they are USB3.
+        """
+        self.assertRegex(
+            self.release,
+            r"MuxCtrl\s*!=\s*ATCPHY_PIPEHANDLER_MUX_VALUE_DUMMY\s*&&",
+            "the refusal must start from equality against the accepted values",
+        )
+        self.assertIn("refusing release", self.release)
+        self.assertIn("return EFI_NOT_READY;", self.release)
+
+    def test_a_routed_port_is_never_re_clamped_on_the_accepting_path(self):
+        """Re-clamping is the destructive action here, not releasing.
+
+        `AtcPhyHoldDwc3Reset` re-asserts FORCE_CLAMP_EN. Doing that to a port
+        whose lanes are already routed to a live ACIO host router disturbs the
+        tunnel m1n1 just built. It must remain reachable only from the refusal
+        branches.
+        """
+        accept = self.release.index("arrived with the routed PIPE")
+        # The unconditional release is the next thing that must happen. The
+        # property is that NOTHING re-clamps between accepting the routed
+        # arrival and deasserting the clamp -- asserting on the span rather
+        # than on the presence of an error token, because the error tokens on
+        # the refusal paths sit AFTER their AtcPhyHoldDwc3Reset call and a
+        # window that stops at the call cannot see them.
+        release_write = self.release.index(
+            "~(UINT32)ATCPHY_PIPEHANDLER_AON_DWC3_FORCE_CLAMP_EN", accept
+        )
+        self.assertNotIn(
+            "AtcPhyHoldDwc3Reset(", self.release[accept:release_write],
+            "the accepting path must reach the clamp release without re-clamping "
+            "a port whose lanes are already routed to a live ACIO host router",
+        )
+        # The refusal branches must still park, or the gate would have become
+        # an unconditional release.
+        refusal = self.release[: self.release.index("MuxCtrl = MmioRead32")]
+        self.assertIn("AtcPhyHoldDwc3Reset(", refusal)
+        self.assertIn(
+            "AtcPhyHoldDwc3Reset(",
+            self.release[self.release.index("refusing release") - 600 :
+                         self.release.index("arrived with the routed PIPE")],
+            "an unaccepted mux must still be parked",
+        )
+
+    def test_the_finisher_reapplies_the_mux_after_core_init(self):
+        """The reason accepting 0x11 is safe at all.
+
+        DWC3 core init resets the PIPE, so an arriving 0x11 does not survive
+        to Windows on its own. It survives because the finisher runs after
+        core init and re-applies it -- which is exactly why the finisher
+        accepts 0x11 as an input state.
+        """
+        callback = function_body(
+            self.source, "AppleUsbTypeCBringupDxeBringupCallback(IN EFI_EVENT Event"
+        )
+        release_call = callback.index("AppleUsbTypeCBringupDxeInitializeUsbController(")
+        finish_call = callback.index("AtcPhyFinishDeferredUsb4Switch(")
+        register_call = callback.index("RegisterNonDiscoverableMmioDevice(")
+        self.assertLess(release_call, finish_call)
+        self.assertLess(finish_call, register_call)
+        routed = function_body(self.source, "STATIC VOID AtcPhyFinishDeferredUsb4Switch")
+        self.assertIn("ATCPHY_PIPEHANDLER_MUX_VALUE_USB4_ROUTED", routed)
+
+
 class RoutedGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.source = DRIVER.read_text(encoding="utf-8")
