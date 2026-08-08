@@ -226,8 +226,8 @@ OnLoadedImageNotification (
   EFI_STATUS                 Status;
   UINTN                      BufferSize;
 
-  UNREFERENCED_PARAMETER (Event);
-  UNREFERENCED_PARAMETER (Context);
+  (VOID)Event;
+  (VOID)Context;
 
   for (;;) {
     BufferSize = sizeof (Handle);
@@ -332,8 +332,8 @@ OnExitBootServices (
   UINTN                  Offset;
   UINTN                  Patched;
 
-  UNREFERENCED_PARAMETER (Event);
-  UNREFERENCED_PARAMETER (Context);
+  (VOID)Event;
+  (VOID)Context;
 
   MemoryMapSize = sizeof (mMemoryMapBuffer);
   Status = gBS->GetMemoryMap (
@@ -375,8 +375,8 @@ WindowsPmuCompatDxeInitialize (
 {
   EFI_STATUS  Status;
 
-  UNREFERENCED_PARAMETER (ImageHandle);
-  UNREFERENCED_PARAMETER (SystemTable);
+  (VOID)ImageHandle;
+  (VOID)SystemTable;
 
   mLoadedImageEvent = EfiCreateProtocolNotifyEvent (
                         &gEfiLoadedImageProtocolGuid,

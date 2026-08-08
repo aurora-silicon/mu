@@ -82,12 +82,17 @@ platform_build=Platform/MacBookAir2026Pkg/PlatformBuild.py
 : > "$log"
 echo "Building J813 $profile"
 if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG >> "$log" 2>&1; then
-    # A cold parallel EDK2 build can race GenFw and llvm-rc for HelloWorld's HII
-    # resource. Complete that deterministic one-file step and retry once.
+    # Homebrew llvm-rc parses an absolute POSIX input path beginning with '/' as
+    # an option. Complete the deterministic HII resource step from its output
+    # directory with relative paths, then retry the incremental build once.
     if grep -q 'HelloWorldhii.lib' "$log" && grep -q 'Exactly one input file' "$log"; then
         rc=$(find "$source_root/Build/MacBookAir2026-AARCH64" -name HelloWorldhii.rc -print | head -1)
         test -n "$rc"
-        "$toolchain_dir/llvm-rc" "/Fo$(dirname "$rc")/HelloWorldhii.lib" "$rc"
+        rc_dir=$(dirname "$rc")
+        (
+            cd "$rc_dir"
+            "$toolchain_dir/llvm-rc" /FoHelloWorldhii.lib HelloWorldhii.rc
+        )
         "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG >> "$log" 2>&1 || {
             tail -80 "$log" >&2
             exit 1
