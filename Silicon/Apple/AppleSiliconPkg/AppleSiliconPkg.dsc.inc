@@ -658,6 +658,7 @@
   # HID Support
   HidPkg/HidKeyboardDxe/HidKeyboardDxe.inf
   HidPkg/HidMouseAbsolutePointerDxe/HidMouseAbsolutePointerDxe.inf
+  AppleSiliconPkg/Drivers/AppleMtpHidDxe/AppleMtpHidDxe.inf
   # Rng Protocol producer
   SecurityPkg/RandomNumberGenerator/RngDxe/RngDxe.inf
 

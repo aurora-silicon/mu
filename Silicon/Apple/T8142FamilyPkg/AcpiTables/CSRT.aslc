@@ -1,0 +1,39 @@
+/**
+ * Copyright (c) 2026 AppleWOA authors.
+ *
+ * Module Name:
+ *     CSRT.aslc
+ *
+ * Abstract:
+ *     Core System Resource Table for the T8142 family (Apple M5).
+ *
+ *     *** NOT IMPLEMENTED, AND NOT PART OF THE BUILD. ***
+ *
+ *     This file is deliberately empty of table data. It is not listed in
+ *     CPUAcpiTables.inf [Sources] and is not referenced by the FDF, so nothing
+ *     here is compiled or emitted into the firmware volume. It exists to record
+ *     the requirement, which is real.
+ *
+ * Why a CSRT would be needed:
+ *
+ *     Apple platforms implement some non-standard core system resources, namely
+ *     the interrupt controller (AIC) and the IOMMU (DART). A CSRT is the ACPI
+ *     mechanism for telling the OS that such non-enumerable resources exist so
+ *     it can handle them correctly.
+ *
+ *     Note this project's approach makes the AIC half of that moot: m1n1
+ *     emulates a GICv3 for the guest, so Windows sees a standard interrupt
+ *     controller described by the MADT and never learns about the AIC. The DART
+ *     side remains genuinely unaddressed -- anything needing DMA (storage, USB,
+ *     display) will eventually need the IOMMU described somewhere.
+ *
+ *     The predecessor of this file in T810XFamilyPkg was identical: a comment
+ *     block with no table. It was carried forward here rather than invented.
+ *
+ * Environment:
+ *     UEFI firmware/runtime services.
+ *
+ * License:
+ *     SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+ *
+*/

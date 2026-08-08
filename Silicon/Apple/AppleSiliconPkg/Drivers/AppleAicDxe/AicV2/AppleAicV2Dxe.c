@@ -271,6 +271,38 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     }
     else if(mAicVersion == APPLE_AIC_VERSION_2){
         mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
+
+        /**
+         * The external interrupt config block is RELOCATABLE on AICv3.
+         *
+         * AppleArmGetAicVersion() maps "aic,3" onto APPLE_AIC_VERSION_2, so this
+         * path also runs on AICv3 hardware -- but there the config base is not
+         * the AICv2 constant. On T8142 (Apple M5) the ADT reports
+         * extint-baseaddress = 0x10000, whereas AIC_V2_IRQ_CFG_REG is 0x2000.
+         *
+         * This matters a great deal, because SW_SET, SW_CLEAR, MASK_SET,
+         * MASK_CLEAR and HW_STATE are all derived from StartOffset below. Left
+         * hardcoded, every mask and unmask would land 0xE000 low, in the middle
+         * of unrelated AIC registers, and no interrupt would ever be delivered.
+         *
+         * m1n1 treats this property as mandatory on AICv3 and optional on AICv2
+         * (see its aic23_init()). Mirror that: prefer the ADT value, fall back to
+         * the AICv2 constant so genuine AICv2 parts that omit the property keep
+         * their existing behaviour.
+         *
+         * NOTE: dt_node_u32() takes an INDEX, not a default, and asserts when the
+         * property is absent -- so the presence check has to go through
+         * dt_node_prop().
+         */
+        size_t ExtIntBaseSize = 0;
+        UINT32 *ExtIntBase = dt_node_prop(InterruptControllerNode, "extint-baseaddress", &ExtIntBaseSize);
+
+        if ((ExtIntBase != NULL) && (ExtIntBaseSize >= sizeof(UINT32))) {
+            StartOffset = mAicV2IrqCfgOffset = *ExtIntBase;
+            DEBUG((DEBUG_INFO, "AIC: external interrupt config base from ADT: 0x%lx\n", StartOffset));
+        } else {
+            DEBUG((DEBUG_INFO, "AIC: no extint-baseaddress, using AICv2 default 0x%lx\n", StartOffset));
+        }
     }
 
     CurrentOffset = StartOffset + sizeof(UINT32) * AicInfoStruct->MaxIrqs;
@@ -290,7 +322,33 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     CurrentOffset += sizeof(UINT32) * (AicInfoStruct->MaxIrqs >> 5);
     //HW_STATE (TODO: what is this reg meant for?)
     mAicV2HwStateOffset = CurrentOffset;
+
+    /**
+     * Per-die register stride.
+     *
+     * AICv3 publishes the strides in the ADT rather than implying them from the
+     * register layout. T8142 reports extintrcfg-stride / intmaskset-stride /
+     * intmaskclear-stride, all 0x4a00, which is not what the computation below
+     * produces.
+     *
+     * m1n1 tracks all three separately; this driver has only one DieStride, so
+     * take extintrcfg-stride when present. That is correct as long as the three
+     * agree -- they do on T8142. If a future part reports differing strides this
+     * needs splitting up the way m1n1 does.
+     *
+     * This is currently LATENT rather than active: DieStride is only ever
+     * multiplied by (Source / MaxIrqs), which is 0 on a single-die part, and the
+     * base M5 is single-die. It would bite on a multi-die chip.
+     */
     AicInfoStruct->DieStride = CurrentOffset - StartOffset;
+
+    size_t ExtIntrCfgStrideSize = 0;
+    UINT32 *ExtIntrCfgStride = dt_node_prop(InterruptControllerNode, "extintrcfg-stride", &ExtIntrCfgStrideSize);
+
+    if ((ExtIntrCfgStride != NULL) && (ExtIntrCfgStrideSize >= sizeof(UINT32))) {
+        AicInfoStruct->DieStride = *ExtIntrCfgStride;
+        DEBUG((DEBUG_INFO, "AIC: die stride from ADT: 0x%lx\n", AicInfoStruct->DieStride));
+    }
     AicInfoStruct->RegSize = (mAicV2EventReg - AicV2Base) + 4;
     
     return EFI_SUCCESS;

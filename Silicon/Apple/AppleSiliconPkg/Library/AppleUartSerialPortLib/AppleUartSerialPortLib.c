@@ -74,20 +74,48 @@ EFI_STATUS EFIAPI SerialPortInitialize(VOID)
 
 UINTN EFIAPI SerialPortWrite(IN UINT8 *Buffer, IN UINTN NumberOfBytes)
 {
-    UINTN NumberOfBytesToTransmit = NumberOfBytes;
-    //for now, operate UART port in polled mode, disable and re-enable interrupts when entering and exiting
+    UINTN Index;
+
+    //
+    // THIS RETURN VALUE IS THE WHOLE UEFI CONSOLE. Attempt 35.
+    //
+    // The bytes always went out correctly -- but the old code decremented
+    // NumberOfBytes once per byte and then returned it, so a fully successful
+    // write of N bytes reported "0 bytes written". The contract is the opposite:
+    // "If the return value is less than NumberOfBytes, then the write operation
+    // failed."
+    //
+    // DEBUG() never noticed, because DebugLib discards this return value -- which
+    // is exactly why the serial log looked perfect for 30+ attempts while the
+    // console did not exist. SerialDxe's SerialWrite does check it:
+    //
+    //     Count = SerialPortWrite (Buffer, *BufferSize);
+    //     if (Count != *BufferSize) { return EFI_DEVICE_ERROR; }
+    //
+    // so every SerialIo->Write() returned EFI_DEVICE_ERROR. That failed
+    // TerminalConOutOutputString -> TerminalConOutSetMode -> TerminalConOutReset,
+    // so TerminalDxe's driver binding start hit `goto ReportError` and never
+    // installed the terminal child handle. With no child,
+    // EfiBootManagerConnectDevicePath made no forward progress on
+    // VenHw/Uart/VenMsg and returned EFI_NOT_FOUND, and BmConsole.c then *deleted*
+    // the serial instance from ConOut. Hence no console output and no keystrokes,
+    // in a system whose debug log was working flawlessly the entire time.
+    //
+    // Count up and return the count. Do not reuse the parameter as a counter.
+    //
+    // for now, operate UART port in polled mode, disable and re-enable interrupts
+    // when entering and exiting
     ArmDisableInterrupts();
-    for(UINTN i = 0; i < NumberOfBytesToTransmit; i++)
+    for(Index = 0; Index < NumberOfBytes; Index++)
     {
         while(!(MmioRead32(UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_TXBE))
         {
 
         }
-        MmioWrite32((UART_BASE + UART_TX_BYTE), Buffer[i]);
-        NumberOfBytes--;
+        MmioWrite32((UART_BASE + UART_TX_BYTE), Buffer[Index]);
     }
     ArmEnableInterrupts();
-    return NumberOfBytes;
+    return Index;
 }
 
 // currently, we won't need to read from the UART (no debug console)
@@ -171,7 +199,22 @@ BOOLEAN EFIAPI SerialPortPoll(VOID)
 
 RETURN_STATUS EFIAPI SerialPortGetControl(OUT UINT32 *Control)
 {
-    return RETURN_UNSUPPORTED;
+    if (Control == NULL) {
+        return RETURN_INVALID_PARAMETER;
+    }
+
+    //
+    // Report real state rather than RETURN_UNSUPPORTED. There is no hardware
+    // flow control on this UART, so only the buffer-state bits are meaningful.
+    // Transmit is synchronous (SerialPortWrite spins on UART_TRANSFER_STATUS_TXBE),
+    // so the output buffer is always empty by the time anyone can ask.
+    //
+    *Control = EFI_SERIAL_OUTPUT_BUFFER_EMPTY;
+    if (!SerialPortPoll()) {
+        *Control |= EFI_SERIAL_INPUT_BUFFER_EMPTY;
+    }
+
+    return RETURN_SUCCESS;
 }
 
 /**
@@ -187,7 +230,13 @@ RETURN_STATUS EFIAPI SerialPortGetControl(OUT UINT32 *Control)
 
 RETURN_STATUS EFIAPI SerialPortSetControl(IN UINT32 Control)
 {
-    return RETURN_UNSUPPORTED;
+    //
+    // Nothing here is settable: no hardware flow control, no loopback, and the
+    // FIFOs are managed by the UART itself. Accept and ignore rather than
+    // returning RETURN_UNSUPPORTED -- see the note on SerialPortSetAttributes
+    // below for why a failure here is not free.
+    //
+    return RETURN_SUCCESS;
 }
 
 
@@ -233,5 +282,54 @@ RETURN_STATUS EFIAPI SerialPortSetAttributes(
     IN OUT EFI_STOP_BITS_TYPE *StopBits
 )
 {
-    return RETURN_UNSUPPORTED;
+    //
+    // This returned RETURN_UNSUPPORTED, and that single line cost the platform
+    // its entire UEFI console -- input *and* output. Attempt 34.
+    //
+    // SerialDxe's SerialReset() (MdeModulePkg/Universal/SerialDxe/SerialIo.c:217)
+    // calls SetAttributes and forgives exactly one failure code:
+    //
+    //     if (Status == EFI_INVALID_PARAMETER) {
+    //       return EFI_SUCCESS;
+    //     }
+    //     return Status;
+    //
+    // EFI_UNSUPPORTED is not forgiven, so SerialReset() failed. TerminalDxe's
+    // driver binding start calls SimpleTextOutput->Reset() and
+    // SimpleTextInput->Reset(), both of which route to it, and on failure does
+    // `goto ReportError` -- which never installs the terminal child handle and
+    // prints nothing. It had already printed "Terminal - Mode 0/1/2" by then,
+    // so the log looked as though the terminal had come up fine.
+    //
+    // With no child handle, EfiBootManagerConnectDevicePath() made no forward
+    // progress on VenHw/Uart/VenMsg and returned EFI_NOT_FOUND, and BmConsole.c
+    // *deletes* console-variable instances it cannot connect -- which is why
+    // ConOut ended up holding only the GOP path and no keystroke ever reached
+    // the Shell. The DEBUG() stream kept working throughout because it calls
+    // SerialPortWrite() directly and never touches any of this.
+    //
+    // The UART is fixed-configuration (m1n1's VUART; the rate is nominal since
+    // it is a USB CDC-ACM pipe, not a real wire). The correct contract for that
+    // is to accept the request and report back what is actually in effect.
+    //
+    if (BaudRate != NULL) {
+        *BaudRate = FixedPcdGet64(PcdUartDefaultBaudRate);
+    }
+    if (ReceiveFifoDepth != NULL) {
+        *ReceiveFifoDepth = 0;
+    }
+    if (Timeout != NULL) {
+        *Timeout = 0;
+    }
+    if (Parity != NULL) {
+        *Parity = (EFI_PARITY_TYPE)FixedPcdGet8(PcdUartDefaultParity);
+    }
+    if (DataBits != NULL) {
+        *DataBits = FixedPcdGet8(PcdUartDefaultDataBits);
+    }
+    if (StopBits != NULL) {
+        *StopBits = (EFI_STOP_BITS_TYPE)FixedPcdGet8(PcdUartDefaultStopBits);
+    }
+
+    return RETURN_SUCCESS;
 }

@@ -41,6 +41,7 @@
   MsPlatformDevicesLib
   MsNetworkDependencyLib
   MsBootOptionsLib
+  UefiBootManagerLib
   ConsoleMsgLib
   MsBootPolicyLib
   MsBootManagerSettingsLib
@@ -78,6 +79,8 @@
   gPcBdsPkgTokenSpaceGuid.PcdEnableMemMapTypes
   gPcBdsPkgTokenSpaceGuid.PcdEnableMemMapDumpOutput
   gPcBdsPkgTokenSpaceGuid.PcdLowResolutionInternalShell
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectUsbKeyboardConsole
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectAllForInternalShell
 
 [Depex]
   TRUE

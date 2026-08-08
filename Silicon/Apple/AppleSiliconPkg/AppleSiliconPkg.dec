@@ -10,6 +10,7 @@
 [Guids.common]
   gAppleSiliconPkgTokenSpaceGuid = { 0xdac05d5e, 0x6b59, 0x4731, { 0x83, 0xf4, 0xfb, 0x40, 0x05, 0xb5, 0xcc, 0xdc } }
   gAppleSiliconPkgEmbeddedRamdiskGuid = { 0x650b7cd0, 0x94f8, 0x46cc, { 0x88, 0xde, 0x8c, 0x19, 0x9d, 0x41, 0xed, 0xa3} }
+  gAppleSiliconPkgFdInfoHobGuid = { 0x9a1d4e6b, 0x2f7c, 0x4a88, { 0xbc, 0x31, 0x5e, 0x0a, 0x77, 0xd2, 0x64, 0x19} }
   gAppleSiliconPkgEmbeddedUsbFirmwareGuid = { 0xd730ab59, 0x670e, 0x4a92, { 0x84, 0x75, 0xb3, 0x19, 0x39, 0xd0, 0x5b, 0xb4 } }
   
 [Protocols]
@@ -76,6 +77,12 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase|0|UINT64|0x0000471E
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase|0|UINT64|0x0000471F
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase|0|UINT64|0x00004720
+
+  # Keep the internal shell independent of USB during early T8142 bring-up.
+  # The platform can disable the USB keyboard console path and the later
+  # ConnectAll() pass without removing the xHCI drivers from the image.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectUsbKeyboardConsole|TRUE|BOOLEAN|0x00004723
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectAllForInternalShell|TRUE|BOOLEAN|0x00004724
 
   # Stack stuff (128k stack by default)
   #Fallback stack base in case ModuleEntryPoint setup won't work.

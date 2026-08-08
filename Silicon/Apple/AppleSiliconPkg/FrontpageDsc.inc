@@ -188,7 +188,38 @@
   GenericSectionParserLib|MsWheaPkg/Library/GenericSectionParserLib/GenericSectionParserLib.inf
 
 [PcdsFixedAtBuild.common]
-  # a PCD that controls the enumeration and connection of ConIn's. When true, ConIn is only connected once a console input is requests 
+  #
+  # Controls enumeration and connection of ConIn. When TRUE, ConIn is connected
+  # lazily: BdsEntry.c:909 creates a gConnectConInEventGuid event and the actual
+  # connect happens in that callback, using only the device paths returned by
+  # GetPlatformConnectOnConInList().
+  #
+  # That is fatal on this platform. T8142FamilyPkg's MsPlatformDevicesLib has
+  #
+  #     EFI_DEVICE_PATH_PROTOCOL *gPlatformConInDeviceList[] = {NULL};
+  #
+  # i.e. an EMPTY on-demand list, so ConIn was never connected to anything at all
+  # even though gPlatformConsoles[] correctly lists SerialConsoleDevicePath as
+  # CONSOLE_IN | CONSOLE_OUT | STD_ERROR. Symptom on hardware: the UEFI Shell
+  # renders fine on the internal panel (ConOut works) but typing into m1n1's VUART
+  # does nothing, because there is no ConIn.
+  #
+  # Kept TRUE. The empty-list problem is fixed at its source instead: T8142's
+  # gPlatformConInDeviceList[] now contains SerialConsoleDevicePath, so the lazy
+  # connect finds something and succeeds.
+  #
+  # FALSE was tried and made things worse. It swaps the narrow
+  #   EfiBootManagerConnectConsoleVariable(ConOut/ErrOut)
+  # at BdsEntry.c:957 for a full EfiBootManagerConnectAllDefaultConsoles() that
+  # runs *before* boot options are enumerated; on hardware that build stopped
+  # reaching the Shell at all, whereas the TRUE build reached it and only fell over
+  # later on the empty ConIn list.
+  #
+  # Worth revisiting once input is confirmed working, because FALSE is also what
+  # enables the BDS hotkey service -- BdsEntry.c:783 only sets
+  # EFI_BOOT_OPTION_SUPPORT_KEY when this is FALSE, so with TRUE the Boot Manager
+  # Menu cannot be reached by keypress. Change it on its own, not bundled.
+  #
   gEfiMdeModulePkgTokenSpaceGuid.PcdConInConnectOnDemand|TRUE
 
 # Enable SHELL to build instead of just taking the binary
