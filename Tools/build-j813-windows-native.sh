@@ -122,7 +122,20 @@ record = {
     "schema": "aurora.j813.mu-profile.v1",
     "artifact_status": "READY_FOR_SUPERVISED_HARDWARE_TEST",
     "hardware_touched": False,
-    "profile": {"name": profile, "aic": True},
+    "profile": {
+        "name": profile,
+        "aic": True,
+        "baseline_capabilities": {
+            "usb3_deferred_pipe_switch_port_mask": 0,
+            "usb_dwc3_reset_dart_handoff":
+                "m1n1_reset_clamped_mu_dart_bypass_release_v1",
+        },
+    },
+    "build": {
+        "pcds": {
+            "PcdAppleUsb3PipeSwitchPortMask": 0,
+        },
+    },
     "source": {"commit": commit, "clean": clean == "true"},
     "firmware": {
         "path": "artifacts/J813MACBOOKAIR2026_EFI.fd",
