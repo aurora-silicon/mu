@@ -7,20 +7,20 @@
       "path": "SecurityPkg/DeviceSecurity/SpdmLib/libspdm"
     },
     {
-      "commit": "028fb5a23661f123017c060daa546b55cf4bde29",
-      "materialized_tree_sha256": "5780b1a9ec7051e685d09ef0358bbec795afa1d39cb1a7876cace774274c25ac",
+      "commit": "e230f474b87134e8c6c85b630084c612057f253e",
+      "materialized_tree_sha256": "3bc253db0862a7b7d7273902d711f5c4551afcd464d35ef24bbf298d92b8c09b",
       "owner": "MU_BASECORE",
       "path": "BaseTools/Source/C/BrotliCompress/brotli"
     },
     {
-      "commit": "028fb5a23661f123017c060daa546b55cf4bde29",
-      "materialized_tree_sha256": "5780b1a9ec7051e685d09ef0358bbec795afa1d39cb1a7876cace774274c25ac",
+      "commit": "e230f474b87134e8c6c85b630084c612057f253e",
+      "materialized_tree_sha256": "3bc253db0862a7b7d7273902d711f5c4551afcd464d35ef24bbf298d92b8c09b",
       "owner": "MU_BASECORE",
       "path": "MdeModulePkg/Library/BrotliCustomDecompressLib/brotli"
     },
     {
-      "commit": "abfc8ff81df4067f309032467785e06975678f0d",
-      "materialized_tree_sha256": "2c4759771a90c04410dca712621044a492df0db3dfe65fd08011077e5ae970e2",
+      "commit": "4ef89209a239c1aea328cf13c05a2807e5c146d1",
+      "materialized_tree_sha256": "257b0b3795264006812a9cb55d3b74e234248ca1215b6783aa4b32caf63ed6cd",
       "owner": "MU_BASECORE",
       "path": "MdeModulePkg/Universal/RegularExpressionDxe/oniguruma"
     },
@@ -35,6 +35,12 @@
       "materialized_tree_sha256": "f387f2a7f7f21931048ce1f995582ad000ac2a23c192e6311bb5d3cd700d4bbe",
       "owner": "MU_BASECORE",
       "path": "MdePkg/Library/MipiSysTLib/mipisyst"
+    },
+    {
+      "commit": "98ef964e1e9a0c39c7efb67143d3a13a819432e0",
+      "materialized_tree_sha256": "dba62c7abb124ecfa8e0b32aabe38c5b670d44dd55fe5b54c7b4ee4ef723640b",
+      "owner": "MU_BASECORE",
+      "path": "SecurityPkg/DeviceSecurity/SpdmLib/libspdm"
     },
     {
       "commit": "1cc9cde3448cdd2e000886a26acf1caac2db7cf1",

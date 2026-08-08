@@ -566,7 +566,9 @@ def materialized_tree_sha256(root: Path) -> str:
     digest = hashlib.sha256()
     files = sorted(
         path for path in root.rglob("*")
-        if ".git" not in path.relative_to(root).parts and not path.is_dir()
+        if ".git" not in path.relative_to(root).parts
+        and path.name != ".DS_Store"
+        and not path.is_dir()
     )
     for path in files:
         relative = path.relative_to(root).as_posix().encode("utf-8")
