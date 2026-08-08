@@ -1343,7 +1343,8 @@ AppleUsbTypeCBringupDxeBringupCallback(IN EFI_EVENT Event, IN VOID *Context)
       (UINTN)Dwc3ControllerBaseAddr,
       (DWC3_CONTROLLER *)(UINTN)(Dwc3ControllerBaseAddr + DWC3_REG_OFFSET));
 
-    Status = RegisterNonDiscoverableMmioDevice(NonDiscoverableDeviceTypeXhci,
+    Status = RegisterNonDiscoverableMmioDevice((UINTN)Dwc3Index,
+             NonDiscoverableDeviceTypeXhci,
              NonDiscoverableDeviceDmaTypeCoherent,
              NULL,
              NULL,

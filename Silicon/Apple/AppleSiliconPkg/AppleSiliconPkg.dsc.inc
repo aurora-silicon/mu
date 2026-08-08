@@ -96,10 +96,6 @@
   gPcBdsPkgTokenSpaceGuid.PcdLowResolutionInternalShell|FALSE
   gEfiMdeModulePkgTokenSpaceGuid.PcdPciDisableBusEnumeration|FALSE
 
-!if $(ARCH) == AARCH64
-  gArmTokenSpaceGuid.PcdVFPEnabled|1
-!endif
-
   #Debugger control
   DebuggerFeaturePkgTokenSpaceGuid.PcdForceEnableDebugger|FALSE
 
@@ -355,7 +351,7 @@
   # ArmSmcPsciResetSystemLib is refactored into a single PSCI reset system lib as of 202502
   HwResetSystemLib|ArmPkg/Library/ArmPsciResetSystemLib/ArmPsciResetSystemLib.inf
   ResetSystemLib|MdeModulePkg/Library/DxeResetSystemLib/DxeResetSystemLib.inf
-  FltUsedLib|MdePkg/Library/FltUsedLib/FltUsedLib.inf
+  FltUsedLib|MsCorePkg/Library/FltUsedLib/FltUsedLib.inf
 
   # UI and graphics
   FrameBufferMemDrawLib    |MsGraphicsPkg/Library/FrameBufferMemDrawLib/FrameBufferMemDrawLibDxe.inf

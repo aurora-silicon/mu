@@ -22,7 +22,9 @@ ASM_FUNC(_ModuleEntryPoint)
 
   // m1n1's run_guest ABI passes boot_args in x0.  Installed payloads using
   // the original AppleWOA convention may still pass it in x4, so only prefer
-  // x0 when it has a plausible, self-consistent boot_args header.
+  // x0 when it has a plausible boot_args header.  Revision and version are
+  // independent fields (current m1n1 emits revision 3, version 2), so they
+  // must not be required to match.
   cbz x0, 1f
   ldrh w8, [x0]
   cmp w8, #1
@@ -30,8 +32,9 @@ ASM_FUNC(_ModuleEntryPoint)
   cmp w8, #3
   b.hi 1f
   ldrh w9, [x0, #2]
-  cmp w8, w9
-  b.ne 1f
+  cbz w9, 1f
+  cmp w9, #3
+  b.hi 1f
   mov x25, x0
 1:
 
