@@ -43,7 +43,8 @@
 
 
 [BuildOptions.common]
-  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8142
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8142 -DNTASI_J813_PMCCNTR_EMULATION=1
+  GCC:*_*_AARCH64_PP_FLAGS = -DNTASI_J813_PMCCNTR_EMULATION=1
   #*_*_*_CC_FLAGS = -D DISABLE_NEW_DEPRECATED_INTERFACES -D HAS_MEMCPY_INTRINSICS
 
 
@@ -124,6 +125,8 @@ MacBookAir2026Pkg/AcpiTables/DeviceAcpiTables.inf
 !include T8142FamilyPkg/T8142FamilyPkg.dsc.inc
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc
 !include AppleSiliconPkg/FrontpageDsc.inc
+
+AppleSiliconPkg/Drivers/WindowsPmuCompatDxe/WindowsPmuCompatDxe.inf
 
 #
 # Built only so its .efi can be copied into the RAM disk image as
