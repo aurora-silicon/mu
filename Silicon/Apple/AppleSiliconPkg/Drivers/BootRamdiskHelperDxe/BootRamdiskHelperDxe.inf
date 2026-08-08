@@ -28,6 +28,9 @@
   UefiLib
   DevicePathLib
   DxeServicesLib
+  BaseMemoryLib
+  HobLib
+  DxeServicesTableLib
   DebugLib
   HiiLib
   PrintLib
@@ -41,12 +44,17 @@
   gEfiLoadFileProtocolGuid
 
 [Guids]
+  gAppleSiliconPkgFdInfoHobGuid
   gEfiVirtualCdGuid            ## SOMETIMES_CONSUMES ## GUID
   gEfiVirtualDiskGuid          ## SOMETIMES_CONSUMES ## GUID
   gAppleSiliconPkgEmbeddedRamdiskGuid
 
 [Pcd.common]
   gAppleSiliconPkgTokenSpaceGuid.PcdInitializeRamdisk
+  # Used to locate an image appended by m1n1 immediately after the firmware image
+  # (run_guest.py --append-payload). See FindAppendedRamdisk().
+  gArmTokenSpaceGuid.PcdFdBaseAddress
+  gArmTokenSpaceGuid.PcdFdSize
 
 
 [Depex]

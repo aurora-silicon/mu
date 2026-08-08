@@ -10,6 +10,23 @@
 [Guids.common]
   gAppleSiliconPkgTokenSpaceGuid = { 0xdac05d5e, 0x6b59, 0x4731, { 0x83, 0xf4, 0xfb, 0x40, 0x05, 0xb5, 0xcc, 0xdc } }
   gAppleSiliconPkgEmbeddedRamdiskGuid = { 0x650b7cd0, 0x94f8, 0x46cc, { 0x88, 0xde, 0x8c, 0x19, 0x9d, 0x41, 0xed, 0xa3} }
+  #
+  # GUID HOB carrying the REAL runtime base and size of the firmware image, as
+  # published by PrePi. See APPLE_FD_INFO_HOB in AppleFdInfoHob.h.
+  #
+  # Needed because PcdFdBaseAddress / PcdFdSize live in [PcdsPatchableInModule],
+  # so every module gets its own copy and only PrePi's is patched to the address
+  # m1n1 actually loaded us at. A DXE driver reading those PCDs gets the FDF's
+  # build-time defaults (0x830000000 / 0x1E00000) instead. Doing arithmetic on
+  # those and dereferencing the result faulted the machine outright:
+  #
+  #   HV: Data abort on mapped page (0x831e001fe -> 0x831e001fd)
+  #   Guest exception: EXCEPTION_LOWER/SERROR   FAR = 0x831e001fe
+  #
+  # 0x831e001fe is 0x830000000 + 0x1E00000 + 0x1FE -- the build-time defaults plus
+  # a FAT boot-signature offset, landing in the MMIO window rather than in DRAM.
+  #
+  gAppleSiliconPkgFdInfoHobGuid = { 0x9a1d4e6b, 0x2f7c, 0x4a88, { 0xbc, 0x31, 0x5e, 0x0a, 0x77, 0xd2, 0x64, 0x19} }
   gAppleSiliconPkgEmbeddedUsbFirmwareGuid = { 0xd730ab59, 0x670e, 0x4a92, { 0x84, 0x75, 0xb3, 0x19, 0x39, 0xd0, 0x5b, 0xb4 } }
   
 [Protocols]
@@ -51,6 +68,36 @@
   # Number of DWC3 controllers on the SoC.
   #
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Controllers|1|UINT32|0x00004703
+  #
+  # Whether the USB class keyboard short-form path stays in ConIn.
+  #
+  # MsCorePkg's PlatformBootManagerLib appends it unconditionally
+  # (BdsPlatform.c, PlatformBootManagerBeforeConsole). On a machine whose only
+  # keyboard is internal and not USB, that append buys nothing and costs the
+  # boot: connecting ConIn walks the USB stack, and on J704 that currently
+  # stalls in UsbRootHubInit before any boot option is attempted.
+  #
+  # FALSE drops the path again in DeviceBootManagerBeforeConsole, which runs
+  # immediately after the append. XhciDxe stays registered and bindable -- this
+  # only stops the *console* from depending on USB.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectUsbKeyboardConsole|TRUE|BOOLEAN|0x00004704
+  #
+  # Whether PostReadyToBoot() calls EfiBootManagerConnectAll() when the boot
+  # target is the internal UEFI Shell.
+  #
+  # Upstream does this so the Shell comes up with every device bound and visible
+  # in its mapping table. On J704 that ConnectAll is what walks into XhciDxe ->
+  # UsbBusDxe -> UsbRootHubInit and stalls, *after* BDS has committed to booting
+  # the Shell and signalled ReadyToBoot, so the Shell image never starts.
+  #
+  # FALSE gets a Shell over the VUART with only the already-connected devices.
+  # From there `connect -r` reproduces the stall by hand, on a live console --
+  # which is the whole point: it turns an unlocated hang into an interactive one.
+  #
+  # Set back to TRUE once USB enumeration completes.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectAllForInternalShell|TRUE|BOOLEAN|0x00004705
   #File name GUID for frontpage app
   gAppleSiliconPkgTokenSpaceGuid.PcdUIApplicationFile|{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }|VOID*|0x00004408
 

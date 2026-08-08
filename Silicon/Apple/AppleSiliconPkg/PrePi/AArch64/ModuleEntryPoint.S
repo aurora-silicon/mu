@@ -18,10 +18,37 @@ ASM_FUNC(_ModuleEntryPoint)
   //back up initial start addr and ADT pointer
   mov x27, x0
   mov x26, x1
-  mov x25, x4 //boot args addr
-  //Use ADT to discover usable DRAM base/size
-  bl ASM_PFX(InitializeUART)
-  //restore values
+  //
+  // Boot args pointer. This used to read x4, but m1n1 passes the boot_args
+  // address in **x0** -- x4 holds the image base, so EarlySetup() was casting
+  // the UEFI image header to struct boot_args and reading pure garbage out of
+  // it. On J704 that produced BootArgs->devtree_size == 0xffffffff and a 4 GB
+  // CopyMem() into PcdAdtPointer, which walked off the end of RAM:
+  //
+  //   HV: Unmapped IPA 0x11005fffd
+  //   ESR = 0x930a0006  EC=0x24 (DABORT_LOWER)   in CopyMem+0x134
+  //                                              from EarlySetup+0x98
+  //
+  // x0 is also what DiscoverDramFromDt below treats as the loader-supplied
+  // pointer, and what x27 is set from two lines up, so this is consistent with
+  // the rest of the entry sequence.
+  //
+  mov x25, x0 //boot args addr
+  //
+  // InitializeUART() used to be called here. It is C, so it needs a stack, and
+  // at this point there is none: sp is whatever the loader happened to leave.
+  // Chainloading from m1n1 gets away with it because m1n1's own sp is still
+  // live and the C code quietly borrows m1n1's stack. Under m1n1's hypervisor
+  // the guest is entered with a fresh context and SP_EL1 = 0, so the very first
+  // stp in SerialPortInitialize() faulted -- and with VBAR_EL1 still 0 the
+  // guest vectored to 0x200, which is unmapped, surfacing as an instruction
+  // abort at 0x200 rather than as the data abort it really was.
+  //
+  // The arm64 Linux boot protocol this image advertises does not promise a
+  // valid sp either, so relying on one was never safe. The call now happens
+  // after _StackSetup; nothing between here and there is C, and no DEBUG()
+  // output is emitted in between, so nothing is lost.
+  //
   mov x0, x27
   mov x1, x26
   bl ASM_PFX(DiscoverDramFromDt)
@@ -115,6 +142,15 @@ _ClearStack:
 _EnableCaches:
   bl ASM_PFX(ArmEnableInstructionCache)
   bl ASM_PFX(ArmEnableDataCache)
+
+  //
+  // Deferred from _ModuleEntryPoint -- see the comment there. sp is valid from
+  // here on. x2 (stack size) and x12 (stack base) are caller-saved and are
+  // still needed by _PrepareArgumentsAndJump, so preserve them across the call.
+  //
+  stp x2, x12, [sp, #-16]!
+  bl ASM_PFX(InitializeUART)
+  ldp x2, x12, [sp], #16
 
 _PrepareArgumentsAndJump:
   mov x0, x12 //Stack Base

@@ -77,6 +77,19 @@ int dt_check(void *mem, size_t size, size_t *offp)
 
 int dt_parse(dt_node_t *node, int depth, size_t *offp, int (*cb_node)(void*, dt_node_t*, int), void *cbn_arg, int (*cb_prop)(void*, dt_node_t*, int, const char*, void*, size_t), void *cbp_arg)
 {
+    //
+    // A NULL node is normal, not a programming error: m1n1's hypervisor strips
+    // the ADT nodes for whatever USB controller it is using as its own
+    // proxy/VUART, so dt_get("dart-usb1") / dt_get("usb-drd1") legitimately
+    // return NULL. Every caller already copes with "property not found"; none
+    // survived reading node->nprop at offset 0.
+    //
+    // This has now cost three separate boots -- MemoryInitPeiLib (/cpus/cpuN),
+    // AppleDartIoMmuDxe (dart-usbN) and AppleUsbTypeCBringupDxe (usb-drdN) --
+    // so the guard belongs here, once, rather than in each caller.
+    //
+    if(!node) return -1;
+
     if(cb_node)
     {
         int r = cb_node(cbn_arg, node, depth);
@@ -238,6 +251,19 @@ static int dt_parse_32_cbp(void *a, dt_node_t *node, int depth, const char *key,
 
 int dt_parse_32(dt_node_t *node, int depth, uint32_t *offp, int (*cb_node)(void*, dt_node_t*, int), void *cbn_arg, int (*cb_prop)(void*, dt_node_t*, int, const char*, void*, uint32_t), void *cbp_arg)
 {
+    //
+    // A NULL node is normal, not a programming error: m1n1's hypervisor strips
+    // the ADT nodes for whatever USB controller it is using as its own
+    // proxy/VUART, so dt_get("dart-usb1") / dt_get("usb-drd1") legitimately
+    // return NULL. Every caller already copes with "property not found"; none
+    // survived reading node->nprop at offset 0.
+    //
+    // This has now cost three separate boots -- MemoryInitPeiLib (/cpus/cpuN),
+    // AppleDartIoMmuDxe (dart-usbN) and AppleUsbTypeCBringupDxe (usb-drdN) --
+    // so the guard belongs here, once, rather than in each caller.
+    //
+    if(!node) return -1;
+
     dt_parse_32_cbp_t cbp_arg_32 =
     {
         .cb  = cb_prop,
@@ -340,10 +366,17 @@ uint32_t dt_node_u32(dt_node_t *node, const char *prop, uint32_t idx)
 {
     size_t len = 0;
     uint32_t *val = dt_node_prop(node, prop, &len);
+    //
+    // val is NULL for a missing node or a missing property. Returning 0 keeps
+    // the old behaviour for present-but-short properties while making the
+    // absent case survivable instead of dereferencing NULL.
+    //
+    if(!val) return 0;
     if(len < (idx + 1) * sizeof(*val))
     {
         DEBUG((DEBUG_INFO, "DeviceTree u32 out of bounds: %a[%u]\n", prop, idx));
         ASSERT(FALSE);
+        return 0;
     }
     return val[idx];
 }
@@ -357,10 +390,17 @@ uint64_t dt_node_u64(dt_node_t *node, const char *prop, uint32_t idx)
 {
     size_t len = 0;
     uint64_t *val = dt_node_prop(node, prop, &len);
+    //
+    // val is NULL for a missing node or a missing property. Returning 0 keeps
+    // the old behaviour for present-but-short properties while making the
+    // absent case survivable instead of dereferencing NULL.
+    //
+    if(!val) return 0;
     if(len < (idx + 1) * sizeof(*val))
     {
         DEBUG((DEBUG_INFO, "DeviceTree u64 out of bounds: %a[%u]\n", prop, idx));
         ASSERT(FALSE);
+        return 0;
     }
     return val[idx];
 }
@@ -382,6 +422,15 @@ void* dt_get_prop_32(const char *device, const char *prop, uint32_t *size)
 //borrowed from m1n1
 int dt_node_reg(dt_node_t *node, uint32_t idx, uint64_t *paddr, uint64_t *psize)
 {
+    //
+    // Callers pass the result of dt_get() straight in; a stripped node arrives
+    // here as NULL. Fail with the function's existing error convention rather
+    // than walking a NULL parent. NOTE: *paddr is left untouched, so callers
+    // must check the return value -- an unchecked call leaves the caller's
+    // address variable at whatever it held before.
+    //
+    if(!node) return 1;
+
     dt_node_t *parent = dt_node_parent(node);
     dt_node_t *cur = node;
 

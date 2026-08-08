@@ -586,10 +586,23 @@
   ArmPkg/Drivers/CpuDxe/CpuDxe.inf
   ArmPkg/Drivers/TimerDxe/TimerDxe.inf
 !if $(AIC_BUILD) == FALSE
-  ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf {
-    <LibraryClasses>
-	  ArmGicArchLib|AppleSiliconPkg/Library/ArmGicArchLib/ArmGicArchLib.inf
-  }
+  #
+  # No <LibraryClasses> override here any more. It used to pull in
+  #
+  #     ArmGicArchLib|AppleSiliconPkg/Library/ArmGicArchLib/ArmGicArchLib.inf
+  #
+  # which does not exist in this tree -- so AIC_BUILD=FALSE had never actually
+  # built. The first attempt failed with:
+  #
+  #     ERROR - Invalid file path: ('AppleSiliconPkg/Library/ArmGicArchLib/ArmGicArchLib.inf',)
+  #
+  # ArmGicArchLib is gone from ArmPkg upstream: recent EDK2 folded it (and
+  # ArmGicLib) into ArmGicDxe itself, and ArmGicDxe.inf's own [LibraryClasses]
+  # no longer lists it. The commented-out pair near the top of this file
+  # ("Recent EDK2 releases have integrated both of these into the ArmGicDxe
+  # driver") already recorded this; this block was just missed.
+  #
+  ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf
 !else
   AppleSiliconPkg/Drivers/AppleAicDxe/AppleAicDxe.inf
 !endif
@@ -630,6 +643,7 @@
   # DWC3 bringup module
   #
   AppleSiliconPkg/Drivers/AppleUsbTypeCBringupDxe/AppleUsbTypeCBringupDxe.inf
+  AppleSiliconPkg/Drivers/AppleMtpHidDxe/AppleMtpHidDxe.inf
 
   #
   # Generic ACPI tables. (Basically just GTDT)

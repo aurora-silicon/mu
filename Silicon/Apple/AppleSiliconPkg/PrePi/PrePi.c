@@ -33,6 +33,7 @@
 #include <Library/PrePiHobListPointerLib.h>
 #include <Library/PrePiLib.h>
 #include <Library/SerialPortLib.h>
+#include <Guid/AppleFdInfoHob.h>
 
 UINT32 InitializeUART(VOID);
 
@@ -98,6 +99,26 @@ VOID Main(IN VOID *StackBase, IN UINTN StackSize, IN VOID *DeviceTreePtr, IN UIN
         CpuDeadLoop();
     }
 
+    //
+    // Publish where m1n1 actually loaded us, for consumers in later phases.
+    //
+    // PcdFdBaseAddress / PcdFdSize are [PcdsPatchableInModule]: this module's copy
+    // is patched to the real address, but every other module links the FDF's
+    // build-time defaults (0x830000000 / 0x1E00000), which point into MMIO on this
+    // platform. BootRamdiskHelperDxe derived an address from those PCDs and took
+    // an SError on the first read. Anything outside PrePi must use this HOB.
+    //
+    {
+        APPLE_FD_INFO_HOB FdInfo;
+
+        FdInfo.FdBase = PcdGet64(PcdFdBaseAddress);
+        FdInfo.FdSize = PcdGet32(PcdFdSize);
+        DEBUG((EFI_D_INFO | EFI_D_LOAD,
+               "Publishing FD info HOB: base 0x%llx size 0x%llx\n",
+               FdInfo.FdBase, FdInfo.FdSize));
+        BuildGuidDataHob(&gAppleSiliconPkgFdInfoHobGuid, &FdInfo, sizeof(FdInfo));
+    }
+
     //set up stack and CPU HOBs
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "Building up Stack/CPU HOBs\n"));
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "Stack Base: 0x%llx, Stack Size: 0x%llx\n", (UINT64)StackBase, StackSize));
@@ -148,6 +169,15 @@ UINT32 InitializeUART(VOID)
         "Apple Silicon Project Mu Firmware (arm64/arm64e)\n")
         );
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "If you can see this message, UART works\n"));
+    //
+    // Hand-bumped build marker. Successive .fd builds are byte-identical in size
+    // and often load every module at the same address, so a log alone cannot tell
+    // you which firmware actually ran -- three separate debugging rounds were
+    // spent reasoning about code that was not in the image under test. Bump this
+    // whenever handing a new .fd over, and grep the log for it before trusting
+    // anything else in that log.
+    //
+    DEBUG((EFI_D_INFO | EFI_D_LOAD, "J704 firmware build marker: J704-FW-15\n"));
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "FD Base Address - 0x%llx\n", PcdGet64(PcdFdBaseAddress)));
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "FV Base Address - 0x%llx\n", PcdGet64(PcdFvBaseAddress)));
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "Current ADT Pointer: 0x%llx\n", PcdGet64(PcdAdtPointer)));

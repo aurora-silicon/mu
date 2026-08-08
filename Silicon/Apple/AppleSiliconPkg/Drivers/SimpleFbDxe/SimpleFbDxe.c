@@ -220,13 +220,68 @@ SimpleFbDxeInitialize(
   mDisplay.Mode->Info->HorizontalResolution = FramebufferWidth;
   mDisplay.Mode->Info->VerticalResolution   = FramebufferHeight;
 
-  /* SimpleFB runs on a8r8g8b8 (VIDEO_BPP32) for WoA devices */
-  UINT32               LineLength = FramebufferWidth * VNBYTES(VIDEO_BPP32);
+  //
+  // Always 4 bytes per pixel, but not always 8 bits per channel -- see the
+  // depth handling below.
+  //
+  // Use the stride the loader actually reported rather than assuming it equals
+  // width * 4. They happen to be equal on J704 (0x2f40 / 3024 == 4), but a
+  // padded stride would shear the whole display.
+  //
+  UINT32               BytesPerPixel = VNBYTES(VIDEO_BPP32);
+  UINT32               LineLength = (UINT32)BootArgs->video.stride;
   UINT32               FrameBufferSize    = LineLength * FramebufferHeight;
   EFI_PHYSICAL_ADDRESS FrameBufferAddress = FramebufferAddr;
 
-  mDisplay.Mode->Info->PixelsPerScanLine = FramebufferWidth;
-  mDisplay.Mode->Info->PixelFormat = PixelBlueGreenRedReserved8BitPerColor;
+  if (LineLength == 0) {
+    LineLength = FramebufferWidth * BytesPerPixel;
+    FrameBufferSize = LineLength * FramebufferHeight;
+  }
+
+  mDisplay.Mode->Info->PixelsPerScanLine = LineLength / BytesPerPixel;
+
+  //
+  // Pixel format depends on the panel, and it is not always 8 bits per channel.
+  //
+  // The J704 (M5) internal panel reports depth 30: four bytes per pixel, but ten
+  // bits per channel, packed B[9:0] G[19:10] R[29:20]. m1n1 drives this same
+  // display correctly and its packing is the authority here (src/fb.c):
+  //
+  //     rgb2pixel_30(c) = (c.b << 2) | (c.g << 12) | (c.r << 22)
+  //
+  // Describing that as PixelBlueGreenRedReserved8BitPerColor put every channel
+  // in the wrong bits, which is why Mu's boot-time device-state bars rendered as
+  // bands of wrong colour on the panel.
+  //
+  // FrameBufferBltLib already handles PixelBitMask by deriving per-channel
+  // shifts from the masks, so this is a description fix and not a new blitter.
+  // It writes an 8-bit source channel into the top of each 10-bit field, losing
+  // the low 2 bits of precision, which is invisible for firmware UI.
+  //
+  // depth carries flags in its upper bits (m1n1 masks with 0xff), so mask before
+  // comparing.
+  //
+  switch (BootArgs->video.depth & 0xff) {
+    case 30:
+      mDisplay.Mode->Info->PixelFormat = PixelBitMask;
+      mDisplay.Mode->Info->PixelInformation.RedMask      = 0x3FF00000;
+      mDisplay.Mode->Info->PixelInformation.GreenMask    = 0x000FFC00;
+      mDisplay.Mode->Info->PixelInformation.BlueMask     = 0x000003FF;
+      mDisplay.Mode->Info->PixelInformation.ReservedMask = 0xC0000000;
+      break;
+
+    default:
+      //
+      // 24/32bpp panels (M1-era machines) are plain 8-bit BGRX, matching
+      // m1n1's rgb2pixel_24().
+      //
+      mDisplay.Mode->Info->PixelFormat = PixelBlueGreenRedReserved8BitPerColor;
+      break;
+  }
+
+  DEBUG((EFI_D_INFO, "SimpleFbDxe: depth %lld, stride %lld, PixelsPerScanLine %d, format %d\n",
+         BootArgs->video.depth & 0xff, BootArgs->video.stride,
+         mDisplay.Mode->Info->PixelsPerScanLine, mDisplay.Mode->Info->PixelFormat));
   mDisplay.Mode->SizeOfInfo      = sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION);
   mDisplay.Mode->FrameBufferBase = FrameBufferAddress;
   mDisplay.Mode->FrameBufferSize = FrameBufferSize;

@@ -321,8 +321,13 @@ AppleDartIoMmuDxeInitialize(
 )
 {
     UINT32 Midr;
-    dt_node_t *DartNode[FixedPcdGet32(PcdAppleNumDwc3Controllers)];
-    UINT64 DartReg[FixedPcdGet32(PcdAppleNumDwc3Controllers) * 2];
+    //
+    // Zero-initialised deliberately. When a dart-usbN node is absent, the loop
+    // below skips its two DartReg slots without writing them, and the second
+    // loop reads them back -- as uninitialised stack garbage before this change.
+    //
+    dt_node_t *DartNode[FixedPcdGet32(PcdAppleNumDwc3Controllers)] = {0};
+    UINT64 DartReg[FixedPcdGet32(PcdAppleNumDwc3Controllers) * 2] = {0};
     UINT32 DartIndex = 0;
     UINT32 Params4; // U-Boot does this
     // PHYSICAL_ADDRESS Address;
@@ -379,24 +384,54 @@ AppleDartIoMmuDxeInitialize(
         DartNode[DartNodeIndex] = dt_get(DartNodeName);
 
         if(DartNode[DartNodeIndex] == NULL) {
+            //
+            // Absent for either of two reasons, both normal:
+            //   - the index does not exist on this SoC (J704 has dart-usb0,
+            //     dart-usb1 and dart-usb3, but no dart-usb2), or
+            //   - m1n1's hypervisor stripped it because it owns that controller.
+            // Leave DartNode[] NULL; the second loop skips it.
+            //
             DEBUG((DEBUG_INFO, "Did not find node %a\n\n", DartNodeName));
-            DartIndex += 2;
             continue;
         }
 
-        dt_node_reg(DartNode[DartNodeIndex], 0, &DartReg[DartIndex++], NULL);
-        DEBUG((DEBUG_INFO, "DART reg[0] for %a is 0x%llx \n", DartNodeName, DartReg[DartIndex - 1]));
-        dt_node_reg(DartNode[DartNodeIndex], 1, &DartReg[DartIndex++], NULL);
-        DEBUG((DEBUG_INFO, "DART reg[1] for %a is 0x%llx \n", DartNodeName, DartReg[DartIndex - 1]));
+        //
+        // Index DartReg[] from DartNodeIndex directly. This used to advance a
+        // running DartIndex with a compensating "DartIndex += 2" on the missing-
+        // node path above; the second loop's DartNode[DartIndex / 2] silently
+        // depends on those two staying in step, which is not worth relying on.
+        //
+        dt_node_reg(DartNode[DartNodeIndex], 0, &DartReg[DartNodeIndex * 2 + 0], NULL);
+        DEBUG((DEBUG_INFO, "DART reg[0] for %a is 0x%llx \n", DartNodeName, DartReg[DartNodeIndex * 2 + 0]));
+        dt_node_reg(DartNode[DartNodeIndex], 1, &DartReg[DartNodeIndex * 2 + 1], NULL);
+        DEBUG((DEBUG_INFO, "DART reg[1] for %a is 0x%llx \n", DartNodeName, DartReg[DartNodeIndex * 2 + 1]));
     }
 
 
     for(DartIndex = 0; DartIndex < FixedPcdGet32(PcdAppleNumDwc3Controllers) * 2; DartIndex++) {
         //
-        // to avoid killing the serial console from UART proxy - leave darts for DFU ports alone.
+        // Pick the free controllers dynamically, from node presence.
         //
-        if(DartIndex == 0 || DartIndex == 1 || DartIndex == 4 || DartIndex == 5) {
-            DEBUG((DEBUG_INFO, "Skipping DFU port DART %d\n", DartIndex));
+        // This replaced a hardcoded "if(DartIndex == 0 || 1 || 4 || 5) continue;"
+        // whose comment read "to avoid killing the serial console from UART proxy
+        // - leave darts for DFU ports alone". That baked in an assumption that
+        // the proxy is always on usb0, which is not true: m1n1 comes up on
+        // whichever USB-C port the host cable is in, and with the proxy on USB1
+        // the old list skipped the one free controller and configured the one
+        // m1n1 was using.
+        //
+        // Node absence is the accurate signal. m1n1's hypervisor removes the ADT
+        // nodes for the controller it owns (/arm-io/dart-usbN, usb-drdN, ...), so
+        // "node missing" means exactly "do not touch this one", and it is correct
+        // for any port the cable happens to be in. It also covers indices that
+        // simply do not exist on this SoC -- J704 has no dart-usb2.
+        //
+        // Chainload (non-hypervisor) boots strip nothing, so every present
+        // controller is brought up. That is fine: m1n1 has already handed off and
+        // its USB gadget is gone, so there is no proxy console left to kill.
+        //
+        if(DartNode[DartIndex / 2] == NULL) {
+            DEBUG((DEBUG_INFO, "Skipping DART %d: node not present in the DeviceTree\n", DartIndex));
             continue;
         }
         //DEBUG((DEBUG_INFO, "Test0\n"));

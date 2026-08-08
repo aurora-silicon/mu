@@ -150,6 +150,174 @@ STATIC EFI_STATUS Dwc3XhciCoreInit(IN DWC3_CONTROLLER *Controller)
 
 
 //
+// "Pipehandler" block -- Apple-specific glue between the DWC3 core and the ATC
+// (Apple Type-C) PHY. Offsets and bit names taken from m1n1's src/usb.c, which is
+// the only description of this block we have.
+//
+// IMPORTANT: this is NOT in the DWC3 register window. It lives at reg index 3 of
+// the usb-drdN ADT node (m1n1's usb_drd_get_regs() fetches index 0 and index 3),
+// which is why this driver could not touch it before -- it only ever read index 0.
+//
+#define PIPEHANDLER_MUX_CTRL                     0x0C
+#define PIPEHANDLER_MUX_CTRL_USB3                0x08
+#define PIPEHANDLER_MUX_CTRL_DUMMY               0x22
+
+#define PIPEHANDLER_AON_GEN                      0x1C
+#define PIPEHANDLER_AON_GEN_DWC3_RESET_N         BIT0
+#define PIPEHANDLER_AON_GEN_DWC3_FORCE_CLAMP_EN  BIT4
+
+#define PIPEHANDLER_NONSELECTED_OVERRIDE         0x20
+#define PIPEHANDLER_NATIVE_RESET                 BIT12
+#define PIPEHANDLER_DUMMY_PHY_EN                 BIT15
+#define PIPEHANDLER_NATIVE_POWER_DOWN            0xF
+
+//
+// Set to 0 to go back to leaving the PIPE PHY parked exactly as m1n1 left it.
+//
+// PROVISIONAL -- this is a fix for a hang whose mechanism is inferred, not proven.
+// Confirm with tools/usb_portsc_probe.py (run from the plain proxy shell) before
+// trusting it, and set this to 0 if it makes things worse.
+//
+//
+// Set to 0 after hardware testing on J704 (build J704-FW-1).
+//
+// Un-parking makes the xHCI unusable. The write itself partly fails: the readback
+// after storing PIPEHANDLER_MUX_CTRL_USB3 (0x08) was
+//
+//     Dwc3UnparkPipePhy: exit  MUX_CTRL=0x0  NONSELECTED_OVERRIDE=0x330  AON_GEN=0x1
+//
+// MUX_MODE (bits 1:0) took the USB3_PHY value of 0, but CLK_SELECT (bits 5:3)
+// stayed 0 instead of latching USB3_PHY = 1. CLK_SELECT 0 is E_PIPEHANDLER_
+// CLK_SELECT.UNK0 -- not a real clock source. XhciDxe then never gets its
+// controller out of reset:
+//
+//     XhcResetHC!
+//     ASSERT [XhciDxe] Xhci.c(2097): !(USBSTS & CNR)
+//
+// i.e. Controller Not Ready stayed set, and the DEBUG-build ASSERT dead-loops the
+// machine before BDS can boot anything.
+//
+// CLK_SELECT will not latch USB3_PHY because nothing has brought the ATC PHY up.
+// m1n1 only does the minimal ATC writes its USB2 device-mode gadget needs
+// (src/usb.c:143-147) and then deliberately parks the mux on the dummy PHY
+// (src/usb.c:149-151). There is no USB3 pipe clock to select.
+//
+// Leaving the mux parked keeps CLK_SELECT = DUMMY_PHY (4), which is a working
+// clock -- m1n1's own gadget runs on it. USB3 will not link, but the xHCI's USB2
+// port is UTMI and does not use the pipe at all, so a USB2 keyboard and USB2 boot
+// media should still enumerate. That is all the bring-up actually needs.
+//
+// Set back to 1 only alongside real ATC PHY USB3 bring-up.
+//
+#define APPLE_DWC3_UNPARK_PIPE_PHY  0
+
+/**
+  Take the USB3 PIPE PHY out of the parked state m1n1 leaves it in.
+
+  m1n1's usb_phy_bringup() runs for *every* port and parks the PIPE PHY:
+
+      PIPEHANDLER_MUX_CTRL             = 0x22   (MUX_CTRL_DUMMY)
+      PIPEHANDLER_NONSELECTED_OVERRIDE = 0x9332
+          bit 15 DUMMY_PHY_EN        = 1        dummy PHY feeds the core
+          bit 12 NATIVE_RESET        = 1        real ATC PHY held in reset
+          bits 3:0 NATIVE_POWER_DOWN = 2        real PHY partly powered down
+
+  That is correct for m1n1's own USB2 device-mode gadget: the dummy PHY gives the
+  DWC3 core a pipe clock so it does not stall, and the real PHY stays off.
+
+  It is wrong for us. XhciDxe reports "max speed 3" and a Usb3SupOffset, so it sees
+  a SuperSpeed port, and a SuperSpeed port's PORTSC register sits in a domain
+  clocked by the PIPE PHY. Reading it with that PHY held in reset and powered down
+  appears to stall forever -- which matches the observed hang exactly: capability
+  registers, DCBAA and the command/event rings are all in the always-on core domain
+  and worked fine, then the first PORTSC read never returned. See
+  docs/NEXT-STEPS.md, "Where the USB hang actually is".
+
+  Must run before Dwc3XhciCoreInit(), mirroring m1n1's ordering (pipehandler first,
+  then DWC3 core).
+
+  @param PipehandlerBase  Base of the pipehandler block, i.e. usb-drdN reg index 3.
+**/
+#if APPLE_DWC3_UNPARK_PIPE_PHY
+STATIC
+VOID
+Dwc3UnparkPipePhy (
+  IN UINT64  PipehandlerBase
+  )
+{
+  UINT32  Mux;
+  UINT32  Override;
+  UINT32  NewOverride;
+
+  Mux      = MmioRead32 (PipehandlerBase + PIPEHANDLER_MUX_CTRL);
+  Override = MmioRead32 (PipehandlerBase + PIPEHANDLER_NONSELECTED_OVERRIDE);
+
+  DEBUG ((
+    DEBUG_INFO,
+    "Dwc3UnparkPipePhy: entry MUX_CTRL=0x%x NONSELECTED_OVERRIDE=0x%x (DUMMY_PHY_EN=%d NATIVE_RESET=%d NATIVE_POWER_DOWN=0x%x)\n",
+    Mux,
+    Override,
+    (Override & PIPEHANDLER_DUMMY_PHY_EN) ? 1 : 0,
+    (Override & PIPEHANDLER_NATIVE_RESET) ? 1 : 0,
+    Override & PIPEHANDLER_NATIVE_POWER_DOWN
+    ));
+
+  //
+  // Release the real PHY: out of reset, fully powered, and stop presenting the
+  // dummy PHY to the core.
+  //
+  NewOverride = Override & ~(PIPEHANDLER_NATIVE_RESET |
+                             PIPEHANDLER_DUMMY_PHY_EN |
+                             PIPEHANDLER_NATIVE_POWER_DOWN);
+  MmioWrite32 (PipehandlerBase + PIPEHANDLER_NONSELECTED_OVERRIDE, NewOverride);
+
+  //
+  // Point the mux at the real USB3 PHY rather than the dummy.
+  //
+  // MUX_CTRL is two subfields, not one value -- see m1n1
+  // proxyclient/m1n1/hw/dwc3.py:247 R_PIPEHANDLER_MUX_CTRL:
+  //
+  //     MUX_MODE   = bits 1:0   0 = USB3_PHY, 2 = DUMMY_PHY
+  //     CLK_SELECT = bits 5:3   1 = USB3_PHY, 4 = DUMMY_PHY
+  //
+  // so the flat constants below are consistent in both fields:
+  //
+  //     0x22 (parked)  -> MUX_MODE=2 DUMMY_PHY, CLK_SELECT=4 DUMMY_PHY
+  //     0x08 (unparked)-> MUX_MODE=0 USB3_PHY,  CLK_SELECT=1 USB3_PHY
+  //
+  // Writing 0x08 therefore switches both the data mux and the pipe clock source
+  // off the dummy PHY in one store, which is what m1n1 does in reverse at
+  // src/usb.c:149.
+  //
+  MmioWrite32 (PipehandlerBase + PIPEHANDLER_MUX_CTRL, PIPEHANDLER_MUX_CTRL_USB3);
+
+  //
+  // Keep the core out of reset and unclamped. m1n1 already set DWC3_RESET_N; be
+  // explicit rather than relying on it, and make sure FORCE_CLAMP is off.
+  //
+  MmioAndThenOr32 (
+    PipehandlerBase + PIPEHANDLER_AON_GEN,
+    ~PIPEHANDLER_AON_GEN_DWC3_FORCE_CLAMP_EN,
+    PIPEHANDLER_AON_GEN_DWC3_RESET_N
+    );
+
+  //
+  // Same 100ms the DWC3 soft-reset path uses. The PHY needs to produce a stable
+  // pipe clock before the core -- and later XhciDxe -- touches port registers.
+  //
+  MicroSecondDelay (100 * 1000);
+
+  DEBUG ((
+    DEBUG_INFO,
+    "Dwc3UnparkPipePhy: exit  MUX_CTRL=0x%x NONSELECTED_OVERRIDE=0x%x AON_GEN=0x%x\n",
+    MmioRead32 (PipehandlerBase + PIPEHANDLER_MUX_CTRL),
+    MmioRead32 (PipehandlerBase + PIPEHANDLER_NONSELECTED_OVERRIDE),
+    MmioRead32 (PipehandlerBase + PIPEHANDLER_AON_GEN)
+    ));
+}
+#endif // APPLE_DWC3_UNPARK_PIPE_PHY
+
+//
 // This function actually brings up the DWC3 controller. The PHY is already set up by iBoot so we don't need
 // to deal with that here.
 //
@@ -161,7 +329,20 @@ AppleUsbTypeCBringupDxeInitializeUsbController(IN UINTN Dwc3ControllerBaseReg)
   DWC3_CONTROLLER *Dwc3Controller;
   UINT32 Usb2PhyCfgReg;
   //
-  // PHY reset/clock is brought up by iBoot, no need to do it here.
+  // This used to read "PHY reset/clock is brought up by iBoot, no need to do it
+  // here." That is true of a bare iBoot handoff but NOT of the m1n1 path, which
+  // is how we boot: m1n1's usb_phy_bringup() (src/usb.c:120) runs *after* iBoot
+  // and deliberately re-parks every DWC3 on the dummy PHY at src/usb.c:149-151,
+  // in a loop over all ports (src/usb.c:254 and :342).
+  //
+  // Measured on J704 with tools/usb_portsc_probe.py -- identical on usb-drd0,
+  // usb-drd1 and usb-drd3:
+  //
+  //     MUX_CTRL = 0x22 (DUMMY)   NONSELECTED_OVERRIDE = 0x9332
+  //     PORTSC   = 0x280 -> CCS=0 PED=0 PP=1 PLS=4 (Disabled)
+  //
+  // So the caller must run Dwc3UnparkPipePhy() before this function, or the core
+  // comes up attached to a fake PHY and no device can ever raise CCS.
   //
 
   Dwc3Controller = (VOID *)(Dwc3ControllerBaseReg + DWC3_REG_OFFSET);
@@ -201,6 +382,11 @@ AppleUsbTypeCBringupDxeBringupCallback(IN EFI_EVENT Event, IN VOID *Context)
   EFI_STATUS Status;
   UINT32 NumDwc3Controllers;
   UINT64 Dwc3ControllerBaseAddr;
+#if APPLE_DWC3_UNPARK_PIPE_PHY
+  // Only referenced by the un-park block below; the build is -Werror on
+  // -Wunused-variable, so it has to follow the same #if.
+  UINT64 PipehandlerBaseAddr;
+#endif
   CHAR8 Dwc3RegNodeName[31];
   UINT32 Dwc3ControllerRegSize;
   //
@@ -213,20 +399,65 @@ AppleUsbTypeCBringupDxeBringupCallback(IN EFI_EVENT Event, IN VOID *Context)
   NumDwc3Controllers = PcdGet32(PcdAppleNumDwc3Controllers);
 
   for(UINT32 Dwc3Index = 0; Dwc3Index < NumDwc3Controllers; Dwc3Index++) {
-    if((Dwc3Index == 0) || (Dwc3Index == 2)) {
-      //
-      // skip DWC3 0, it seems to be in charge of the DFU port.
-      //
+    //
+    // No hardcoded skip list here any more.
+    //
+    // This used to be "if((Dwc3Index == 0) || (Dwc3Index == 2)) continue;" with
+    // the comment "skip DWC3 0, it seems to be in charge of the DFU port". That
+    // assumed the proxy/DFU port is always usb0. m1n1 actually comes up on
+    // whichever USB-C port the host cable is in, so with the proxy on USB1 the
+    // old list skipped the free controller and tried to bring up the one m1n1
+    // was using -- and since m1n1 strips that node, dt_get() returned NULL and
+    // the driver faulted.
+    //
+    // Selection is now purely by node presence, checked below: m1n1 removes the
+    // ADT node for the controller it owns, so a missing usb-drdN means "leave
+    // this one alone" regardless of which port that is. It also covers indices
+    // absent on this SoC -- J704 has usb-drd0, usb-drd1 and usb-drd3, no
+    // usb-drd2.
+    //
+    AsciiSPrint(Dwc3RegNodeName, ARRAY_SIZE(Dwc3RegNodeName), "usb-drd%d", Dwc3Index);
+    dt_node_t *Dwc3Node = dt_get(Dwc3RegNodeName);
+
+    //
+    // The node may be absent: m1n1's hypervisor removes the ADT nodes for the
+    // USB controller it is using as its own proxy/VUART, so with the proxy on
+    // USB1 there is no /arm-io/usb-drd1 at all.
+    //
+    // Skipping is required even though dt_node_reg() is now NULL-safe -- it
+    // leaves Dwc3ControllerBaseAddr untouched on failure, and registering a
+    // non-discoverable XHCI controller at a stale address would be worse than
+    // not registering one.
+    //
+    if(Dwc3Node == NULL) {
+      DEBUG((DEBUG_INFO, "AppleUsbTypeCBringupDxeBringupCallback: no %a node, skipping DWC3 %d\n", Dwc3RegNodeName, Dwc3Index));
       continue;
     }
 
-    AsciiSPrint(Dwc3RegNodeName, ARRAY_SIZE(Dwc3RegNodeName), "usb-drd%d", Dwc3Index);
-    dt_node_t *Dwc3Node = dt_get(Dwc3RegNodeName);
- 
-    dt_node_reg(Dwc3Node, 0, &Dwc3ControllerBaseAddr, NULL);
+    if(dt_node_reg(Dwc3Node, 0, &Dwc3ControllerBaseAddr, NULL) != 0) {
+      DEBUG((DEBUG_ERROR, "AppleUsbTypeCBringupDxeBringupCallback: no reg for %a, skipping DWC3 %d\n", Dwc3RegNodeName, Dwc3Index));
+      continue;
+    }
 
     Dwc3ControllerRegSize = 0x100000;//TODO: get from ADT
     DEBUG((DEBUG_INFO, "AppleUsbTypeCBringupDxeBringupCallback: DWC3_%d base address: 0x%llx, size = 0x%x\n", Dwc3Index, Dwc3ControllerBaseAddr, Dwc3ControllerRegSize));
+
+#if APPLE_DWC3_UNPARK_PIPE_PHY
+    //
+    // Un-park the PIPE PHY before anything touches the DWC3 core or, later, the
+    // xHCI port registers. See Dwc3UnparkPipePhy() for why.
+    //
+    // reg index 3 is the pipehandler block. It is a separate window from the DWC3
+    // registers at index 0; if a platform's ADT lacks it there is nothing to
+    // un-park, so carry on and let the old behaviour stand.
+    //
+    if(dt_node_reg(Dwc3Node, 3, &PipehandlerBaseAddr, NULL) != 0) {
+      DEBUG((DEBUG_WARN, "AppleUsbTypeCBringupDxeBringupCallback: %a has no reg[3] (pipehandler), leaving PIPE PHY parked\n", Dwc3RegNodeName));
+    } else {
+      DEBUG((DEBUG_INFO, "AppleUsbTypeCBringupDxeBringupCallback: DWC3_%d pipehandler at 0x%llx\n", Dwc3Index, PipehandlerBaseAddr));
+      Dwc3UnparkPipePhy(PipehandlerBaseAddr);
+    }
+#endif
     
     //
     // Register the controller as a non-registerable XHCI DMA-coherent controller. (All DMA on Apple systems must be cache-coherent)

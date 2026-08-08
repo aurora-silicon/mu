@@ -50,6 +50,7 @@
   PlatformPeiLib
 
 [Guids]
+  gAppleSiliconPkgFdInfoHobGuid   ## PRODUCES ## HOB
   gEfiSystemNvDataFvGuid
   gEfiVariableGuid
 

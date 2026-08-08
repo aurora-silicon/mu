@@ -260,8 +260,20 @@ CreateFvBootOption (
   UINTN                              Size;
 
   if ((BootOption == NULL) || (FileGuid == NULL) || (Description == NULL)) {
+    //
+    // J704: this used to return silently. The Shell boot option was never being
+    // created and there was no trace of why -- not even CreateShellDevicePath's
+    // own DEBUG line -- which means we returned before reaching it. Say which
+    // argument was bad; PcdGetPtr(PcdShellFile) coming back NULL would land here.
+    //
+    DEBUG ((DEBUG_ERROR,
+            "CreateFvBootOption: bad args (BootOption=%p FileGuid=%p Description=%p) for '%s'\n",
+            BootOption, FileGuid, Description, (Description != NULL) ? Description : L"<null>"));
     return EFI_INVALID_PARAMETER;
   }
+
+  DEBUG ((DEBUG_INFO, "CreateFvBootOption: '%s' guid=%g isShell=%d\n",
+          Description, FileGuid, (int)CompareGuid (PcdGetPtr (PcdShellFile), FileGuid)));
 
   EfiInitializeFwVolDevicepathNode (&FileNode, FileGuid);
 
@@ -383,6 +395,10 @@ RegisterFvBootOption (
     EfiBootManagerFreeLoadOption (&NewOption);
     EfiBootManagerFreeLoadOptions (BootOptions, BootOptionCount);
   } else {
+    // J704: log the reason. This branch silently swallowed the Shell failure.
+    DEBUG ((DEBUG_ERROR, "RegisterFvBootOption: CreateFvBootOption('%s') failed - %r\n",
+            Description, Status));
+
     // The Shell is optional.  If the shell cannot be created (due to not in image), then
     // ensure the boot option for INTERNAL SHELL is deleted.
     if (0 == StrCmp (INTERNAL_UEFI_SHELL_NAME, Description)) {
@@ -414,9 +430,39 @@ MsBootOptionsLibRegisterDefaultBootOptions (
   VOID
   )
 {
+  //
+  // J704 bring-up: the Shell is registered FIRST, ahead of USB.
+  //
+  // Registration order is boot order. With the shell at Boot0003 (after USB
+  // Storage and Internal Storage) it was never reached: the USB Storage attempt
+  // hangs after "UsbRootHubInit: root hub ... 2 ports", and because the guest
+  // then spins on MMIO to mapped pages without ever exiting to EL2, it stops
+  // petting m1n1's hypervisor watchdog. That barks after WDT_TIMEOUT (1s) and
+  // calls reboot(), so the machine silently restarts back into m1n1 -- the
+  // breadcrumb dump goes out the physical UART, which nothing is attached to.
+  //
+  // Shell-first bypasses that entirely and is the direct test of "does UEFI
+  // reach a working interactive application". USB/SDD/PXE are still registered
+  // after it, so if the shell exits the old order resumes.
+  //
+  // Revisit once the USB Storage hang itself is fixed -- booting real media
+  // needs USB to work, so this ordering is a diagnostic, not a destination.
+  //
+  RegisterFvBootOption (PcdGetPtr (PcdShellFile), INTERNAL_UEFI_SHELL_NAME, (UINTN)-1, LOAD_OPTION_ACTIVE, NULL, 0);
   RegisterFvBootOption (&gMsBootPolicyFileGuid, MS_USB_BOOT, (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)MS_USB_BOOT_PARM, sizeof (MS_USB_BOOT_PARM));
   RegisterFvBootOption (&gMsBootPolicyFileGuid, MS_SDD_BOOT, (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)MS_SDD_BOOT_PARM, sizeof (MS_SDD_BOOT_PARM));
-  //RegisterFvBootOption (PcdGetPtr (PcdShellFile), INTERNAL_UEFI_SHELL_NAME, (UINTN)-1, LOAD_OPTION_ACTIVE, NULL, 0);
+  //
+  // Was enabled for J704 bring-up here; moved above. The Shell is already in FvMain -- FrontpageFdf.inc
+  // places it as FILE APPLICATION=PCD(PcdShellFile) wrapping AARCH64/Shell.efi --
+  // but with this commented out BDS never created a boot option for it, so the
+  // only paths were USB / SDD / PXE. Verified in the uncompressed FVMAIN.Fv that
+  // the PcdShellFile GUID (C57AD6B7-0515-40A8-9D21-551652854E37) really is
+  // present, so this option resolves to a real FFS file.
+  //
+  // Value: an interactive prompt that needs no USB storage, no DART, no XHCI and
+  // no FAT driver -- it separates "does UEFI reach a working application" from
+  // "does USB storage work".
+  //
   RegisterFvBootOption (&gMsBootPolicyFileGuid, MS_PXE_BOOT, (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)MS_PXE_BOOT_PARM, sizeof (MS_PXE_BOOT_PARM));
   //RegisterFvBootOption (PcdGetPtr (PcdUIApplicationFile), INTERNAL_UEFI_FP_NAME, (UINTN)-1, LOAD_OPTION_ACTIVE, NULL, 0);
 }
@@ -450,8 +496,14 @@ MsBootOptionsLibGetDefaultOptions (
   Status |= CreateFvBootOption (&gMsBootPolicyFileGuid, MS_SDD_BOOT, &Option[1], LOAD_OPTION_ACTIVE, (UINT8 *)MS_SDD_BOOT_PARM, sizeof (MS_SDD_BOOT_PARM));
   Status |= CreateFvBootOption (&gMsBootPolicyFileGuid, MS_PXE_BOOT, &Option[2], LOAD_OPTION_ACTIVE, (UINT8 *)MS_PXE_BOOT_PARM, sizeof (MS_PXE_BOOT_PARM));
 
-  //Status2 = CreateFvBootOption (PcdGetPtr (PcdShellFile), INTERNAL_UEFI_SHELL_NAME, &Option[3], LOAD_OPTION_ACTIVE, NULL, 0);
-  Status2 = EFI_UNSUPPORTED;
+  //
+  // Enabled alongside the RegisterFvBootOption call above. Nothing else had to
+  // change: LocalOptionCount is already initialised to 4 and Option[3] is
+  // already allocated for the shell, and the EFI_ERROR path below already
+  // degrades gracefully ("the shell is optional"). The hardcoded
+  // Status2 = EFI_UNSUPPORTED that used to stand in for the call is gone.
+  //
+  Status2 = CreateFvBootOption (PcdGetPtr (PcdShellFile), INTERNAL_UEFI_SHELL_NAME, &Option[3], LOAD_OPTION_ACTIVE, NULL, 0);
   if (EFI_ERROR (Status2)) {
     // The shell is optional.  So, ignore that we cannot create it.
     LocalOptionCount--;
