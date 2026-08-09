@@ -1,7 +1,7 @@
 /*
  * Host-side, hardware-free regression test for the m1n1 -> Mu wireless DART
  * handoff validator in
- * Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/J414sWirelessHandoff.h.
+ * Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/WirelessHandoff.h.
  *
  * WHY THIS MATTERS NOW. Until 2026-07-30 the reservation travelled from PEI
  * to DXE through PcdAppleWirelessDartPageTableBase/Size, which are
@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/J414sWirelessHandoff.h"
+#include "../Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/WirelessHandoff.h"
 
 static int gFailures = 0;
 

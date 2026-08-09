@@ -30,7 +30,7 @@ DRIVER_INF = ROOT / (
 )
 PACKAGE_DEC = ROOT / "Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dec"
 PLATFORM_DSC = ROOT / "Platform/MacBookProEarly2023Pkg/MacBookProEarly2023.dsc"
-MANIFEST_MODULE = ROOT / "Tools/j414s_mu_profile_manifest.py"
+MANIFEST_MODULE = ROOT / "Tools/mu_profile_manifest.py"
 
 # m1n1 owns the mux encoding; parse it rather than transcribe it, so the two
 # repositories cannot drift silently.

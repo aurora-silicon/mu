@@ -30,7 +30,7 @@
 //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
 #include <Library/T602XFamilyVirtualMemoryMapDefines.h>
 #include <AppendedRamdisk.h>
-#include <IndustryStandard/J414sWirelessHandoff.h>
+#include <IndustryStandard/WirelessHandoff.h>
 
 // Bumped from 44 on 2026-07-30 to make room for
 // APPLE_CORE_SYSTEM_MMIO_RANGE_17 (the /arm-io/ans MMIO-gap fix) without

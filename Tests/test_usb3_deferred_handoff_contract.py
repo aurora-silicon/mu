@@ -13,7 +13,7 @@ DRIVER = ROOT / (
 )
 PLATFORM_DSC = ROOT / "Platform/MacBookProEarly2023Pkg/MacBookProEarly2023.dsc"
 PLATFORM_BUILD = ROOT / "Platform/MacBookProEarly2023Pkg/PlatformBuild.py"
-MANIFEST_MODULE = ROOT / "Tools/j414s_mu_profile_manifest.py"
+MANIFEST_MODULE = ROOT / "Tools/mu_profile_manifest.py"
 # m1n1 is the authority for what each PHY mode actually programs. Parsed,
 # not transcribed, so the two repositories cannot drift silently.
 M1N1 = ROOT.parent / "m1n1"

@@ -296,7 +296,7 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             # 2026-08-01: ans-gpu-wireless MINUS the GPU, added because no
             # existing profile was genuinely GPU-free.  "ans-gpu-wireless" with
             # NTAS0023 publication turned off is NOT that: it still builds with
-            # NTASI_J414S_GPU_RESOURCE_PROFILE=1, so it carves the GPU
+            # NTASI_GPU_RESOURCE_PROFILE=1, so it carves the GPU
             # reservations out of the memory map while publishing no device to
             # own them.  Windows then boots against a map with holes for a
             # device that does not exist, and dies before the desktop.  Here
@@ -311,7 +311,7 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             "ans-gpu-wireless-media": {"ans": "TRUE", "ans_acpi": "TRUE", "gpu": "1", "wireless": "1", "media": "1"},
             # Single-variable control for NTAS0023, exactly as ans-noacpi is for
             # NTAS2003: the GPU carveouts are still reserved in the GCD and all
-            # of the NTASI_J414S_GPU_RESOURCE_PROFILE code is still compiled in,
+            # of the NTASI_GPU_RESOURCE_PROFILE code is still compiled in,
             # but the ACPI device is never published.
             #
             # ADDED 2026-07-31. Tools/j414s_mu_profile_manifest.py PROFILES has
@@ -450,7 +450,7 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             "Selected by NTASI_MU_PROFILE",
         )
         self.env.SetValue(
-            "BLD_*_NTASI_J414S_GPU_RESOURCE_PROFILE",
+            "BLD_*_NTASI_GPU_RESOURCE_PROFILE",
             profile_values[profile]["gpu"],
             "Selected by NTASI_MU_PROFILE",
         )
@@ -478,7 +478,7 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
         # boot's PEI phase ever writes a nonzero value. Enabling the
         # NTASI_ENABLE_WIRELESS_DART_HANDOFF code paths is now a pure
         # source-flag decision, exactly like NTASI_ENABLE_ANS and
-        # NTASI_J414S_GPU_RESOURCE_PROFILE above.
+        # NTASI_GPU_RESOURCE_PROFILE above.
         self.env.SetValue(
             "BLD_*_NTASI_ENABLE_WIRELESS_DART_HANDOFF",
             profile_values[profile]["wireless"],

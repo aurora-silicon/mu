@@ -16,11 +16,11 @@ source fingerprint changed, and verifies the sealed artifact. Add
 Direct firmware build:
 
 ```sh
-Tools/build-j414s-windows-native.sh <profile>
+Tools/build-windows-native.sh j414s <profile>
 ```
 
 The authoritative profile list is `PROFILES` in
-`Tools/j414s_mu_profile_manifest.py`. Native output defaults to the main
+`Tools/mu_profile_manifest.py`. Native output defaults to the main
 AuroraSilicon repository:
 
 ```text
@@ -34,10 +34,11 @@ initialized recursively.
 Verify an artifact without rebuilding:
 
 ```sh
-.venv-native/bin/python Tools/j414s_mu_profile_manifest.py verify \
+.venv-native/bin/python Tools/mu_profile_manifest.py verify \
   --manifest <artifact-directory>/manifest.json \
   --source-root .
 ```
 
 Only DEBUG/CLANGPDB firmware is currently supported by the J414s native
-builder.
+target profile. `Tools/build-j414s-windows-native.sh` remains as a compatibility
+entry point and supplies `j414s` to the generic builder.

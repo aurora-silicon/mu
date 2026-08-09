@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-MODULE_PATH = REPO / "Tools" / "j414s_mu_profile_manifest.py"
+MODULE_PATH = REPO / "Tools" / "mu_profile_manifest.py"
 SPEC = importlib.util.spec_from_file_location("j414s_mu_profile_manifest", MODULE_PATH)
 M = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -37,6 +37,7 @@ def valid_shape(profile: str = "baseline") -> dict[str, object]:
     # hardcoded hw_data_a over Mu's own PEI stack).
     return {
         "schema": M.SCHEMA,
+        "target": "j414s",
         "artifact_status": "READY_FOR_SUPERVISED_HARDWARE_TEST",
         "hardware_touched": False,
         "profile": M.profile_policy(profile),
@@ -81,6 +82,18 @@ def valid_shape(profile: str = "baseline") -> dict[str, object]:
 
 
 class ContractShapeTests(unittest.TestCase):
+    def test_v3_requires_an_explicit_target(self):
+        manifest = valid_shape()
+        manifest.pop("target")
+        with self.assertRaises(M.ManifestError):
+            M.validate_shape(manifest)
+
+    def test_legacy_v2_shape_remains_readable(self):
+        manifest = valid_shape()
+        manifest["schema"] = "ntasi.j414s.mu-profile.v2"
+        manifest.pop("target")
+        M.validate_shape(manifest)
+
     def test_all_profile_abis_are_distinct_and_wireless_is_explicit(self):
         abis = set()
         for profile in M.PROFILES:
@@ -253,7 +266,7 @@ class EvidenceParserTests(unittest.TestCase):
         # MemoryInitPeiLib.c now derives the reservation at PEI runtime from
         # that boot's own boot_args, so the builder takes no manifest and
         # invokes no m1n1-side verifier for any profile, wireless included.
-        wrapper = (REPO / "Tools/build-j414s-windows-native.sh").read_text()
+        wrapper = (REPO / "Tools/build-windows-native.sh").read_text()
         self.assertNotIn("j414s-wireless-handoff-manifest.py", wrapper)
         self.assertNotIn("wireless-handoff.json", wrapper)
         self.assertNotIn("wireless_manifest", wrapper)

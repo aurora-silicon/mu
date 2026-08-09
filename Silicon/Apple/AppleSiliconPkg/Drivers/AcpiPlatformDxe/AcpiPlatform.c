@@ -34,7 +34,7 @@
 #include <Library/PrintLib.h>
 
 #include <IndustryStandard/Acpi.h>
-#include <IndustryStandard/J414sWirelessHandoff.h>
+#include <IndustryStandard/WirelessHandoff.h>
 #include <Drivers/AppleAnsHardware.h>
 //
 // Moved out of this directory on 2026-07-30 so AppleNANDStorageDxe can share
@@ -153,7 +153,7 @@ AppleAnsAddMemoryResource (
 }
 
 
-#if NTASI_J414S_GPU_RESOURCE_PROFILE
+#if NTASI_GPU_RESOURCE_PROFILE
 #include "NtasiGpuReservationGuard.h"
 
 //
@@ -253,7 +253,7 @@ STATIC_ASSERT (
 // Published GSIV for the AGX ASC mailbox doorbell. The physical line is AIC
 // 1146 (/arm-io/gfx-asc interrupts[2]), which is above the GIC carrier's 1019
 // limit and is illegal as a GSIV, so the CSRT ALI2 tail translates 46 -> 1146.
-// CSRT.aslc carries that entry under this same NTASI_J414S_GPU_RESOURCE_PROFILE
+// CSRT.aslc carries that entry under this same NTASI_GPU_RESOURCE_PROFILE
 // flag, so the two cannot get out of step.
 //
 // 46, NOT 40: 40 is the media profile's admac-sio. See the CSRT.aslc header.
@@ -1565,7 +1565,7 @@ NtasiPublishGpu (
 }
 
 #endif // NTASI_ENABLE_GPU_ACPI_PUBLICATION
-#endif // NTASI_J414S_GPU_RESOURCE_PROFILE
+#endif // NTASI_GPU_RESOURCE_PROFILE
 
 #if NTASI_ENABLE_WIRELESS_DART_HANDOFF
 #define NTASI_WIRELESS_DART_APERTURE_BASE  0x594000000ULL
@@ -1632,7 +1632,7 @@ NtasiInstallWirelessDartTable (
   // PEI now hands the authenticated reservation over in a GUID HOB, the same
   // mechanism it already uses for the appended ramdisk. DXE then
   // re-authenticates the descriptor itself, using the one shared copy of the
-  // validator in <IndustryStandard/J414sWirelessHandoff.h>, against the exact
+  // validator in <IndustryStandard/WirelessHandoff.h>, against the exact
   // guest_top PEI used. That is deliberately not a formality: it proves the
   // reservation survived all of PEI and DXE dispatch byte-intact, and
   // publishing a DART page-table base to Windows on the strength of a HOB
@@ -4121,7 +4121,7 @@ AcpiPlatformEntryPoint (
     return EFI_ABORTED;
   }
 
-#if NTASI_J414S_GPU_RESOURCE_PROFILE
+#if NTASI_GPU_RESOURCE_PROFILE
   //
   // Moved from PEI's MemoryInitPeiLib.c on 2026-07-30 (see
   // NtasiGpuReservationGuard.h for why): a bug here must never be able to

@@ -153,7 +153,7 @@ def csrt_bytes(media: int, gpu: int) -> bytes:
             [
                 _host_cc(), "-E", "-P",
                 f"-DNTASI_ENABLE_MEDIA_PUBLICATION={media}",
-                f"-DNTASI_J414S_GPU_RESOURCE_PROFILE={gpu}",
+                f"-DNTASI_GPU_RESOURCE_PROFILE={gpu}",
                 str(path),
             ],
             capture_output=True, text=True,

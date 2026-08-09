@@ -2,7 +2,7 @@
 """Compile and run the host-side wireless DART handoff validator test.
 
 This wraps Tests/test_wireless_handoff_validate.c, which compiles the real
-Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/J414sWirelessHandoff.h
+Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/WirelessHandoff.h
 verbatim against the minimal Tests/edk2stub/Base.h.
 
 It pins the validator that MemoryInitPeiLib.c (PEI) and AcpiPlatform.c (DXE)
@@ -32,7 +32,7 @@ HANDOFF_HEADER = (
     / "AppleSiliconPkg"
     / "Include"
     / "IndustryStandard"
-    / "J414sWirelessHandoff.h"
+    / "WirelessHandoff.h"
 )
 
 # Assertions that must appear by name. A future edit that narrows the suite

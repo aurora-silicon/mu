@@ -289,7 +289,7 @@ class MediaCsrt(unittest.TestCase):
                     "-E",
                     "-P",
                     f"-DNTASI_ENABLE_MEDIA_PUBLICATION={media}",
-                    f"-DNTASI_J414S_GPU_RESOURCE_PROFILE={gpu}",
+                    f"-DNTASI_GPU_RESOURCE_PROFILE={gpu}",
                     str(path),
                 ],
                 capture_output=True,
@@ -413,7 +413,7 @@ class MediaCsrt(unittest.TestCase):
                 [
                     _host_cc(), "-std=c11", "-c", "-o", os.devnull,
                     f"-DNTASI_ENABLE_MEDIA_PUBLICATION={media}",
-                    f"-DNTASI_J414S_GPU_RESOURCE_PROFILE={gpu}",
+                    f"-DNTASI_GPU_RESOURCE_PROFILE={gpu}",
                     str(path),
                 ],
                 capture_output=True,

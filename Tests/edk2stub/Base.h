@@ -7,7 +7,7 @@
  * and DXE (AcpiPlatform.c) now share can be regression-tested without an EDK2
  * build, a cross toolchain, or hardware -- the same principle as
  * NtasiGpuReservationGuard.h and NtasiAnsPmgrResolve.h, which avoid EDK2
- * headers entirely. J414sWirelessHandoff.h cannot do that: it is a wire-ABI
+ * headers entirely. WirelessHandoff.h cannot do that: it is a wire-ABI
  * header that must use EDK II's exact types and packing in firmware.
  *
  * Only the constructs that header actually uses are defined. It is not a

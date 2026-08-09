@@ -12,6 +12,7 @@ Silicon/AppleSiliconPkg/Include/Resources/ReleaseInfo.h
 .venv-native
 
 /Build/
+/build-out*/
 .DS_Store
 *_extdep/
 *.pyc
