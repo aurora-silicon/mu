@@ -26,6 +26,7 @@
 
 [FixedPcd]
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartBase
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartMmioEnabled
   # Reported back from SerialPortSetAttributes(). The UART is fixed-configuration,
   # so these are what is actually in effect regardless of what a caller asks for.
   gEfiMdePkgTokenSpaceGuid.PcdUartDefaultBaudRate

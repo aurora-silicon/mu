@@ -81,7 +81,10 @@
 
   #variable size
   gEfiMdeModulePkgTokenSpaceGuid.PcdMaxVariableSize|0x2000
-  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut|3
+!ifndef NTASI_PLATFORM_BOOT_TIMEOUT
+  DEFINE NTASI_PLATFORM_BOOT_TIMEOUT = 3
+!endif
+  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut|$(NTASI_PLATFORM_BOOT_TIMEOUT)
   gEfiMdePkgTokenSpaceGuid.PcdUartDefaultBaudRate|115200
   #
   # Make VariableRuntimeDxe work at emulated non-volatile variable mode.

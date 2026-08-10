@@ -6,6 +6,10 @@ const struct ntasi_ans_hw ntasi_ans_hw_t8015 = {
     .max_queue_depth = 16,
     .admin_queue_depth = 16,
     .io_command_stride = 128,
+    .linear_sq_ctrl_present = false,
+    .prp_null_check_ctrl_present = false,
+    .max_pend_cmds_ctrl_present = false,
+    .secure_io_queue_registers = false,
 };
 
 const struct ntasi_ans_hw ntasi_ans_hw_t8103 = {
@@ -13,6 +17,21 @@ const struct ntasi_ans_hw ntasi_ans_hw_t8103 = {
     .max_queue_depth = 64,
     .admin_queue_depth = 2,
     .io_command_stride = NTASI_ANS_SQE_SIZE,
+    .linear_sq_ctrl_present = true,
+    .prp_null_check_ctrl_present = true,
+    .max_pend_cmds_ctrl_present = true,
+    .secure_io_queue_registers = false,
+};
+
+const struct ntasi_ans_hw ntasi_ans_hw_t8142 = {
+    .submission_mode = NTASI_ANS_SUBMISSION_LINEAR_NVMMU,
+    .max_queue_depth = 64,
+    .admin_queue_depth = 2,
+    .io_command_stride = NTASI_ANS_SQE_SIZE,
+    .linear_sq_ctrl_present = false,
+    .prp_null_check_ctrl_present = false,
+    .max_pend_cmds_ctrl_present = false,
+    .secure_io_queue_registers = true,
 };
 
 uint32_t ntasi_ans_aqa(uint32_t slots)
@@ -94,7 +113,7 @@ void ntasi_ans_tcb_fill(struct ntasi_ans_tcb *tcb,
                         const struct ntasi_ans_sqe *sqe,
                         enum ntasi_ans_dma_direction direction)
 {
-    /* Linux apple.c:826-837. */
+    /* The NVMMU shadow must describe the same command as the SQE. */
     *tcb = (struct ntasi_ans_tcb){0};
     tcb->opcode = sqe->opcode;
     tcb->dma_flags = (uint8_t)direction;

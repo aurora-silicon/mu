@@ -55,7 +55,7 @@ NumBlocks     = 0x780
 #
 # Implement the Linux kernel header layout so that the loader (m1n1) will identify
 # it as something bootable, and execute it with a FDT pointer in x0 or r2.
-0x000000000|0x000008000
+0x000000000|0x000000100
 DATA = {
   0x01, 0x00, 0x00, 0x10,                         # code0: adr x1, .
   0xff, 0x1f, 0x00, 0x14,                         # code1: b 0x8000
@@ -67,6 +67,14 @@ DATA = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res4
   0x41, 0x52, 0x4d, 0x64,                         # magic: "ARM\x64"
   0x00, 0x00, 0x00, 0x00                          # res5
+}
+
+# Host-visible ANS stage record outside the compressed FV.  No EL2 code writes
+# this location; AppleNANDStorageDxe replaces the SANCHECK word from EL1.
+0x000000100|0x000000010
+DATA = {
+  0x41, 0x55, 0x52, 0x41, 0x4e, 0x53, 0x4e, 0x56, # "AURANSNV"
+  0x53, 0x41, 0x4e, 0x43, 0x48, 0x45, 0x43, 0x4b  # "SANCHECK"
 }
 
 
@@ -165,10 +173,8 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   #INF MdeModulePkg/Bus/Pci/PciBusDxe/PciBusDxe.inf
   INF MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceDxe.inf
 
-  #NVMe Support
-  #TODO: ANS2/SART driver
-  #INF AppleSiliconPkg/Drivers/AppleANS2Dxe/AppleANS2Dxe.inf
-  #INF MdeModulePkg/Bus/Pci/NvmExpressDxe/NvmExpressDxe.inf
+  # Internal Apple ANS/NVMe is dispatched late below, after ACPI and the
+  # filesystem stack are present. It is not a PCIe/NvmExpressDxe device.
 
   #
   # Virtual Keyboard
@@ -266,7 +272,9 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   # carries a real hang risk. Comment it out to get back to a build that is only
   # startup.nsh.
   #
+!if $(MTP_HID_BUILD) == TRUE
   INF AppleSiliconPkg/Drivers/AppleMtpHidDxe/AppleMtpHidDxe.inf
+!endif
 
   #
   # Usb Support
@@ -321,6 +329,15 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   #
   INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf
   INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+
+  #
+  # Firmware-owned internal storage. The internal-storage profile attaches to
+  # iBoot's live ANS/RTKit state, exposes read-only EFI Block I/O, and preserves
+  # the warm handoff state for the eventual Windows boot-start miniport.
+  #
+!if $(NTASI_ENABLE_ANS) == TRUE
+  INF AppleSiliconPkg/Drivers/AppleNANDStorageDxe/AppleNANDStorageDxe.inf
+!endif
 
   #
   # UEFI applications

@@ -32,20 +32,19 @@ dir FS1:
 dir FS1:\EFI\BOOT
 
 echo .
-echo ==================== PHASE 1.3: execute a PE from FS1 ====================
-echo FW-10 proved FS1 mounts and files are readable. That only exercises
-echo DiskIo/Partition/Fat. This additionally loads and relocates a PE image from
-echo the RAM disk, which is what bootaa64.efi will need to do.
+echo ==================== PHASE 2.1: read-only GPT storage probe ==============
+echo Hello World already proved that FS1 can load and relocate an AArch64 PE.
+echo This payload enumerates Block I/O handles and reads only LBA 0, LBA 1,
+echo and the primary GPT entry array. It never calls WriteBlocks.
 echo .
-echo Expect: UEFI Hello World! then a return to this script.
+echo Expect: AURORA STORAGE PROBE BEGIN, per-device read status, and GPT data.
 echo .
 
 FS1:\EFI\BOOT\BOOTAA64.EFI
 
 echo .
-echo ==================== PE EXECUTION RETURNED ====================
-echo If the Hello World line appeared above, Phase 1 is complete: this machine can
-echo boot an arbitrary AArch64 UEFI application from a non-firmware volume.
+echo ==================== STORAGE PROBE RETURNED ==============================
+echo Review SPROBE lines on the VUART for the exact device and LBA result.
 
 echo .
 echo ==================== J813-STARTUP-NSH END ====================

@@ -8,6 +8,7 @@
 
 #include <Guid/EventGroup.h>
 #if !defined (APPLE_ANS_QEMU_TEST)
+#include <Guid/AppleFdInfoHob.h>
 #include <Library/AppleDTLib.h>
 #endif
 #include <Library/ArmLib.h>
@@ -15,6 +16,7 @@
 #include <Library/BaseMemoryLib.h>
 #if !defined (APPLE_ANS_QEMU_TEST)
 #include <Library/DebugLib.h>
+#include <Library/HobLib.h>
 #else
 #include <Library/DxeServicesTableLib.h>
 #endif
@@ -58,6 +60,118 @@
 #define ANS_DEBUG(Expression)  do { } while (FALSE)
 #else
 #define ANS_DEBUG(Expression)  DEBUG (Expression)
+#endif
+
+#if !defined (APPLE_ANS_QEMU_TEST)
+#define ANS_CHECKPOINT_MAGIC          0x564E534E41525541ULL
+#define ANS_CHECKPOINT_UNINITIALIZED  0x4B434548434E4153ULL
+
+typedef struct {
+  UINT64          Magic;
+  volatile UINT64 Stage;
+} MU_CHECKPOINT_RECORD;
+
+STATIC volatile MU_CHECKPOINT_RECORD  *mFdAnsCheckpoint;
+
+STATIC
+VOID
+AnsVisualCheckpoint (
+  IN UINT64  Stage
+  )
+{
+  STATIC CONST UINT64  Stages[] = {
+    0x200, 0x210, 0x220, 0x230, 0x240, 0x250, 0x260,
+    0x270, 0x280, 0x290, 0x2A0, 0x2B0, 0x2C0, 0x2D0,
+    0x2FF
+  };
+  STATIC CONST UINT32  Colors[] = {
+    0x00FFFFFF,
+    0x0000FFFF,
+    0x0000FF00,
+    0x00FFFF00,
+    0x00FF8000,
+    0x00FF00FF,
+    0x00FF0000
+  };
+  CONST struct boot_args  *BootArgs;
+  volatile UINT32         *Row;
+  UINTN                   Index;
+  UINTN                   X;
+  UINTN                   Y;
+  UINTN                   XStart;
+  UINTN                   YStart;
+
+  for (Index = 0; Index < ARRAY_SIZE (Stages); Index++) {
+    if (Stages[Index] == Stage) {
+      break;
+    }
+  }
+
+  if (Index == ARRAY_SIZE (Stages)) {
+    return;
+  }
+
+  BootArgs = (CONST struct boot_args *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
+  if ((BootArgs == NULL) || (BootArgs->video.base == 0) ||
+      (BootArgs->video.stride < sizeof (UINT32)) ||
+      (BootArgs->video.width < 448) || (BootArgs->video.height < 224)) {
+    return;
+  }
+
+  XStart = 24 + ((Index % ARRAY_SIZE (Colors)) * 56);
+  YStart = 152 + ((Index / ARRAY_SIZE (Colors)) * 32);
+  for (Y = YStart; Y < (YStart + 24); Y++) {
+    Row = (volatile UINT32 *)(UINTN)(
+                                  BootArgs->video.base +
+                                  (Y * BootArgs->video.stride)
+                                  );
+    for (X = XStart; X < (XStart + 48); X++) {
+      Row[X] = Colors[Index % ARRAY_SIZE (Colors)];
+    }
+  }
+
+  ArmDataMemoryBarrier ();
+}
+
+STATIC
+VOID
+AnsCheckpoint (
+  IN UINT64  Stage
+  )
+{
+  EFI_HOB_GUID_TYPE               *GuidHob;
+  APPLE_FD_INFO_HOB               *FdInfo;
+  volatile MU_CHECKPOINT_RECORD   *Candidate;
+  UINT64                          Offset;
+
+  // Draw first so even a fault while locating the persistent FD record proves
+  // that DXE dispatched this driver and names the last reached bring-up stage.
+  AnsVisualCheckpoint (Stage);
+
+  if (mFdAnsCheckpoint == NULL) {
+    GuidHob = GetFirstGuidHob (&gAppleSiliconPkgFdInfoHobGuid);
+    if (GuidHob == NULL) {
+      return;
+    }
+
+    FdInfo = GET_GUID_HOB_DATA (GuidHob);
+    for (Offset = 0; Offset + sizeof (*Candidate) <= FdInfo->FdSize; Offset += sizeof (UINT64)) {
+      Candidate = (volatile MU_CHECKPOINT_RECORD *)(UINTN)(FdInfo->FdBase + Offset);
+      if ((Candidate->Magic == ANS_CHECKPOINT_MAGIC) &&
+          (Candidate->Stage == ANS_CHECKPOINT_UNINITIALIZED)) {
+        mFdAnsCheckpoint = Candidate;
+        break;
+      }
+    }
+  }
+
+  if (mFdAnsCheckpoint != NULL) {
+    mFdAnsCheckpoint->Stage = Stage;
+    ArmDataMemoryBarrier ();
+  }
+}
+#else
+#define AnsCheckpoint(Stage)  do { } while (FALSE)
 #endif
 
 #if defined (APPLE_ANS_QEMU_TEST)
@@ -163,6 +277,7 @@ typedef struct {
   VOID                              *SimpleFileSystemRegistration;
   UINTN                             CpuBase;
   UINTN                             MailboxBase;
+  UINTN                             NvmeStandardBase;
   UINTN                             NvmeBase;
   UINTN                             SartBase;
   CONST struct ntasi_ans_hw         *NvmeHw;
@@ -193,6 +308,10 @@ typedef struct {
   BOOLEAN                           ReadyToBootDiagnosticsComplete;
   BOOLEAN                           InheritedCoprocessor;
   BOOLEAN                           InheritedSartMemoryReserved;
+  UINT32                            LastNvmeReadOffset;
+  UINT32                            LastNvmeWriteOffset;
+  BOOLEAN                           LastNvmeReadValid;
+  BOOLEAN                           LastNvmeWriteValid;
   BOOLEAN                           Fatal;
   BOOLEAN                           HandedOff;
 } APPLE_ANS_DEVICE;
@@ -1193,7 +1312,20 @@ NvmeRead32 (
   )
 {
   APPLE_ANS_DEVICE  *Device = Opaque;
-  return MmioRead32 (Device->NvmeBase + Offset);
+  UINTN             Base;
+
+  if (!Device->LastNvmeReadValid || (Device->LastNvmeReadOffset != Offset)) {
+    ANS_DEBUG ((DEBUG_INFO, "AppleANS: NVMe MMIO read  +0x%05x\n", Offset));
+    Device->LastNvmeReadOffset = Offset;
+    Device->LastNvmeReadValid  = TRUE;
+  }
+
+  Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
+          ((Device->NvmeHw == &ntasi_ans_hw_t8142) &&
+           (Offset >= NTASI_ANS_REG_T8142_IOSQ_ADDR) &&
+           (Offset <= (NTASI_ANS_REG_T8142_IOQA + sizeof (UINT32))))) ?
+           Device->NvmeStandardBase : Device->NvmeBase;
+  return MmioRead32 (Base + Offset);
 }
 
 STATIC VOID
@@ -1204,7 +1336,41 @@ NvmeWrite32 (
   )
 {
   APPLE_ANS_DEVICE  *Device = Opaque;
-  MmioWrite32 (Device->NvmeBase + Offset, Value);
+  UINTN             Base;
+
+  if (!Device->LastNvmeWriteValid || (Device->LastNvmeWriteOffset != Offset)) {
+    ANS_DEBUG ((DEBUG_INFO, "AppleANS: NVMe MMIO write +0x%05x = 0x%08x\n", Offset, Value));
+    Device->LastNvmeWriteOffset = Offset;
+    Device->LastNvmeWriteValid  = TRUE;
+  }
+
+  Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
+          ((Device->NvmeHw == &ntasi_ans_hw_t8142) &&
+           (Offset >= NTASI_ANS_REG_T8142_IOSQ_ADDR) &&
+           (Offset <= (NTASI_ANS_REG_T8142_IOQA + sizeof (UINT32))))) ?
+           Device->NvmeStandardBase : Device->NvmeBase;
+  MmioWrite32 (Base + Offset, Value);
+}
+
+STATIC VOID
+NvmeWrite64 (
+  IN VOID   *Opaque,
+  IN UINT32 Offset,
+  IN UINT64 Value
+  )
+{
+  APPLE_ANS_DEVICE  *Device = Opaque;
+  UINTN             Base;
+
+  ANS_DEBUG ((DEBUG_INFO, "AppleANS: NVMe MMIO write64 +0x%05x = 0x%016Lx\n", Offset, Value));
+  Device->LastNvmeWriteOffset = Offset;
+  Device->LastNvmeWriteValid  = TRUE;
+  Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
+          ((Device->NvmeHw == &ntasi_ans_hw_t8142) &&
+           (Offset >= NTASI_ANS_REG_T8142_IOSQ_ADDR) &&
+           (Offset <= (NTASI_ANS_REG_T8142_IOQA + sizeof (UINT32))))) ?
+           Device->NvmeStandardBase : Device->NvmeBase;
+  MmioWrite64 (Base + Offset, Value);
 }
 
 STATIC VOID
@@ -2423,20 +2589,33 @@ AnsExitBootServices (
     ));
 
   if (Stopped) {
-    EFI_STATUS  ResetStatus;
-    UINT32      ResetFinalValue;
+    CONST CHAR8  *ControllerDomain;
+    EFI_STATUS    ResetStatus;
+    UINT32        ResetFinalValue;
+    UINT64        ControllerAddress;
 
-    ResetFinalValue = 0;
-    ResetStatus     = AppleAnsPmgrResetDomain (
-                        "AppleANS",
-                        "ANS2",
-                        FixedPcdGet64 (PcdAppleAnsPmgrResetBase),
-                        &ResetFinalValue
-                        );
+    ControllerDomain  = NULL;
+    ControllerAddress = 0;
+    ResetFinalValue   = 0;
+    ResetStatus       = AppleAnsPmgrSelectDomain (
+                          "AppleANS",
+                          "ANS2",
+                          "ANS",
+                          &ControllerDomain,
+                          &ControllerAddress
+                          );
+    if (!EFI_ERROR (ResetStatus)) {
+      ResetStatus = AppleAnsPmgrResetDomain (
+                      "AppleANS",
+                      ControllerDomain,
+                      FixedPcdGet64 (PcdAppleAnsPmgrResetBase),
+                      &ResetFinalValue
+                      );
+    }
     if (EFI_ERROR (ResetStatus)) {
       ANS_DEBUG ((
         DEBUG_ERROR,
-        "AppleANS: ANS2 PMGR reset did not complete (%r, last power-state word 0x%08x); "
+        "AppleANS: controller PMGR reset did not complete (%r, last power-state word 0x%08x); "
         "the block is halted but its fabric interface was NOT quiesced\n",
         ResetStatus,
         ResetFinalValue
@@ -2444,7 +2623,8 @@ AnsExitBootServices (
     } else {
       ANS_DEBUG ((
         DEBUG_INFO,
-        "AppleANS: ANS2 PMGR reset converged; power-state word 0x%08x\n",
+        "AppleANS: %a PMGR reset converged; power-state word 0x%08x\n",
+        ControllerDomain,
         ResetFinalValue
         ));
       //
@@ -2478,7 +2658,8 @@ AnsExitBootServices (
 // property is zero-length (see Include/Drivers/AppleAnsPmgrDomain.h for the
 // full reasoning and the hardware measurements). This firmware therefore
 // does not enable, reset, or write anything either. What it does do is say,
-// on every ANS boot, what state the four domains were actually in -- so that
+// on every ANS boot, what state the platform's ANS domains were actually in --
+// T602x has four and T8142 has three -- so that
 // if a future boot does find ANS gated, the log names the domain instead of
 // leaving a bare MMIO stall with no explanation.
 //
@@ -2488,7 +2669,7 @@ AnsExitBootServices (
 //   * A domain positively decoded as NOT ACTIVE is reported at DEBUG_ERROR
 //     and bring-up continues anyway. Refusing here would be a regression
 //     risk with no upside: ANS bring-up is known to work on this hardware
-//     with all four domains ACTIVE, and this firmware has no sanctioned way
+//     with all required domains ACTIVE, and this firmware has no sanctioned way
 //     to fix a gated domain (m1n1 has none either).
 //
 // The cross-check against the DSC PCDs is the reason a "NOT ACTIVE" verdict
@@ -2502,24 +2683,71 @@ ReportAnsPmgrDomains (
   )
 {
   STATIC CONST CHAR8  Tag[] = "AppleANS";
-  CONST struct {
+  struct {
     CONST CHAR8  *Name;
     UINT64       Expected;
-  } Domains[] = {
-    { "ANS2",          FixedPcdGet64 (PcdAppleAnsPmgrResetBase)        },
-    { "APCIE_ST",      FixedPcdGet64 (PcdAppleAnsPmgrApcieStBase)      },
-    { "APCIE_ST_SYS",  FixedPcdGet64 (PcdAppleAnsPmgrApcieStSysBase)   },
-    { "APCIE_ST1_SYS", FixedPcdGet64 (PcdAppleAnsPmgrApcieSt1SysBase)  },
-  };
+  } Domains[4];
+  CONST CHAR8  *ControllerDomain;
+  CONST CHAR8  *SystemStorageDomain;
+  UINT64        DomainAddress;
+  UINT64        FourthDomainExpected;
+  UINTN         DomainCount;
+  UINTN         ExpectedDomainCount;
   UINTN    Index;
   UINTN    ResolvedCount;
   UINTN    GatedCount;
   BOOLEAN  Resolved;
   BOOLEAN  Active;
 
+  DomainCount           = 0;
+  ExpectedDomainCount   = 3;
+  ControllerDomain      = NULL;
+  SystemStorageDomain   = NULL;
+  DomainAddress         = 0;
+  FourthDomainExpected  = FixedPcdGet64 (PcdAppleAnsPmgrApcieSt1SysBase);
+
+  if (!EFI_ERROR (AppleAnsPmgrSelectDomain (
+                    Tag,
+                    "ANS2",
+                    "ANS",
+                    &ControllerDomain,
+                    &DomainAddress
+                    )))
+  {
+    Domains[DomainCount].Name     = ControllerDomain;
+    Domains[DomainCount].Expected = FixedPcdGet64 (PcdAppleAnsPmgrResetBase);
+    DomainCount++;
+  }
+
+  Domains[DomainCount].Name     = "APCIE_ST";
+  Domains[DomainCount].Expected = FixedPcdGet64 (PcdAppleAnsPmgrApcieStBase);
+  DomainCount++;
+
+  if (!EFI_ERROR (AppleAnsPmgrSelectDomain (
+                    Tag,
+                    "APCIE_ST_SYS",
+                    "APCIE_SYS_ST",
+                    &SystemStorageDomain,
+                    &DomainAddress
+                    )))
+  {
+    Domains[DomainCount].Name     = SystemStorageDomain;
+    Domains[DomainCount].Expected = FixedPcdGet64 (PcdAppleAnsPmgrApcieStSysBase);
+    DomainCount++;
+  }
+
+  // T602x has this fourth domain; T8142 does not, and records that fact with
+  // a zero PCD rather than inventing an address or aliasing another register.
+  if (FourthDomainExpected != 0) {
+    Domains[DomainCount].Name     = "APCIE_ST1_SYS";
+    Domains[DomainCount].Expected = FourthDomainExpected;
+    DomainCount++;
+    ExpectedDomainCount++;
+  }
+
   ResolvedCount = 0;
   GatedCount    = 0;
-  for (Index = 0; Index < ARRAY_SIZE (Domains); Index++) {
+  for (Index = 0; Index < DomainCount; Index++) {
     AppleAnsPmgrReportDomain (
       Tag,
       Domains[Index].Name,
@@ -2544,17 +2772,21 @@ ReportAnsPmgrDomains (
       (UINT64)GatedCount,
       (UINT64)ResolvedCount
       ));
-  } else if (ResolvedCount == ARRAY_SIZE (Domains)) {
+  } else if ((ResolvedCount == ExpectedDomainCount) &&
+             (DomainCount == ExpectedDomainCount))
+  {
     ANS_DEBUG ((
       DEBUG_INFO,
-      "AppleANS: all four ANS PMGR domains resolved from the live ADT and are ACTIVE\n"
+      "AppleANS: all %Lu required ANS PMGR domains resolved from the live ADT and are ACTIVE\n",
+      (UINT64)ExpectedDomainCount
       ));
   } else {
     ANS_DEBUG ((
       DEBUG_WARN,
-      "AppleANS: only %Lu of 4 ANS PMGR domains could be resolved and corroborated; "
+      "AppleANS: only %Lu of %Lu required ANS PMGR domains could be resolved and corroborated; "
       "power state unverified, continuing\n",
-      (UINT64)ResolvedCount
+      (UINT64)ResolvedCount,
+      (UINT64)ExpectedDomainCount
       ));
   }
 }
@@ -2654,11 +2886,14 @@ DiscoverHardware (
 {
 #if !defined (APPLE_ANS_QEMU_TEST)
   dt_node_t  *AnsNode;
+  dt_node_t  *RootNode;
   dt_node_t  *SartNode;
   UINT64     CpuBase;
   UINT64     CpuSize;
   UINT64     NvmeBase;
   UINT64     NvmeSize;
+  UINT64     NvmeStandardBase;
+  UINT64     NvmeStandardSize;
   UINT64     SartBase;
   UINT64     SartSize;
   UINT64     NvmeMinimumSize;
@@ -2667,6 +2902,8 @@ DiscoverHardware (
   UINTN      PropertySize;
   UINT32     *VersionProperty;
   BOOLEAN    Legacy;
+  BOOLEAN    T8142;
+  BOOLEAN    SecureNvmeBar;
 #endif
 
 #if defined (APPLE_ANS_QEMU_TEST)
@@ -2676,6 +2913,7 @@ DiscoverHardware (
   // firmware memory.
   Device->CpuBase     = 0x250000000ULL;
   Device->MailboxBase = Device->CpuBase + APPLE_ANS_MAILBOX_OFFSET;
+  Device->NvmeStandardBase = 0x250010000ULL;
   Device->NvmeBase    = 0x250010000ULL;
   Device->SartBase    = 0x250040000ULL;
   Device->NvmeHw      = &ntasi_ans_hw_t8103;
@@ -2684,6 +2922,7 @@ DiscoverHardware (
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: using QEMU fixed-resource profile\n"));
   return EFI_SUCCESS;
 #else
+  RootNode = dt_get ("/");
   AnsNode  = dt_get ("/arm-io/ans");
   SartNode = dt_get ("/arm-io/sart-ans");
   if ((AnsNode == NULL) || (SartNode == NULL)) {
@@ -2698,6 +2937,28 @@ DiscoverHardware (
   }
 
   Legacy = PropertyContains (AnsNode, "compatible", "t8015");
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
+  // The J813 ADT identifies /arm-io/ans only as iop,ascwrap-v6, and the
+  // AppleDTLib path walker historically does not resolve "/" to the root
+  // node.  Never let a platform-sealed T8142 build silently select the T8103
+  // register map just because either runtime identity hint is unavailable.
+  T8142 = TRUE;
+#else
+  T8142 = PropertyContains (AnsNode, "compatible", "t8142") ||
+          ((RootNode != NULL) && PropertyContains (RootNode, "compatible", "j813"));
+#endif
+  NvmeStandardBase = NvmeBase;
+  NvmeStandardSize = NvmeSize;
+  // T8142 always routes the standard NVMe register page through reg[9].  The
+  // nvme-secure-bar marker is a zero-length ADT property, so treating its
+  // value pointer as the sole presence test is unnecessarily brittle.
+  SecureNvmeBar = T8142;
+  if (SecureNvmeBar &&
+      (dt_node_reg (AnsNode, 9, &NvmeStandardBase, &NvmeStandardSize) != 0))
+  {
+    ANS_DEBUG ((DEBUG_ERROR, "AppleANS: T8142 secure NVMe reg[9] is unavailable\n"));
+    return EFI_NOT_FOUND;
+  }
   NvmeMinimumSize = Legacy ? APPLE_ANS_NVME_T8015_MIN_SIZE : APPLE_ANS_NVME_MIN_SIZE;
 
   VersionProperty = dt_node_prop (SartNode, "sart-version", &PropertySize);
@@ -2726,15 +2987,23 @@ DiscoverHardware (
 
   if (!AppleAnsMmioRangeValid (CpuBase, CpuSize, APPLE_ANS_CPU_MIN_SIZE) ||
       !AppleAnsMmioRangeValid (NvmeBase, NvmeSize, NvmeMinimumSize) ||
+      !AppleAnsMmioRangeValid (
+         NvmeStandardBase,
+         NvmeStandardSize,
+         (T8142 ? NTASI_ANS_REG_T8142_IOQA : NTASI_ANS_REG_DB_IOCQ) +
+           sizeof (UINT32)
+         ) ||
       !AppleAnsMmioRangeValid (SartBase, SartSize, SartMinimumSize))
   {
     ANS_DEBUG ((
       DEBUG_ERROR,
-      "AppleANS: refusing MMIO cpu=%Lx/%Lx nvme=%Lx/%Lx sart=%Lx/%Lx minimum=%Lx/%Lx/%Lx\n",
+      "AppleANS: refusing MMIO cpu=%Lx/%Lx nvme=%Lx/%Lx standard=%Lx/%Lx sart=%Lx/%Lx minimum=%Lx/%Lx/%Lx\n",
       CpuBase,
       CpuSize,
       NvmeBase,
       NvmeSize,
+      NvmeStandardBase,
+      NvmeStandardSize,
       SartBase,
       SartSize,
       (UINT64)APPLE_ANS_CPU_MIN_SIZE,
@@ -2745,23 +3014,29 @@ DiscoverHardware (
   }
 
   Device->CpuBase     = (UINTN)CpuBase;
+  Device->NvmeStandardBase = (UINTN)NvmeStandardBase;
   Device->NvmeBase    = (UINTN)NvmeBase;
   Device->SartBase    = (UINTN)SartBase;
   Device->MailboxBase = Device->CpuBase + APPLE_ANS_MAILBOX_OFFSET;
-  Device->NvmeHw      = Legacy ? &ntasi_ans_hw_t8015 : &ntasi_ans_hw_t8103;
+  Device->NvmeHw      = Legacy ? &ntasi_ans_hw_t8015 :
+                        (T8142 ? &ntasi_ans_hw_t8142 : &ntasi_ans_hw_t8103);
   *AscHw              = Legacy ? &ntasi_asc_hw_t8015 : &ntasi_asc_hw_v4;
 
   ANS_DEBUG ((
     DEBUG_INFO,
-    "AppleANS: cpu=%Lx/%Lx mailbox=%lx nvme=%Lx/%Lx sart=%Lx/%Lx legacy=%d sartv%d\n",
+    "AppleANS: cpu=%Lx/%Lx mailbox=%lx nvme=%Lx/%Lx standard=%Lx/%Lx secure=%d sart=%Lx/%Lx legacy=%d t8142=%d sartv%d\n",
     CpuBase,
     CpuSize,
     Device->MailboxBase,
     NvmeBase,
     NvmeSize,
+    NvmeStandardBase,
+    NvmeStandardSize,
+    SecureNvmeBar,
     SartBase,
     SartSize,
     Legacy,
+    T8142,
     SartVersion
     ));
   return EFI_SUCCESS;
@@ -2797,6 +3072,7 @@ AppleNANDStorageDxeInitialize (
   STATIC CONST struct ntasi_ans_controller_ops ControllerOps = {
     .read32           = NvmeRead32,
     .write32          = NvmeWrite32,
+    .write64          = NvmeWrite64,
     .dma_read_barrier = DmaBarrier,
     .dma_write_barrier = DmaBarrier,
     .service          = NvmeService,
@@ -2823,6 +3099,7 @@ AppleNANDStorageDxeInitialize (
   // adds visibility, it does not change what is bounded.
   //
   Stage = "start";
+  AnsCheckpoint (0x200);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: bring-up starting\n"));
 
   Device = AllocateZeroPool (sizeof (*Device));
@@ -2834,14 +3111,35 @@ AppleNANDStorageDxeInitialize (
   mAns = Device;
 
   Stage = "discover-hardware";
+  AnsCheckpoint (0x210);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
   Status = DiscoverHardware (Device, &AscHw, &SartParams);
   if (EFI_ERROR (Status)) {
     goto Fail;
   }
 
+#if !defined (APPLE_ANS_QEMU_TEST)
+  {
+    UINT64  NvmeCapability;
+
+    Stage = "nvme-capability-probe";
+    AnsCheckpoint (0x214);
+    ANS_DEBUG ((
+      DEBUG_INFO,
+      "AppleANS: stage \"%a\" standard-base=%lx (read-only CAP probe)\n",
+      Stage,
+      Device->NvmeStandardBase
+      ));
+    NvmeCapability = MmioRead64 (
+                       Device->NvmeStandardBase + NTASI_ANS_REG_CAP
+                       );
+    ANS_DEBUG ((DEBUG_INFO, "AppleANS: NVMe CAP=0x%016Lx\n", NvmeCapability));
+  }
+#endif
+
 #if defined (APPLE_ANS_QEMU_TEST)
   Stage = "map-qemu-hardware";
+  AnsCheckpoint (0x218);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
   Status = MapQemuHardware (
              Device->CpuBase,
@@ -2855,12 +3153,14 @@ AppleNANDStorageDxeInitialize (
 
 #if !defined (APPLE_ANS_QEMU_TEST)
   Stage = "pmgr-domain-report";
+  AnsCheckpoint (0x220);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\" (read-only; never writes a PMGR word)\n", Stage));
   ReportAnsPmgrDomains ();
 
 #endif
 
   Stage = "sart-init";
+  AnsCheckpoint (0x230);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
   Result = ntasi_sart_runtime_init (&Device->Sart, SartParams, &SartOps, Device);
   if (Result != 0) {
@@ -3020,6 +3320,7 @@ AppleNANDStorageDxeInitialize (
 #endif
 
   Stage = "asc-init";
+  AnsCheckpoint (0x240);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
   Result = ntasi_asc_init_variant (
              &Device->Asc,
@@ -3034,6 +3335,7 @@ AppleNANDStorageDxeInitialize (
   }
 
   Stage = "asc-ownership-select";
+  AnsCheckpoint (0x250);
   Device->InheritedCoprocessor = ntasi_asc_cpu_running (&Device->Asc) ? TRUE : FALSE;
   ANS_DEBUG ((
     DEBUG_INFO,
@@ -3044,6 +3346,7 @@ AppleNANDStorageDxeInitialize (
     ));
 
   Stage = "rtkit-init";
+  AnsCheckpoint (0x260);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
   Result = ntasi_rtkit_runtime_init (
              &Device->Rtkit,
@@ -3062,20 +3365,34 @@ AppleNANDStorageDxeInitialize (
 
 #if !defined (APPLE_ANS_QEMU_TEST)
   if (!Device->InheritedCoprocessor) {
-    UINT32  ResetFinalValue;
+    CONST CHAR8  *ControllerDomain;
+    UINT32        ResetFinalValue;
+    UINT64        ControllerAddress;
 
     Stage = "cold-pmgr-reset";
-    ResetFinalValue = 0;
-    Status = AppleAnsPmgrResetDomain (
-               "AppleANS",
-               "ANS2",
-               FixedPcdGet64 (PcdAppleAnsPmgrResetBase),
-               &ResetFinalValue
-               );
+    AnsCheckpoint (0x270);
+    ControllerDomain  = NULL;
+    ControllerAddress = 0;
+    ResetFinalValue   = 0;
+    Status            = AppleAnsPmgrSelectDomain (
+                          "AppleANS",
+                          "ANS2",
+                          "ANS",
+                          &ControllerDomain,
+                          &ControllerAddress
+                          );
+    if (!EFI_ERROR (Status)) {
+      Status = AppleAnsPmgrResetDomain (
+                 "AppleANS",
+                 ControllerDomain,
+                 FixedPcdGet64 (PcdAppleAnsPmgrResetBase),
+                 &ResetFinalValue
+                 );
+    }
     if (EFI_ERROR (Status)) {
       ANS_DEBUG ((
         DEBUG_ERROR,
-        "AppleANS: cold ownership requires a completed ANS2 reset; failed with %r (last 0x%08x)\n",
+        "AppleANS: cold ownership requires a completed controller reset; failed with %r (last 0x%08x)\n",
         Status,
         ResetFinalValue
         ));
@@ -3085,6 +3402,7 @@ AppleNANDStorageDxeInitialize (
 #endif
 
   Stage = "allocate-controller-memory";
+  AnsCheckpoint (0x280);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
   Status = AllocateControllerMemory (Device);
   if (EFI_ERROR (Status)) {
@@ -3092,6 +3410,7 @@ AppleNANDStorageDxeInitialize (
   }
 
   Stage = "rtkit-boot";
+  AnsCheckpoint (0x290);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\" (bounded at %u polls per wait)\n", Stage, (UINT32)APPLE_ANS_POLL_LIMIT));
   Result = ntasi_rtkit_runtime_boot (&Device->Rtkit);
   if (Result != 0) {
@@ -3101,6 +3420,7 @@ AppleNANDStorageDxeInitialize (
   }
 
   Stage = "controller-start";
+  AnsCheckpoint (0x2A0);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\" (bounded at %u polls per wait)\n", Stage, (UINT32)APPLE_ANS_POLL_LIMIT));
   Result = ntasi_ans_controller_start_variant (
              &Device->Controller,
@@ -3119,6 +3439,7 @@ AppleNANDStorageDxeInitialize (
   }
 
   Stage = "block-device-init-and-identify";
+  AnsCheckpoint (0x2B0);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\" (read-only: no write/format/TRIM path exists in this driver)\n", Stage));
   Result = ntasi_ans_block_device_init (
              &Device->BlockDevice,
@@ -3182,6 +3503,7 @@ AppleNANDStorageDxeInitialize (
   };
 
   Stage = "register-exit-boot-services-event";
+  AnsCheckpoint (0x2C0);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
   Status = gBS->CreateEventEx (
                   EVT_NOTIFY_SIGNAL,
@@ -3209,7 +3531,32 @@ AppleNANDStorageDxeInitialize (
   // so there is no write/format/TRIM path here to gate at all.
   //
   Stage = "publish-block-io";
+  AnsCheckpoint (0x2D0);
   ANS_DEBUG ((DEBUG_INFO, "AppleANS: stage \"%a\"\n", Stage));
+
+  //
+  // Always publish the initialized read-only interface under a private GUID.
+  // Unlike gEfiBlockIoProtocolGuid, this does not wake DiskIoDxe/PartitionDxe
+  // and therefore lets StorageProbe own the controller's first I/O command.
+  // The interface layout is deliberately EFI_BLOCK_IO_PROTOCOL so the probe
+  // exercises the exact same path that BDS will use once it is stable.
+  //
+  Status = gBS->InstallProtocolInterface (
+                  &Device->Handle,
+                  &gAppleAnsDiagnosticBlockIoProtocolGuid,
+                  EFI_NATIVE_INTERFACE,
+                  &Device->BlockIo
+                  );
+  if (EFI_ERROR (Status)) {
+    goto Fail;
+  }
+
+  ANS_DEBUG ((
+    DEBUG_INFO,
+    "AppleANS: private diagnostic Block I/O published; standard Block I/O=%a\n",
+    FixedPcdGetBool (PcdAppleAnsPublishBlockIo) ? "enabled" : "withheld"
+    ));
+
   if (FixedPcdGetBool (PcdAppleAnsPublishBlockIo)) {
     Status = gBS->InstallMultipleProtocolInterfaces (
                     &Device->Handle,
@@ -3320,6 +3667,7 @@ AppleNANDStorageDxeInitialize (
     Device->BlockDevice.media.block_count,
     Device->BlockDevice.media.block_size
     ));
+  AnsCheckpoint (0x2FF);
   return EFI_SUCCESS;
 
 Fail:

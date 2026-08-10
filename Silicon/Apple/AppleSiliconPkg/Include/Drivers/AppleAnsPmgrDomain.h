@@ -202,6 +202,53 @@ AppleAnsPmgrResolveDomain (
 }
 
 /**
+  Resolve a PMGR domain whose exact Apple name changed between SoC families.
+
+  T602x calls the ANS controller domain "ANS2" and its system-storage parent
+  "APCIE_ST_SYS". T8142 calls the same roles "ANS" and "APCIE_SYS_ST".
+  This helper preserves the important safety property above: both candidates
+  are exact names read from the live ADT, and no numeric address is ever used
+  as a fallback.
+**/
+STATIC
+inline
+EFI_STATUS
+AppleAnsPmgrSelectDomain (
+  IN  CONST CHAR8   *Tag,
+  IN  CONST CHAR8   *PrimaryName,
+  IN  CONST CHAR8   *AlternateName OPTIONAL,
+  OUT CONST CHAR8  **SelectedName,
+  OUT UINT64        *Address
+  )
+{
+  EFI_STATUS  Status;
+
+  if ((SelectedName == NULL) || (Address == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  *SelectedName = NULL;
+  *Address      = 0;
+
+  Status = AppleAnsPmgrResolveDomain (Tag, PrimaryName, Address);
+  if (!EFI_ERROR (Status)) {
+    *SelectedName = PrimaryName;
+    return EFI_SUCCESS;
+  }
+
+  if (AlternateName == NULL) {
+    return Status;
+  }
+
+  Status = AppleAnsPmgrResolveDomain (Tag, AlternateName, Address);
+  if (!EFI_ERROR (Status)) {
+    *SelectedName = AlternateName;
+  }
+
+  return Status;
+}
+
+/**
   Read one ADT-resolved PMGR power-state word and report whether the domain
   is fully powered (PS_ACTUAL == PS_ACTIVE).
 

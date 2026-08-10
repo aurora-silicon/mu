@@ -27,6 +27,8 @@
 #include <Library/PrintLib.h>
 #include <Library/AppleDTLib.h>
 
+#include <AppendedRamdisk.h>
+
 //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
 #include <Library/T8142FamilyVirtualMemoryMapDefines.h>
 
@@ -38,6 +40,9 @@
 
 #define DDR_ATTRIBUTES_CACHED           ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK
 #define DDR_ATTRIBUTES_UNCACHED         ARM_MEMORY_REGION_ATTRIBUTE_UNCACHED_UNBUFFERED
+
+STATIC CONST EFI_GUID  mNtasiAppendedRamdiskLocationHobGuid =
+  NTASI_APPENDED_RAMDISK_LOCATION_HOB_GUID;
 
 VOID BuildMemoryTypeInformationHob(VOID);
 
@@ -152,6 +157,10 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   EFI_PHYSICAL_ADDRESS          SystemMemoryTop;
   EFI_PHYSICAL_ADDRESS          ResourceTop;
   BOOLEAN                       Found;
+  CONST NTASI_APPENDED_RAMDISK_HEADER  *AppendedHeader;
+  UINT64                              AppendedReservationSize;
+  EFI_PHYSICAL_ADDRESS                AppendedTop;
+  NTASI_APPENDED_RAMDISK_LOCATION     AppendedLocation;
 
   // build up virtual memory map
   BuildVirtualMemoryMap(&MemoryTable);
@@ -275,6 +284,68 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
     }
 
     ASSERT (Found);
+  }
+
+  //
+  // m1n1 may place a page-sized NTASI header and a GPT/FAT ramdisk directly
+  // after the declared FD region.  Keep that range out of the PEI/DXE memory
+  // allocators and publish its physical location to BootRamdiskHelperDxe.
+  //
+  // This handoff already exists in the T602x MemoryInitPeiLib.  J813 uses the
+  // separate T8142 library, so without the equivalent code the valid appended
+  // disk is silently ignored and BootRamdiskHelperDxe falls back to the small
+  // FV-embedded HelloWorld disk.
+  //
+  AppendedReservationSize = 0;
+  AppendedHeader = (CONST NTASI_APPENDED_RAMDISK_HEADER *)(UINTN)FdTop;
+  if (AppendedHeader->Signature == NTASI_APPENDED_RAMDISK_SIGNATURE) {
+    if (!NtasiValidateAppendedRamdisk (
+           AppendedHeader,
+           NTASI_APPENDED_RAMDISK_MAX_MAPPED_SPAN,
+           FALSE,
+           NULL,
+           NULL,
+           &AppendedReservationSize
+           ))
+    {
+      DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: invalid appended ramdisk header at 0x%lx\n", FdTop));
+      return EFI_COMPROMISED_DATA;
+    }
+
+    AppendedTop = FdTop + AppendedReservationSize;
+    if ((AppendedTop < FdTop) ||
+        (AppendedTop > SystemMemoryTop) ||
+        (AppendedReservationSize > MAX_UINT32))
+    {
+      DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: appended ramdisk lies outside J813 system RAM\n"));
+      return EFI_COMPROMISED_DATA;
+    }
+
+    ReserveMemoryRegion (FdTop, (UINT32)AppendedReservationSize);
+
+    AppendedLocation.Signature             = NTASI_APPENDED_RAMDISK_LOCATION_SIGNATURE;
+    AppendedLocation.Version               = NTASI_APPENDED_RAMDISK_LOCATION_VERSION;
+    AppendedLocation.StructureSize         = sizeof (AppendedLocation);
+    AppendedLocation.HeaderPhysicalAddress = FdTop;
+    AppendedLocation.ReservationSize       = AppendedReservationSize;
+    if (BuildGuidDataHob (
+          &mNtasiAppendedRamdiskLocationHobGuid,
+          &AppendedLocation,
+          sizeof (AppendedLocation)
+          ) == NULL)
+    {
+      DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: cannot publish appended ramdisk location HOB\n"));
+      return EFI_OUT_OF_RESOURCES;
+    }
+
+    DEBUG ((
+      DEBUG_INFO,
+      "MemoryInitPeiLib: reserved appended ramdisk and published location HOB at 0x%lx (0x%lx bytes)\n",
+      FdTop,
+      AppendedReservationSize
+      ));
+  } else {
+    DEBUG ((DEBUG_INFO, "MemoryInitPeiLib: no appended ramdisk header at FdTop 0x%lx\n", FdTop));
   }
 
   //reserve secondary stacks carveouts passed into cpm-impl-reg

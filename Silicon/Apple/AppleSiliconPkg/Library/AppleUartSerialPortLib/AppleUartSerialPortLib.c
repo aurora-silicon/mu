@@ -44,6 +44,10 @@
 
 EFI_STATUS EFIAPI SerialPortInitialize(VOID)
 {
+    if (!FixedPcdGetBool(PcdAppleUartMmioEnabled)) {
+        return EFI_SUCCESS;
+    }
+
     UINT32 BaudRateConfig = AppleSerialPortCalculateBaudRateConfig();
     //AppleUARTBaseAddress = UART_BASE;
     
@@ -75,6 +79,13 @@ EFI_STATUS EFIAPI SerialPortInitialize(VOID)
 UINTN EFIAPI SerialPortWrite(IN UINT8 *Buffer, IN UINTN NumberOfBytes)
 {
     UINTN Index;
+
+    // Keep DebugLib and SerialDxe moving while deliberately silencing the
+    // hardware path.  SerialDxe treats a short write as EFI_DEVICE_ERROR, so a
+    // disabled UART must still report the requested byte count.
+    if (!FixedPcdGetBool(PcdAppleUartMmioEnabled)) {
+        return NumberOfBytes;
+    }
 
     //
     // THIS RETURN VALUE IS THE WHOLE UEFI CONSOLE. Attempt 35.
@@ -143,6 +154,11 @@ UINTN EFIAPI SerialPortRead(
     )
 {
     UINTN  Count;
+
+    if (!FixedPcdGetBool(PcdAppleUartMmioEnabled)) {
+        return 0;
+    }
+
     for (Count = 0; (Count < NumberOfBytes) && SerialPortPoll (); Count++, Buffer++) {
       *Buffer = MmioRead32 (UART_BASE + UART_RX_BYTE);
     }
@@ -162,6 +178,10 @@ UINT32 AppleSerialPortCalculateBaudRateConfig(VOID)
 
 UINTN SerialPortFlush(VOID)
 {
+    if (!FixedPcdGetBool(PcdAppleUartMmioEnabled)) {
+        return 0;
+    }
+
     while(!(MmioRead32(UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_TXE))
     {
 
@@ -183,6 +203,10 @@ UINTN SerialPortFlush(VOID)
 
 BOOLEAN EFIAPI SerialPortPoll(VOID)
 {
+    if (!FixedPcdGetBool(PcdAppleUartMmioEnabled)) {
+        return FALSE;
+    }
+
     return (MmioRead32(UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_RXD) ? TRUE : FALSE;
 }
 

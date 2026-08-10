@@ -401,6 +401,18 @@ AppleDartIoMmuDxeInitialize(
             DEBUG((DEBUG_INFO, "Skipping absent/owned USB DART %d\n", DartIndex));
             continue;
         }
+
+#if SILICON_PLATFORM == 8142
+        // On J813, m1n1 retains the two dart-usb1 register apertures after
+        // taking ownership of dart-usb0. The first retained aperture accepts
+        // bypass setup, while touching the second one raises a synchronous
+        // exception during DXE. Keep the usable aperture in bypass and leave
+        // the faulting companion aperture owned by the platform firmware.
+        if ((DartIndex & 1U) != 0) {
+            DEBUG((DEBUG_INFO, "Skipping T8142 USB DART companion aperture %d\n", DartIndex));
+            continue;
+        }
+#endif
         //DEBUG((DEBUG_INFO, "Test0\n"));
         DartInfo[DartIndex].BaseAddress = DartReg[DartIndex];
 

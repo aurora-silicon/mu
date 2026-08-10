@@ -4,10 +4,37 @@
 set -eu
 
 profile=${1:-uefi-shell-aic}
-test "$profile" = uefi-shell-aic || {
-    echo "error: unsupported J813 Mu profile: $profile" >&2
-    exit 2
-}
+case "$profile" in
+    uefi-shell-aic)
+        ans=false
+        mtp_hid_build=TRUE
+        ;;
+    internal-storage)
+        ans=true
+        ans_block_io=TRUE
+        mtp_hid_build=FALSE
+        ;;
+    storage-probe)
+        ans=true
+        ans_block_io=FALSE
+        mtp_hid_build=FALSE
+        ;;
+    *)
+        echo "error: unsupported J813 Mu profile: $profile" >&2
+        exit 2
+        ;;
+esac
+
+if test "$ans" = true; then
+    ans_enable=TRUE
+    ans_dxe=TRUE
+    ans_preserve=TRUE
+else
+    ans_enable=FALSE
+    ans_dxe=FALSE
+    ans_block_io=FALSE
+    ans_preserve=FALSE
+fi
 
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64 || {
@@ -81,7 +108,13 @@ export UNIX_IASL_BIN=$(command -v iasl)
 platform_build=Platform/MacBookAir2026Pkg/PlatformBuild.py
 : > "$log"
 echo "Building J813 $profile"
-if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG >> "$log" 2>&1; then
+if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG \
+    "BLD_*_NTASI_ENABLE_ANS=$ans_enable" \
+    "BLD_*_NTASI_ANS_PUBLISH_ACPI=FALSE" \
+    "BLD_*_NTASI_ANS_DXE_BRINGUP=$ans_dxe" \
+    "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
+    "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
+    "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1; then
     # Homebrew llvm-rc parses an absolute POSIX input path beginning with '/' as
     # an option. Complete the deterministic HII resource step from its output
     # directory with relative paths, then retry the incremental build once.
@@ -93,7 +126,13 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
             cd "$rc_dir"
             "$toolchain_dir/llvm-rc" /FoHelloWorldhii.lib HelloWorldhii.rc
         )
-        "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG >> "$log" 2>&1 || {
+        "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG \
+            "BLD_*_NTASI_ENABLE_ANS=$ans_enable" \
+            "BLD_*_NTASI_ANS_PUBLISH_ACPI=FALSE" \
+            "BLD_*_NTASI_ANS_DXE_BRINGUP=$ans_dxe" \
+            "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
+            "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
+            "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1 || {
             tail -80 "$log" >&2
             exit 1
         }
@@ -112,12 +151,14 @@ size=$(stat -f %z "$artifact")
 clean=true
 test -z "$(git -C "$source_root" status --porcelain=v1 --untracked-files=no --ignore-submodules=none)" || clean=false
 manifest=$artifact_dir/manifest.json
-"$venv/bin/python" - "$manifest" "$commit" "$clean" "$profile" "$size" "$digest" <<'PY'
+"$venv/bin/python" - "$manifest" "$commit" "$clean" "$profile" "$size" "$digest" \
+    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" <<'PY'
 import json
 import pathlib
 import sys
 
-path, commit, clean, profile, size, digest = sys.argv[1:]
+path, commit, clean, profile, size, digest, ans, ans_dxe, ans_block_io, ans_preserve = sys.argv[1:]
+enabled = lambda value: value == "TRUE"
 record = {
     "schema": "aurora.j813.mu-profile.v1",
     "artifact_status": "READY_FOR_SUPERVISED_HARDWARE_TEST",
@@ -125,6 +166,11 @@ record = {
     "profile": {
         "name": profile,
         "aic": True,
+        "ans": enabled(ans),
+        "ans_acpi": False,
+        "ans_dxe": enabled(ans_dxe),
+        "ans_block_io": enabled(ans_block_io),
+        "ans_preserve": enabled(ans_preserve),
         "baseline_capabilities": {
             "usb3_deferred_pipe_switch_port_mask": 0,
             "usb_dwc3_reset_dart_handoff":
@@ -134,6 +180,14 @@ record = {
     "build": {
         "pcds": {
             "PcdAppleUsb3PipeSwitchPortMask": 0,
+            "PcdAppleAnsPublishAcpiDevice": False,
+            "PcdAppleAnsPerformDxeBringUp": enabled(ans_dxe),
+            "PcdAppleAnsPublishBlockIo": enabled(ans_block_io),
+            "PcdAppleAnsPreserveForOs": enabled(ans_preserve),
+            "PcdAppleAnsPmgrResetBase": "0x380700300",
+            "PcdAppleAnsPmgrApcieStBase": "0x380700410",
+            "PcdAppleAnsPmgrApcieStSysBase": "0x380700520",
+            "PcdAppleAnsPmgrApcieSt1SysBase": "0x0",
         },
     },
     "source": {"commit": commit, "clean": clean == "true"},

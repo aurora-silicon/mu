@@ -34,6 +34,27 @@
   SECURE_BOOT_ENABLE             = FALSE #disable secure boot for now
   DEFINE T8142_SYSTEM_MEMORY_SIZE = 0x400000000
   #
+  # Internal Apple ANS/NVMe is opt-in.  The ordinary UEFI-shell profile stays
+  # free of storage bring-up; the internal-storage profile sets these through
+  # BLD_* variables in Tools/build-j813-windows-native.sh.
+  #
+  DEFINE NTASI_ENABLE_ANS = FALSE
+  DEFINE NTASI_ANS_DXE_BRINGUP = FALSE
+  DEFINE NTASI_ANS_PUBLISH_BLOCK_IO = FALSE
+  DEFINE NTASI_ANS_PRESERVE_FOR_OS = FALSE
+  # The internal-storage profile disables the interactive MTP survey. Its
+  # eight-second delay loop depends on the guest counter path and can dominate
+  # or stall supervised T8142 boots before ANS is dispatched.
+  DEFINE MTP_HID_BUILD = TRUE
+  # J813 is currently operated without a UEFI keyboard, and the guest timer
+  # path can stall inside BDS's cosmetic countdown. Boot the selected
+  # diagnostic target immediately.
+  DEFINE NTASI_PLATFORM_BOOT_TIMEOUT = 0
+  # J813 currently boots Mu with Apple's native AIC and has no Windows AIC2
+  # CSRT alias table. Keep NTAS2003 withheld until the 1155 -> legal-GSIV
+  # carrier contract exists; UEFI Block I/O does not need the ACPI device.
+  DEFINE NTASI_ANS_PUBLISH_ACPI = FALSE
+  #
   # Start J813 bring-up on Apple's native AIC: this is the path already proven
   # to reach the internal UEFI shell. A later Windows profile will switch this
   # to FALSE once m1n1's emulated GICv3 path is stable on T8142.
@@ -82,6 +103,25 @@
   # Unread by any code -- declared in AppleSiliconPkg.dec and set here and in the
   # other platform DSCs, but nothing consumes it. Kept consistent for clarity.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Darts|8
+  # J813 / T8142 values resolved from the live DeviceTree.j813ap ADT in the
+  # 26.6.1 (25G76) IPSW. AppleNANDStorageDxe resolves the domain by exact name
+  # again at runtime and treats these values only as a write-safety cross-check.
+  # T8142 calls the controller domain "ANS" (not "ANS2") and has no
+  # APCIE_ST1_SYS domain, so that unused expectation is deliberately zero.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrResetBase|0x380700300
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase|0x380700410
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase|0x380700520
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase|0
+  # The physical ANS NVMe line is ADT interrupt[4] == 1155. Do not publish it
+  # directly as a Windows GSIV: 1155 lies in GIC's reserved 1024..4095 range.
+  # A zero/zero pair keeps ACPI publication fail-closed until J813 has an ALI2
+  # alias contract equivalent to J414s's 38 -> 1832 mapping.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|0
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt|0
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishAcpiDevice|$(NTASI_ANS_PUBLISH_ACPI)
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|$(NTASI_ANS_DXE_BRINGUP)
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|$(NTASI_ANS_PUBLISH_BLOCK_IO)
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|$(NTASI_ANS_PRESERVE_FOR_OS)
   # J813's only keyboard is internal (MTP over dockchannel), and there is no UEFI
   # driver for it yet, so the USB class keyboard path in ConIn can never resolve.
   # Leaving it there makes the console depend on the USB stack, which stalls in
@@ -96,6 +136,11 @@
   # FALSE gets a Shell prompt over the VUART, from which `connect -r` reproduces
   # the stall interactively. Set back to TRUE once USB enumeration completes.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectAllForInternalShell|FALSE
+  # The installed resident m1n1 remains the recovery-safe proxy, but the J813
+  # launch path RAM-chainloads the current hypervisor before entering Mu.  That
+  # hypervisor reserves uart0 and maps it to the secondary USB CDC endpoint, so
+  # DebugLib and SerialDxe can use the normal Apple UART aperture safely.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartMmioEnabled|TRUE
   # Turn on BootRamdiskHelperDxe. It no-ops unless a RAW section with
   # gAppleSiliconPkgEmbeddedRamdiskGuid is actually in the FV, so this is safe to
   # leave on -- but the FDF currently embeds a 16 MiB FAT16 *test* image, not
@@ -142,3 +187,4 @@ AppleSiliconPkg/Drivers/WindowsPmuCompatDxe/WindowsPmuCompatDxe.inf
 # re-run FS0:\startup.nsh and recurse. HelloWorld prints one line and exits.
 #
 MdeModulePkg/Application/HelloWorld/HelloWorld.inf
+AppleSiliconPkg/Application/StorageProbe/StorageProbe.inf

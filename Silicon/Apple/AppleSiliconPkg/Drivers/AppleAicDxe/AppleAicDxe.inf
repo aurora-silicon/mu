@@ -47,6 +47,7 @@
   AppleDTLib
   UefiLib
   ArmGenericTimerCounterLib
+  PcdLib
 
 [Protocols]
   gHardwareInterruptProtocolGuid  ## PRODUCES
@@ -54,6 +55,7 @@
   gEfiCpuArchProtocolGuid         ## CONSUMES ## NOTIFY
 
 [Pcd.common]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleSocIdentifier
 
 [Depex]
   TRUE

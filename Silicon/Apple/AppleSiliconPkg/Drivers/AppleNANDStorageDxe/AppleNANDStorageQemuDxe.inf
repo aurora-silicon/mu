@@ -49,6 +49,7 @@
   UefiDriverEntryPoint
 
 [Protocols]
+  gAppleAnsDiagnosticBlockIoProtocolGuid ## PRODUCES
   gEfiBlockIoProtocolGuid      ## PRODUCES
   gEfiDevicePathProtocolGuid   ## PRODUCES
   gEfiPartitionInfoProtocolGuid ## CONSUMES
