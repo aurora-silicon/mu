@@ -1,0 +1,187 @@
+/** @file
+  J813 MTP/DockChannel input transport ACPI device.
+
+  Port of the J414s table.  AppleMtpHid consumes the three DockChannel
+  apertures, one firmware-staging memory window, one AIC interrupt, and two
+  GPIO connections from _CRS -- it reads no _DSD property, so the _CRS shape
+  and ordering below are the actual contract and the _DSD package is
+  documentation plus a cross-check surface.
+
+  Addresses are from this machine's own device tree
+  (DeviceTree.j813ap.adt, IPSW 25G76); ADT reg values under arm-io are
+  arm-io relative and absolute is +0x210000000, verified against uart0
+  (0x195200000 -> 0x3a5200000).
+
+    /arm-io/dockchannel-mtp   reg[1] 0x394b14000  irq/status
+                              reg[2] 0x394b30000  remote FIFO-1 config
+                              reg[3] 0x394b34000  remote FIFO-1 data
+                              interrupts = <1277>
+    /arm-io/dart-mtp          interrupts = <1275>   (fault line)
+    /arm-io/mtp               reg[0] 0x394600000/+0x88000  ASC wrap
+                              mailbox at +0x8000 -> 0x394608000
+    /arm-io/dart-mtp/mapper-mtp  reg = 0
+
+  That last one is the entire reason this platform needed a port rather than
+  a copy: mapper-mtp's "reg" is the DART stream id, and both /arm-io/mtp and
+  /arm-io/dockchannel-mtp/mtp-transport name it via iommu-parent.  J414s uses
+  stream 1; J813 uses stream 0.  m1n1's preboot handoff reads the same value
+  and programs the same stream, so the two sides agree by construction.
+
+  The fourth memory resource is the multitouch firmware staging window, with
+  the same layout as J414s: AddressMinimum is the MTP DART bus address the
+  driver sends in command 0x95, AddressTranslation raises it to the reserved
+  CPU physical carveout.  m1n1 maps bus 0x1800000 -> 0x10020000000 (1 MiB)
+  during the handoff; 0x10020000000 is DRAM base + 512 MiB, below the Mu FD at
+  0x10030000000, and reserved from the UEFI memory map by the matching
+  MemoryInitPeiLib overlay so Windows never allocates it.  Translation is
+  0x10020000000 - 0x1800000 = 0x1001E800000.
+
+  Copyright (c) Apple Silicon NT Drivers contributors
+  SPDX-License-Identifier: MIT
+**/
+
+DefinitionBlock ("MTP.aml", "SSDT", 0x02, "Apple", "J813MTP", 0x00000001)
+{
+    Scope (\_SB)
+    {
+        //
+        // The built-in keyboard and trackpad are served by the MTP ASC over
+        // DockChannel.  This is not the older AppleSPI trackpad topology.
+        //
+        Device (MTP0)
+        {
+            Name (_HID, "NTAS0050")
+            Name (_UID, Zero)
+            Name (_CCA, One)
+
+            //
+            // Keep the ordering in lockstep with AppleMtpEvtPrepareHardware:
+            //   0: parent interrupt/status registers
+            //   1: remote FIFO-1 configuration window
+            //   2: remote FIFO-1 data window
+            //   3: multitouch firmware staging window (raw = DART bus
+            //      address for command 0x95, translated = reserved CPU
+            //      carveout)
+            //   4: physical AIC line 1277
+            //
+            Name (_CRS, ResourceTemplate ()
+            {
+                QWordMemory (
+                    ResourceConsumer,
+                    PosDecode,
+                    MinFixed,
+                    MaxFixed,
+                    NonCacheable,
+                    ReadWrite,
+                    0x0000000000000000,
+                    0x0000000394B14000,
+                    0x0000000394B14FFF,
+                    0x0000000000000000,
+                    0x0000000000001000
+                    )
+                QWordMemory (
+                    ResourceConsumer,
+                    PosDecode,
+                    MinFixed,
+                    MaxFixed,
+                    NonCacheable,
+                    ReadWrite,
+                    0x0000000000000000,
+                    0x0000000394B30000,
+                    0x0000000394B30FFF,
+                    0x0000000000000000,
+                    0x0000000000001000
+                    )
+                QWordMemory (
+                    ResourceConsumer,
+                    PosDecode,
+                    MinFixed,
+                    MaxFixed,
+                    NonCacheable,
+                    ReadWrite,
+                    0x0000000000000000,
+                    0x0000000394B34000,
+                    0x0000000394B34FFF,
+                    0x0000000000000000,
+                    0x0000000000001000
+                    )
+                QWordMemory (
+                    ResourceConsumer,
+                    PosDecode,
+                    MinFixed,
+                    MaxFixed,
+                    NonCacheable,
+                    ReadWrite,
+                    0x0000000000000000,
+                    0x0000000001800000,
+                    0x00000000018FFFFF,
+                    0x000001001E800000,
+                    0x0000000000100000
+                    )
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) {
+                    1277
+                }
+                //
+                // GPIO connection 0 is afe-reset and connection 1 is
+                // stm-reset.  The driver matches the INIT request by
+                // (name, id) and refuses any other pairing, so this order is
+                // a contract.
+                //
+                // These are vestigial for input and are kept only so the
+                // connections resolve.  A full bring-up on this machine, up to
+                // and including "Touch MT ready" with the trackpad streaming
+                // frames, emits no GPIO traffic whatsoever -- the IOP never
+                // asks for a reset pulse, and the SMC is never touched.  What
+                // multi-touch actually needs is the CBOR firmware bootload and
+                // the nine-byte power-method-2 exchange described below.
+                //
+                // The ADT's real reset lines are the smc-pmu 'pKW4' keys gP1c
+                // and gP1d, not the pins named here; both exist and accept a
+                // pulse, and pulsing them changes nothing.  See SMCG.asl.
+                //
+                GpioIo (Exclusive, PullNone, 0, 0, IoRestrictionOutputOnly,
+                    "\\_SB.SMCG", 0, ResourceConsumer)
+                { 25 }
+                GpioIo (Exclusive, PullNone, 0, 0, IoRestrictionOutputOnly,
+                    "\\_SB.SMCG", 0, ResourceConsumer)
+                { 26 }
+            })
+
+            //
+            // None of these is a _CRS resource.  They describe the preboot
+            // handoff m1n1 owns and must not become extra translated
+            // resources for the Windows driver.
+            //
+            Name (_DSD, Package ()
+            {
+                ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package ()
+                {
+                    Package () { "ntasp,dockchannel-fifo-index", One },
+                    Package () { "ntasp,dockchannel-fifo-size", 0x800 },
+                    Package () { "ntasp,mtp-asc-base", 0x0000000394600000 },
+                    Package () { "ntasp,mtp-asc-size", 0x4000 },
+                    Package () { "ntasp,mtp-mailbox-base", 0x0000000394608000 },
+                    Package () { "ntasp,mtp-mailbox-size", 0x4000 },
+                    Package () { "ntasp,mtp-dart-base", 0x0000000394800000 },
+                    Package () { "ntasp,mtp-dart-size", 0x4000 },
+                    Package () { "ntasp,mtp-dart-stream-id", Zero },
+                    Package () { "ntasp,mtp-dart-fault-gsiv", 1275 },
+                    Package () { "ntasp,mtp-afe-reset-gpio", 25 },
+                    Package () { "ntasp,mtp-stm-reset-gpio", 26 },
+                    Package () { "ntasp,mtp-firmware-name", "apple/tpmtfw-j813.bin" },
+                    Package () { "ntasp,mtp-fw-staging-dva", 0x0000000001800000 },
+                    Package () { "ntasp,mtp-fw-staging-phys", 0x0000010020000000 },
+                    Package () { "ntasp,mtp-fw-staging-size", 0x100000 },
+                    Package () { "ntasp,preboot-owner", "m1n1" },
+                    Package () { "ntasp,preboot-handoff-required", One }
+                }
+            })
+
+            Method (_STA, 0, NotSerialized)
+            {
+                Return (0x0F)
+            }
+        }
+    }
+}

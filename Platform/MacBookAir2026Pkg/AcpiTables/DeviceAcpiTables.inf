@@ -20,6 +20,8 @@
   DBG2.aslc
   DSDT.asl
   FADT.aslc
+  MTP.asl
+  SMCG.asl
 
 [Packages]
   ArmPkg/ArmPkg.dec
