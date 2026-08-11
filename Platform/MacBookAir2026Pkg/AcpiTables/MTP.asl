@@ -119,8 +119,29 @@ DefinitionBlock ("MTP.aml", "SSDT", 0x02, "Apple", "J813MTP", 0x00000001)
                     0x000001001E800000,
                     0x0000000000100000
                     )
+                //
+                // Published GSIV, not the physical AIC line.
+                //
+                // The physical line is 1277 (ADT /arm-io/dockchannel-mtp
+                // `interrupts`).  Publishing that directly does not work:
+                // Windows' PnP interrupt arbiter only accepts GSIVs inside the
+                // GIC architectural SPI range, and its live controller on this
+                // machine reports lines=[32,1024) with "GSIV 1277: unmapped",
+                // which parks the devnode at problem=12
+                // (CM_PROB_NO_VALID_LOG_CONFIG) and never loads the driver.
+                // 1020..1023 are architecturally special and 1024..4095 are
+                // reserved, so the line has to be renumbered rather than the
+                // range widened.
+                //
+                // m1n1 aliases published 995 <-> physical 1277 on T8142 while
+                // the guest is on its emulated GICv3 carrier; see
+                // src/hv_aic_alias.c, which is the authority for this pairing.
+                // 995 was picked because it is free: no ADT node on this SoC
+                // declares it, and the whole 990..999 block is unused.  J414s
+                // publishes 37..46 for the same purpose, but 37 is taken here.
+                //
                 Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) {
-                    1277
+                    995
                 }
                 //
                 // There are deliberately no GpioIo connections here.
