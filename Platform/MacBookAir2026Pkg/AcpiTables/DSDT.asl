@@ -261,10 +261,10 @@
             // UIDs here match MADT_Static.aslc and PPTT.aslc, which already use
             // E = 0..5 and P = 6..9.
             //
-            // CPU0 reports _STA 0 to match the MADT, where E-core 0 is
-            // described as present but not enabled because m1n1 cannot start
-            // it.  Both must say the same thing; restore this to 0xF at the
-            // same time as the MADT flag.
+            // CPU0 reports _STA 0xF like every other core.  It briefly
+            // reported 0 to match a MADT entry that marked E-core 0 not
+            // enabled while m1n1 could not start it; both were restored
+            // together once cpu0 came up.  They must always agree.
             //
             Device(CLU0) {
                 Name(_HID, "ACPI0010") // all "processor containers" must have this HID
@@ -277,7 +277,7 @@
                     // return(PLPI)
                     // }
                     Method (_STA) {
-                        Return (0x0)
+                        Return (0xF)
                     }
                 }
                 Device(CPU1) {

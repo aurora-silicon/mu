@@ -139,25 +139,23 @@ MULTIPLE_APIC_DESCRIPTION_TABLE Madt = {
 
     // ---- Cluster 0: 6 E-cores ("sawtooth") ----
     //
-    // TEMPORARY: E-core 0 is described as present but not enabled, because
-    // m1n1 cannot currently start it.  This is a workaround for a defect, not
-    // a property of the hardware -- the core exists and the machine has ten.
+    // E-core 0 was temporarily described as present-but-not-enabled while m1n1
+    // could not start it.  That is fixed and the entry is enabled again.
     //
-    // It is here because the alternative is worse.  Windows issues PSCI CPU_ON
-    // for MPIDR 0 first, and when that fails it does not degrade: it answers
-    // with PSCI SYSTEM_RESET and the boot ends. Measured. So an entry marked
-    // enabled for a core that will not start costs the whole system, while
-    // describing it honestly as unavailable costs one core out of ten and lets
-    // the other nine run.
+    // Kept as a note because the failure mode is worth knowing: Windows issues
+    // PSCI CPU_ON for MPIDR 0 first, and a truthful failure is not degraded
+    // gracefully -- it answers with PSCI SYSTEM_RESET and the boot ends
+    // (measured).  So this flag must only be set while cpu0 genuinely starts.
     //
-    // Flags of 0 means neither Enabled nor Online Capable, so the OS ignores
-    // the processor rather than deferring it to a later hot-add that will
-    // never come.  Restore EFI_ACPI_6_3_GIC_ENABLED the moment cpu0 starts
-    // reliably; nothing else in this table or in PPTT needs to change, and the
-    // UID stays bound to its own entry.
+    // It does.  cpu0 was never defective; the RAM-chainload handover destroyed
+    // it before the loaded image ran an instruction, and a directly booted
+    // m1n1 brings up all ten cores (10/10 running, cpu0 with its spin-table
+    // flag set).  See the cpu0 note in m1n1's src/smp.c.  Note that this means
+    // a chainloaded m1n1 will still fail CPU_ON for cpu0 and reset the machine
+    // with this flag set -- Windows must be booted from an installed image.
     //
-    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 0 -- see note above
-        0, 0, GET_MPIDR(0, 0, 0, 0), 0, T8142_PMU_IRQ_UNKNOWN, 0,
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 0
+        0, 0, GET_MPIDR(0, 0, 0, 0), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
         0, 0, 25, 0 /* GicRBase */, 1, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 1
         1, 1, GET_MPIDR(0, 0, 0, 1), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
