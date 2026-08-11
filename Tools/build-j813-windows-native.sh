@@ -41,6 +41,7 @@ test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64 || {
     echo "error: the native J813 build requires an Apple Silicon Mac" >&2
     exit 1
 }
+cd "$source_root"
 
 mu_python=${AURORADBG_MU_PYTHON:-$(command -v python3.12 || command -v python3)}
 venv=${AURORADBG_MU_NATIVE_VENV:-$source_root/.venv-native}
@@ -175,6 +176,11 @@ record = {
             "usb3_deferred_pipe_switch_port_mask": 0,
             "usb_dwc3_reset_dart_handoff":
                 "m1n1_reset_clamped_mu_dart_bypass_release_v1",
+        },
+        "pmu_contract": {
+            "backend": "m1n1_el2_t8142",
+            "windows_pmu_compat_dxe_embedded": False,
+            "microsoft_pe_images_modified": False,
         },
     },
     "build": {

@@ -163,8 +163,29 @@
                 Return (RBUF)
             }
 
+            //
+            // Reported absent on this platform.
+            //
+            // The address above is an M1 one -- MacBookProLate2020Pkg,
+            // MacMini2020Pkg and MacBookProLate2025Pkg all carry the identical
+            // 0x502280000, and nothing here was ever read off J813.  There is
+            // no evidence T8142 has an xHCI controller there, and the measured
+            // result of claiming otherwise is a synchronous external abort:
+            // Windows enumerated XHC1, mapped it, read a register on cpu8 and
+            // took ESR 0x92000410 with DFSC 0x10.  The region is mapped
+            // passthrough in stage 2, so the abort came from the hardware
+            // itself -- nothing is decoding at that address.
+            //
+            // Its interrupt could not be delivered either: GSIV 857 would have
+            // to arrive through AIC, and no AIC-to-GIC bridge exists yet.
+            //
+            // XHC0 immediately above is commented out for the same reason.
+            // Restore this once a real T8142 xHCI base is read from the ADT and
+            // its interrupt can actually be routed.  WinPE boots from a ramdisk
+            // and does not need USB to reach the installer.
+            //
             Method (_STA) {
-                Return (0xF)
+                Return (0x0)
             }
         }
 
@@ -182,8 +203,20 @@
                 0x0000000000000000,   // AddressGranularity - GRA
                 // FixedPcdGet64(PcdAppleUartBase),   // AddressMinimum - MIN
                 // (FixedPcdGet64(PcdAppleUartBase) + 0xFFFF),   // AddressMaximum - MAX
-                0x235200000,   // AddressMinimum - MIN
-                0x235200fff,   // AddressMaximum - MAX
+                //
+                // J813/T8142 uart0.  Was 0x235200000, which is T8103's UART --
+                // an M1 address inherited with the rest of this table, backed
+                // by nothing on this SoC.  XHC1 above shows what that costs
+                // when a driver actually reads it: a synchronous external
+                // abort.  This value matches PcdAppleUartBase in
+                // T8142FamilyPkg.dsc.inc, which is what the commented-out
+                // FixedPcdGet64 above was reaching for before it was hardcoded.
+                //
+                // It is also the address m1n1 traps as its VUART, so a guest
+                // access lands in emulation rather than on the bare device.
+                //
+                0x3a5200000,   // AddressMinimum - MIN
+                0x3a5200fff,   // AddressMaximum - MAX
                 0x0000000000000000,   // AddressTranslation - TRA
                 0x0000000000001000    // RangeLength - LEN
                 )
@@ -205,6 +238,34 @@
             //
             // E-core cluster, typically bootstrap core is here
             //
+            //
+            // Processor objects for T8142/M5: 6 E-cores (UID 0..5) then
+            // 4 P-cores (UID 6..9).
+            //
+            // This block previously described M1's topology -- CLU0 holding
+            // UIDs 0..3 and CLU1 holding 4..7 -- because it was inherited from
+            // the M1 platform packages along with the rest of this table.  On a
+            // ten-core part that is not merely inaccurate: UIDs 8 and 9 had no
+            // ACPI0007 device at all, and UIDs 4 and 5 are E-cores described
+            // inside the P-core container.
+            //
+            // Windows builds its per-processor power management state from the
+            // MADT and expects to find a matching processor object for each
+            // enabled entry.  The measured consequence of the missing ones was
+            // a reproducible bugcheck 0xA -- IRQL_NOT_LESS_OR_EQUAL, a NULL
+            // dereference at DISPATCH_LEVEL -- at ntoskrnl RVA 0x2C3D8C, inside
+            // an internal Power Manager routine that sits immediately after
+            // PoCpuIdledSinceLastCallImprecise in the export table and calls a
+            // per-processor handler through a function pointer.
+            //
+            // UIDs here match MADT_Static.aslc and PPTT.aslc, which already use
+            // E = 0..5 and P = 6..9.
+            //
+            // CPU0 reports _STA 0 to match the MADT, where E-core 0 is
+            // described as present but not enabled because m1n1 cannot start
+            // it.  Both must say the same thing; restore this to 0xF at the
+            // same time as the MADT flag.
+            //
             Device(CLU0) {
                 Name(_HID, "ACPI0010") // all "processor containers" must have this HID
                 Name(_UID, 0x1) // unique identifier of the container
@@ -216,10 +277,9 @@
                     // return(PLPI)
                     // }
                     Method (_STA) {
-                        Return (0xF)
+                        Return (0x0)
                     }
                 }
-
                 Device(CPU1) {
                     Name(_HID, "ACPI0007")
                     Name(_UID, 1)
@@ -250,14 +310,6 @@
                         Return (0xF)
                     }
                 }
-            }
-
-            //
-            // P-core cluster.
-            //
-            Device(CLU1) {
-                Name(_HID, "ACPI0010") // all "processor containers" must have this HID
-                Name(_UID, 0x2) // unique identifier of the container
                 Device(CPU4) {
                     Name(_HID, "ACPI0007")
                     Name(_UID, 4)
@@ -268,7 +320,6 @@
                         Return (0xF)
                     }
                 }
-
                 Device(CPU5) {
                     Name(_HID, "ACPI0007")
                     Name(_UID, 5)
@@ -279,6 +330,15 @@
                         Return (0xF)
                     }
                 }
+            }
+
+            //
+            // P-core cluster.
+            //
+            Device(CLU1) {
+                Name(_HID, "ACPI0010") // all "processor containers" must have this HID
+                Name(_UID, 0x2) // unique identifier of the container
+
                 Device(CPU6) {
                     Name(_HID, "ACPI0007")
                     Name(_UID, 6)
@@ -292,6 +352,26 @@
                 Device(CPU7) {
                     Name(_HID, "ACPI0007")
                     Name(_UID, 7)
+                    // Method (_LPI, 0, NotSerialized) {
+                    // return(PLPI)
+                    // }
+                    Method (_STA) {
+                        Return (0xF)
+                    }
+                }
+                Device(CPU8) {
+                    Name(_HID, "ACPI0007")
+                    Name(_UID, 8)
+                    // Method (_LPI, 0, NotSerialized) {
+                    // return(PLPI)
+                    // }
+                    Method (_STA) {
+                        Return (0xF)
+                    }
+                }
+                Device(CPU9) {
+                    Name(_HID, "ACPI0007")
+                    Name(_UID, 9)
                     // Method (_LPI, 0, NotSerialized) {
                     // return(PLPI)
                     // }

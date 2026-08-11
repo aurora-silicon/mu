@@ -298,7 +298,9 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   #
   INF  MsCorePkg/Universal/StatusCodeHandler/Serial/Dxe/SerialStatusCodeHandlerDxe.inf
   INF  MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.inf
-  INF  AppleSiliconPkg/Drivers/WindowsPmuCompatDxe/WindowsPmuCompatDxe.inf
+
+  # T8142 PMUv3 compatibility is provided by m1n1 EL2.  Do not embed the
+  # legacy Windows instruction-patching driver in the J813 firmware volume.
 
 
   #

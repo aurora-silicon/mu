@@ -50,6 +50,10 @@
   # path can stall inside BDS's cosmetic countdown. Boot the selected
   # diagnostic target immediately.
   DEFINE NTASI_PLATFORM_BOOT_TIMEOUT = 0
+  # Keep boot diagnostics while suppressing DEBUG_BLKIO.  WinPE performs many
+  # small DiskIo reads and logging each subtask over UART makes RAM booting
+  # needlessly slow on J813.
+  DEFINE NTASI_DEBUG_PRINT_ERROR_LEVEL = 0xFFFFEF4F
   # J813 currently boots Mu with Apple's native AIC and has no Windows AIC2
   # CSRT alias table. Keep NTAS2003 withheld until the 1155 -> legal-GSIV
   # carrier contract exists; UEFI Block I/O does not need the ACPI device.
@@ -64,8 +68,8 @@
 
 
 [BuildOptions.common]
-  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8142 -DNTASI_J813_PMCCNTR_EMULATION=1
-  GCC:*_*_AARCH64_PP_FLAGS = -DNTASI_J813_PMCCNTR_EMULATION=1
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8142 -DNTASI_J813_EL2_SYSREG_ASSIST=1
+  GCC:*_*_AARCH64_PP_FLAGS = -DNTASI_J813_EL2_SYSREG_ASSIST=1
   #*_*_*_CC_FLAGS = -D DISABLE_NEW_DEPRECATED_INTERFACES -D HAS_MEMCPY_INTRINSICS
 
 
@@ -151,17 +155,6 @@
   # gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferHeight|1600
   # gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferPixelBpp|30
 
-[PcdsDynamicDefault.common]
-  # #borrowed from SurfaceDuoPkg
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdVideoHorizontalResolution|1920
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdVideoVerticalResolution|1080
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoHorizontalResolution|1920
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoVerticalResolution|1080
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdSetupConOutRow|300
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdSetupConOutColumn|50
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdConOutRow|300
-  # gEfiMdeModulePkgTokenSpaceGuid.PcdConOutColumn|50
-
 [Components.common]
 
 MacBookAir2026Pkg/AcpiTables/DeviceAcpiTables.inf
@@ -171,7 +164,28 @@ MacBookAir2026Pkg/AcpiTables/DeviceAcpiTables.inf
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc
 !include AppleSiliconPkg/FrontpageDsc.inc
 
-AppleSiliconPkg/Drivers/WindowsPmuCompatDxe/WindowsPmuCompatDxe.inf
+#
+# Deliberately after the includes: the last assignment to a PCD wins, and
+# MacBookAirFamily.dsc.inc sets these to 0. A block placed above !include is
+# silently overridden by the family default, which is exactly how the first
+# attempt at this failed.
+#
+# J813's panel is 2560 x 1664. The family default of 0 means "use the highest
+# mode the GOP offers", which lands on that native mode, where an EFI_GLYPH is
+# 8 x 19 physical pixels -- legible on a 1080p monitor, not on this one.
+#
+# SimpleFbDxe publishes integer-downscaled modes that replicate each logical
+# pixel into an N x N block, so selecting the 1/2 mode here doubles every glyph
+# to 16 x 38 physical pixels while still covering the whole display (160
+# columns x 43 rows). Panel geometry is per-machine, which is why this override
+# lives in the J813 platform and not in the shared family include.
+#
+# NOTE: this is the mode the OS inherits at ExitBootServices. If a Windows
+# display regression is ever bisected to console scaling, set these four back
+# to 0 to hand Windows the native scanout again.
+#
+# T8142 architectural PMUv3 is trapped and virtualized by m1n1 at EL2.  Keep
+# the J813 firmware and Microsoft PE images free of runtime instruction patches.
 
 #
 # Built only so its .efi can be copied into the RAM disk image as
@@ -188,3 +202,39 @@ AppleSiliconPkg/Drivers/WindowsPmuCompatDxe/WindowsPmuCompatDxe.inf
 #
 MdeModulePkg/Application/HelloWorld/HelloWorld.inf
 AppleSiliconPkg/Application/StorageProbe/StorageProbe.inf
+
+#
+# Deliberately after the !includes: the last assignment wins, and the family
+# include sets its own value. A block placed above them is silently overridden.
+#
+# J813's panel is 2560 x 1664 and the UEFI console draws glyphs at a fixed
+# 8 x 19 physical pixels, which is unreadable here. Halving the published
+# geometry gives a 1280 x 832 GOP whose pixels SimpleFbDxe replicates 2x2 into
+# the real scanout, so every glyph becomes 16 x 38 physical pixels and the
+# console still covers the whole display (160 columns x 43 rows).
+#
+# The four PcdVideo*Resolution values stay 0 ("use the largest mode the GOP
+# offers") from MacBookAirFamily.dsc.inc: with the divisor applied, the largest
+# mode already IS 1280 x 832, so nothing needs to name a resolution.
+#
+# NOTE: this is the geometry the OS inherits at ExitBootServices, and
+# BasicDisplay has no other source of it on this platform. Set the divisor back
+# to 1 to hand Windows the full 2560 x 1664 scanout again.
+#
+# DISABLED (set to 1) until scaling is safe for direct-framebuffer consumers.
+#
+# A divisor of 2 does give a readable console -- measured 1280x832, Mode 4,
+# glyphs at 16x38 physical pixels covering the panel. But it publishes
+# PixelsPerScanLine=1280 against a scanout that is still 2560 pixels wide with a
+# 2560-pixel stride, and that is only coherent for callers that go through
+# GOP Blt(). bootmgfw.efi and BasicDisplay do not: they take FrameBufferBase and
+# PixelsPerScanLine and write the linear framebuffer directly, so they render
+# with the wrong stride. Observed as a blank screen after bootmgfw.efi loaded.
+#
+# Fixing this properly means keeping the raw panel as the largest GOP mode (so
+# GCM_NATIVE_RES hands the OS a coherent framebuffer) while getting the console
+# onto a scaled mode some other way than being the maximum -- the mode-ordering
+# route in SimpleFbDxe cannot satisfy both at once.
+#
+[PcdsFixedAtBuild.common]
+  gAppleSiliconPkgTokenSpaceGuid.PcdConsoleScaleDivisor|1

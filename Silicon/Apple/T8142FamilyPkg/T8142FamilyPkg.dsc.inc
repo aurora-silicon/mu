@@ -83,15 +83,32 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdClusterCount|2|UINT32|0x00004407
 
 #AIC/GIC configuration settings
-!if $(AIC_BUILD) == FALSE
   #
   # If GIC is used, it is expected to be virtualised (by m1n1's vGIC, in this
   # project's case) at the following addresses, as Apple silicon has no onboard
   # GIC.
   #
+  # Set for every build, including AIC builds.  These were previously inside
+  # `!if $(AIC_BUILD) == FALSE`, but the MADT in this package describes a GICv3
+  # unconditionally -- an AIC build still emits GICC, GICD and GICR structures.
+  # Leaving the addresses at their UINT64 default of 0 therefore did not omit
+  # the GIC from the tables, it published one located at physical address 0.
+  # Windows believes the MADT: it mapped page 0 as the redistributor and took a
+  # stage-2 fault on the first GICR_ICENABLER0 write, which ends the boot.
+  #
+  # m1n1 backs both addresses in AIC builds through its startup carrier: hv.c
+  # calls hv_vgicv3_init() on the native-AIC path, which installs the
+  # distributor and redistributor MMIO hooks at exactly these two values.  The
+  # carrier answers the kernel's controller classification only -- HCR.IMO stays
+  # clear and no list registers are enabled -- and it deliberately does not hook
+  # an ITS, which is why the ITS entry is gone from MADT_Static.aslc.
+  #
+  # So these addresses describe what the guest is actually given, and gating
+  # them on the AIC flag described the hypervisor incorrectly rather than
+  # describing less of it.
+  #
   gArmTokenSpaceGuid.PcdGicDistributorBase|0xf00000000
   gArmTokenSpaceGuid.PcdGicRedistributorsBase|0xf10000000
-!endif
   gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemRevision|0x00008142
 
 !if $(SECURE_BOOT_ENABLE) == TRUE
