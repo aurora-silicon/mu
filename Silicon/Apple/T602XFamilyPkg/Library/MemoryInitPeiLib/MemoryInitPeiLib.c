@@ -494,9 +494,11 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
     ASSERT (Found);
   }
 
-  // MTP multitouch firmware staging carveout: published to Windows as the
-  // fourth NTAS0050 _CRS memory resource (bus 0x1800000 via MTP DART stream 1)
-  // and pre-mapped by the m1n1 preboot handoff.  The second megabyte is
+  // MTP carveout, 2 MiB: [1 MiB firmware staging | 1 MiB RTKit grant pool].
+  // The staging MiB is published to Windows as the fourth NTAS0050 _CRS
+  // memory resource (bus 0x1800000 via the MTP DART -- stream 0 on J813)
+  // and pre-mapped by the m1n1 preboot handoff; its last 4 KiB
+  // (0x100200FF000) is the AppleMtpHid telemetry page.  The second MiB is
   // the preboot RTKit buffer pool the MTP IOP keeps DMA-writing after
   // boot.  Reserve both so neither UEFI nor Windows ever allocates them.
   ReserveMemoryRegion (0x10020000000ULL, 0x200000);

@@ -28,14 +28,24 @@
   stream 1; J813 uses stream 0.  m1n1's preboot handoff reads the same value
   and programs the same stream, so the two sides agree by construction.
 
-  The fourth memory resource is the multitouch firmware staging window, with
-  the same layout as J414s: AddressMinimum is the MTP DART bus address the
-  driver sends in command 0x95, AddressTranslation raises it to the reserved
-  CPU physical carveout.  m1n1 maps bus 0x1800000 -> 0x10020000000 (1 MiB)
-  during the handoff; 0x10020000000 is DRAM base + 512 MiB, below the Mu FD at
-  0x10030000000, and reserved from the UEFI memory map by the matching
-  MemoryInitPeiLib overlay so Windows never allocates it.  Translation is
-  0x10020000000 - 0x1800000 = 0x1001E800000.
+  The fourth memory resource is the multitouch firmware staging window.
+  Measured on J813: Windows does NOT apply AddressTranslation -- it maps the
+  raw AddressMinimum 0x1800000, so the driver's writes land at that guest
+  physical address.  The operative mechanism is therefore m1n1's, in two
+  halves: the DART maps bus 0x1800000 -> 0x10020000000 (1 MiB) for the IOP,
+  and the hypervisor identity-backs guest IPA 0x1800000 with the same
+  carveout (mtp_handoff_map_guest_staging()), so the address the driver
+  writes to and the bus address it sends in command 0x95 are the same
+  number and both name the same memory.  _TRA is retained as documentation
+  of the CPU-side carveout only: 0x10020000000 - 0x1800000 = 0x1001E800000.
+  0x10020000000 is DRAM base + 512 MiB, below the Mu FD at 0x10030000000,
+  and reserved from the UEFI memory map by the matching MemoryInitPeiLib
+  overlay so Windows never allocates it.
+
+  The LAST 4 KiB of the window (0x18FF000 / phys 0x100200FF000) is the
+  AppleMtpHid telemetry page (drivers/AppleMtpHid/AppleMtpTelemetry.h); the
+  driver caps the firmware payload at 0xFF000 so the two never overlap.
+  Decode with tools/decode-apple-mtp-hid-telemetry.py.
 
   Copyright (c) Apple Silicon NT Drivers contributors
   SPDX-License-Identifier: MIT
