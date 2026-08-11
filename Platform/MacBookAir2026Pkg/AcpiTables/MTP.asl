@@ -2,10 +2,11 @@
   J813 MTP/DockChannel input transport ACPI device.
 
   Port of the J414s table.  AppleMtpHid consumes the three DockChannel
-  apertures, one firmware-staging memory window, one AIC interrupt, and two
-  GPIO connections from _CRS -- it reads no _DSD property, so the _CRS shape
-  and ordering below are the actual contract and the _DSD package is
-  documentation plus a cross-check surface.
+  apertures, one firmware-staging memory window and one AIC interrupt from
+  _CRS -- it reads no _DSD property, so the _CRS shape and ordering below are
+  the actual contract and the _DSD package is documentation plus a cross-check
+  surface.  Unlike the J414s table this one declares no GpioIo connections;
+  see the note in _CRS for the hardware measurement that removed them.
 
   Addresses are from this machine's own device tree
   (DeviceTree.j813ap.adt, IPSW 25G76); ADT reg values under arm-io are
@@ -122,29 +123,35 @@ DefinitionBlock ("MTP.aml", "SSDT", 0x02, "Apple", "J813MTP", 0x00000001)
                     1277
                 }
                 //
-                // GPIO connection 0 is afe-reset and connection 1 is
-                // stm-reset.  The driver matches the INIT request by
-                // (name, id) and refuses any other pairing, so this order is
-                // a contract.
+                // There are deliberately no GpioIo connections here.
                 //
-                // These are vestigial for input and are kept only so the
-                // connections resolve.  A full bring-up on this machine, up to
-                // and including "Touch MT ready" with the trackpad streaming
+                // afe-reset and stm-reset used to be declared as two GpioIo
+                // descriptors against \_SB.SMCG, purely so that the pins the
+                // J414s driver knows about would resolve.  On Windows that is
+                // not free: a GpioIo descriptor in _CRS is a hard PnP
+                // dependency on the controller device, and \_SB.SMCG has no
+                // driver and can never start.  Measured on hardware, the two
+                // descriptors parked this device at
+                //
+                //     ACPI\NTAS0050\0 service=AppleMtpHid problem=51
+                //
+                // CM_PROB_WAITING_ON_DEPENDENCY -- bound to AppleMtpHid and
+                // permanently waiting for a GPIO controller that will never
+                // arrive, so AppleMtpHid.sys never loaded at all.
+                //
+                // Nothing is lost.  A full bring-up on this machine, up to and
+                // including "Touch MT ready" with the trackpad streaming
                 // frames, emits no GPIO traffic whatsoever -- the IOP never
-                // asks for a reset pulse, and the SMC is never touched.  What
+                // asks for a reset pulse and the SMC is never touched.  What
                 // multi-touch actually needs is the CBOR firmware bootload and
-                // the nine-byte power-method-2 exchange described below.
+                // the nine-byte power-method-2 exchange described below.  The
+                // ADT's real reset lines are the smc-pmu 'pKW4' keys gP1c and
+                // gP1d, not the pins named here; both accept a pulse and
+                // pulsing them changes nothing.  See SMCG.asl.
                 //
-                // The ADT's real reset lines are the smc-pmu 'pKW4' keys gP1c
-                // and gP1d, not the pins named here; both exist and accept a
-                // pulse, and pulsing them changes nothing.  See SMCG.asl.
-                //
-                GpioIo (Exclusive, PullNone, 0, 0, IoRestrictionOutputOnly,
-                    "\\_SB.SMCG", 0, ResourceConsumer)
-                { 25 }
-                GpioIo (Exclusive, PullNone, 0, 0, IoRestrictionOutputOnly,
-                    "\\_SB.SMCG", 0, ResourceConsumer)
-                { 26 }
+                // AppleMtpEvtPrepareHardware agrees: it requires 3 or 4 memory
+                // resources and exactly one interrupt, and never checks how
+                // many GPIO connections it found.
             })
 
             //
