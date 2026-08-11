@@ -70,7 +70,27 @@ EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE Fadt = {
     0, //CENTURY (UINT8)
     0, //IAPC_BOOT_ARCH (Intel boot flags) (UINT16)
     0, //Reserved1 (UINT8)
-    ((EFI_ACPI_6_4_HW_REDUCED_ACPI) | (EFI_ACPI_6_4_LOW_POWER_S0_IDLE_CAPABLE) | (EFI_ACPI_6_3_PWR_BUTTON)), //ACPI feature flags (currently HW reduced, S0ix capable, power button as control) (UINT32)
+    //
+    // ACPI feature flags (UINT32): HW-reduced, power button as control.
+    //
+    // LOW_POWER_S0_IDLE_CAPABLE is deliberately NOT set.  It claims the
+    // platform implements S0ix, and Windows then goes looking for the low
+    // power idle states that claim implies -- but every _LPI method in
+    // DSDT.asl is commented out, so there are none to find.  Advertising a
+    // capability with no data behind it is simply untrue about this machine.
+    //
+    // This is a correctness fix, NOT a fix for anything observable.  It was
+    // tried as a candidate cause of the open bugcheck 0xA
+    // (IRQL_NOT_LESS_OR_EQUAL, parameters (0, 2, 0, pc) at ntoskrnl RVA
+    // 0x2C3D8C) because a NULL read at IRQL 2 is the shape of chasing an
+    // absent LPI structure.  It is not the cause: measured on J813, the
+    // bugcheck reproduces at the identical RVA with this flag set and with it
+    // cleared, and independently of core count (nine-core and ten-core boots
+    // both hit it).  Do not read this comment as having explained 0xA.
+    //
+    // Restore this flag only together with real _LPI methods.
+    //
+    ((EFI_ACPI_6_4_HW_REDUCED_ACPI) | (EFI_ACPI_6_3_PWR_BUTTON)),
     NULL_GAS, //Reset register (TODO: do we want to put the Apple watchdog timer register here?) (EFI_ACPI_6_4_GENERIC_ADDRESS_STRUCTURE)
     0, //Reset value (UINT8)
     ((EFI_ACPI_6_4_ARM_PSCI_COMPLIANT)), //ARM boot flags (using PSCI, NOT using HVC conduit (we trap SMCs to EL2 since EL3 not implemented, and more useful for bare metal booting))
