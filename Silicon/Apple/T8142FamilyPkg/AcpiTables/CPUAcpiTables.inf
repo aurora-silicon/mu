@@ -32,6 +32,13 @@
   VERSION_STRING                 = 1.0
 
 [Sources]
+  #
+  # CSRT.aslc describes the native AIC3 to Windows' HAL extension. It was a
+  # comment-only stub excluded from the build until the AIC3 table was
+  # measured; it now carries a real 248-byte table and must be listed here, or
+  # it compiles to nothing and the extension never loads.
+  #
+  CSRT.aslc
   GTDT.aslc
   MADT_Static.aslc
   PPTT.aslc
