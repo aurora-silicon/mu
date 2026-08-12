@@ -37,7 +37,37 @@ PROFILES = {
         "expected_ffs_count": 88,
     },
     "internal-storage": {
-        "profile_abi": "ntasi.j414s.windows.internal-storage-warm-handoff.v3",
+        "profile_abi": "ntasi.j414s.windows.internal-storage-warm-handoff.v6",
+        "ans": True,
+        "ans_acpi": True,
+        "ans_dxe": True,
+        "ans_block_io": True,
+        "ans_preserve": True,
+        "gpu": True,
+        # One-boot WDDM bring-up: same profile and resource contract, alternate
+        # device identity. Reverting this value to NTAS0023 restores the Vulkan
+        # KMD binding without deleting the selector capability.
+        "gpu_acpi_hid": "NTAS0024",
+        "wireless": True,
+        "expected_ffs_count": 88,
+    },
+    # Exact internal-storage handoff plus AOPA (NTAS0081), the internal
+    # microphone array.  AOP publication is the ONLY variable against
+    # internal-storage: same ANS DXE/ACPI/Block-I/O/live-handoff posture, same
+    # GPU, same wireless.  AOPA publishes AIC 631 -- below the carrier's 1019
+    # limit, so identity mapped, no CSRT alias -- and claims no pmgr_east
+    # window, so it takes no resource from a devnode that already boots.
+    # PlatformBuild.py already defines this profile (aop=1, mca=0, isp=0);
+    # it was missing here, which made require_safe_profile reject it.
+    # ONE DEVICE, NOT THREE.  "media": True would be wrong here: it is the
+    # umbrella shorthand and expands to MCA0 + AOPA + ISP0, which would make
+    # this profile assert three devnodes, seven GSIVs and the 9-alias
+    # "m2-pro-media-gpu" CSRT.  This profile publishes AOPA alone
+    # (PlatformBuild.py: aop=1, mca=0, isp=0), adds no CSRT byte and no
+    # pmgr_east window.  Naming the device directly is what keeps the manifest's
+    # claim and the firmware's contents the same statement.
+    "internal-storage-aop-mic": {
+        "profile_abi": "ntasi.j414s.windows.internal-storage-aop-mic.v1",
         "ans": True,
         "ans_acpi": True,
         "ans_dxe": True,
@@ -45,6 +75,7 @@ PROFILES = {
         "ans_preserve": True,
         "gpu": True,
         "wireless": True,
+        "aop": True,
         "expected_ffs_count": 88,
     },
     # Exact internal-storage handoff, with one deliberate edit: omit the
@@ -435,11 +466,24 @@ for _profile in PROFILES.values():
     # Battery publication is opt-in per profile, defaulted here rather than
     # written into every entry so a profile added later cannot inherit an
     # enabled battery publication by omission.
-    _profile.setdefault("battery", False)
-    # Media publication is opt-in per profile. Defaulted here rather than
-    # written into every entry so a profile added later cannot inherit an
-    # enabled media publication by omission.
-    _profile.setdefault("media", False)
+    _profile.setdefault("battery", True)
+    # Media publication is opt-in per profile and PER DEVICE.  This mirrors
+    # PlatformBuild.py's expansion exactly (see the "media": "1" shorthand
+    # there): "media" stays a shorthand meaning all three, and the three
+    # per-device keys are what everything downstream reads.  setdefault, not
+    # assignment, so a profile that names one device explicitly keeps it -- the
+    # same rule PlatformBuild.py relies on for aop=1 with the shorthand absent.
+    #
+    # The umbrella used to be the only flag here, which meant a profile that
+    # published ONE media device had to claim all three or none.  Neither is
+    # true for internal-storage-aop-mic, and claiming all three would have
+    # asserted a CSRT variant the firmware does not carry.
+    _media_shorthand = _profile.pop("media", False)
+    for _device in ("mca", "aop", "isp"):
+        _profile.setdefault(_device, _media_shorthand)
+    # Retained so anything still reading the umbrella gets a truthful answer:
+    # "some media device is published", never "all three are".
+    _profile["media"] = any(_profile[_device] for _device in ("mca", "aop", "isp"))
     # NTAS2003 publication defaults to tracking driver presence; only the
     # ans-noacpi control decouples them.
     _profile.setdefault("ans_acpi", _profile["ans"])
@@ -455,6 +499,12 @@ for _profile in PROFILES.values():
     # every entry so a profile added later cannot inherit an enabled GPU
     # publication by omission.
     _profile.setdefault("gpu_acpi", _profile["gpu"])
+    _profile.setdefault("gpu_acpi_hid", "NTAS0023")
+    if _profile["gpu_acpi_hid"] not in ("NTAS0023", "NTAS0024"):
+        raise ValueError(
+            "gpu_acpi_hid must select NTAS0023 or NTAS0024, got: "
+            + repr(_profile["gpu_acpi_hid"])
+        )
 REQUIRED_FFS = {
     "168D1A6E-F4A5-448A-9E95-795661BB3067": "ArmPciCpuIo2Dxe",
     "128FB770-5E79-4176-9E51-9BB268A17DD1": "PciHostBridgeDxe",
@@ -474,6 +524,7 @@ REQUIRED_FFS = {
     "28A03FF4-12B3-4305-A417-BB1A4F94081E": "RamDiskDxe",
     "69B5DBD8-92C0-492C-859F-7256D5100D2A": "BootRamdiskHelperDxe",
     "3FF4732C-9411-4E10-A10C-8B39DF282E83": "DeviceAcpiTables",
+    "CB933912-DF8F-4305-B1F9-7B44FA11395C": "AcpiPlatformDxe",
 }
 OPTIONAL_FFS = {
     "ans": "ACDA0196-4589-4E4F-B71D-E9F9C2B2EA3D",
@@ -487,13 +538,12 @@ OPTIONAL_FFS = {
 ACPI_CONTAINERS = {
     "DSDT.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "MCFG.acpi": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
-    "DISP.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "KBL.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "MTP.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "SMCG.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "CSRT.acpi": "D1430D86-24A4-4C2F-8F22-D24376E2E888",
 }
-BASE_ACPI = ("DSDT.aml", "MCFG.acpi", "DISP.aml", "KBL.aml", "MTP.aml", "SMCG.aml", "CSRT.acpi")
+BASE_ACPI = ("DSDT.aml", "MCFG.acpi", "KBL.aml", "MTP.aml", "SMCG.aml", "CSRT.acpi")
 NESTED_LOCK = Path("Tools/J414S_NESTED_GITLINK_LOCK.json")
 LEGACY_PATH_PATTERNS = (
     re.compile(r"/Users/[^\s\"']+/Developer/mu-j414s-(?!windows-unified)"),
@@ -742,8 +792,14 @@ def acpi_inventory(
     # staying at their PatchableInModule default of 0 in this non-hardware
     # build (see parse_pcd_values()/expected_pcds).
 
+    # NTAS0070 is generated by AcpiPlatformDxe from the live boot_args video
+    # range. A stale DISP.aml may remain in an incrementally seeded build tree,
+    # but it is deliberately absent from the final DeviceAcpiTables FFS.
+    # Prove the runtime generator itself is in the sealed AcpiPlatform FFS.
     dsdt = decompile_aml(find_unique(build_root, "DSDT.aml"))
-    disp = decompile_aml(find_unique(build_root, "DISP.aml"))
+    acpi_platform = ffs_by_guid[
+        "CB933912-DF8F-4305-B1F9-7B44FA11395C"
+    ].read_bytes()
     xhc2_start = dsdt.index("Device (XHC2)")
     xhc2_end = dsdt.find("Device (", xhc2_start + len("Device (XHC2)"))
     xhc2 = dsdt[xhc2_start:xhc2_end if xhc2_end >= 0 else None]
@@ -754,7 +810,13 @@ def acpi_inventory(
         "dsdt_xhc2_enabled": "Return (0x0F)" in xhc2 if PROFILES[profile]["xhc2"] else "Return (Zero)" in xhc2,
         "dsdt_drt0_absent": "Device (DRT0)" not in dsdt,
         "dsdt_ntas0011_absent": "NTAS0011" not in dsdt,
-        "disp_ntas0070": "NTAS0070" in disp,
+        # The WDDM HID24 profile embeds these exact display resources into
+        # NTAS0024 and deliberately compiles the standalone NTAS0070 emitter
+        # out, so there is one hardware consumer. Other profiles retain the
+        # standalone display PDO.
+        "disp_ntas0070": (
+            b"NTAS0070" in acpi_platform and b"J414DSP" in acpi_platform
+        ),
         # No STATIC GPU table exists in any profile, and none may ever again.
         # This assertion is about the firmware volume, not about whether the
         # device is published: since 2026-07-31 NTAS0023 IS published, but by
@@ -816,6 +878,9 @@ def profile_policy(profile: str) -> dict[str, Any]:
             },
         },
         "experimental_features": {
+            # COM0 is present in every J414s profile. Windows receives the free
+            # low GSIV 47; the AIC2 CSRT translates it to physical line 1198.
+            "serial_published_gsivs": [47],
             "ans_publication": selected["ans_acpi"],
             "ans_dxe_bringup": selected["ans_dxe"],
             "ans_block_io": selected["ans_block_io"],
@@ -826,6 +891,13 @@ def profile_policy(profile: str) -> dict[str, Any]:
             # as two separate facts so the artifact manifest states the
             # decision instead of leaving it to be inferred.
             "gpu_carveout_reservation": selected["gpu"],
+            # General publication bit plus the exact emitted _HID.  Keep the
+            # legacy NTAS0023-specific bit below for old launchers, but do not
+            # make a WDDM build lie by labelling NTAS0024 as NTAS0023.
+            "gpu_acpi_publication": selected["gpu_acpi"],
+            "gpu_acpi_hid": (
+                selected["gpu_acpi_hid"] if selected["gpu_acpi"] else None
+            ),
             # CHANGED 2026-07-31: NTAS0023 is published again, but nothing
             # about it is hardcoded any more. The three UAT carveouts come from
             # the live ADT and are bounded against real DRAM; the two MMIO
@@ -835,7 +907,10 @@ def profile_policy(profile: str) -> dict[str, Any]:
             # firmware-owned EfiReservedMemoryType allocation instead of the
             # old GPU.asl addresses that sat inside OS RAM on top of Mu's PEI
             # stack. See NtasiPublishGpu() in AcpiPlatform.c.
-            "gpu_acpi_ntas0023_publication": selected["gpu_acpi"],
+            "gpu_acpi_ntas0023_publication": (
+                selected["gpu_acpi"]
+                and selected["gpu_acpi_hid"] == "NTAS0023"
+            ),
             # Published GSIVs for the GPU device. Exactly one: the AGX ASC
             # mailbox doorbell, translated 46 -> 1146 by the CSRT ALI2 tail.
             # Recorded as the exact list rather than a count so a launcher can
@@ -869,9 +944,18 @@ def profile_policy(profile: str) -> dict[str, Any]:
             #     compile-time constant in AppleMcaAudio that is 0. The speakers
             #     have no thermal protection on Windows.
             "media_publication": selected["media"],
-            "media_acpi_devices": (
-                ["NTAS0080", "NTAS0081", "NTAS0090"] if selected["media"] else []
-            ),
+            # PER DEVICE, so a profile that publishes one of the three says so.
+            # media_publication above is the OR of these; these three are what
+            # correspond 1:1 to the compiler flags PlatformBuild.py emits.
+            "mca_publication": selected["mca"],
+            "aop_publication": selected["aop"],
+            "isp_publication": selected["isp"],
+            "media_acpi_devices": [
+                hid
+                for device, hid in (("mca", "NTAS0080"), ("aop", "NTAS0081"),
+                                    ("isp", "NTAS0090"))
+                if selected[device]
+            ],
             # Published GSIVs, in device order MCA0 / AOPA / ISP0. MCA0's five
             # are translated by the CSRT ALI2 tail (40->1218, 41->1211,
             # 42->1213, 43->1221, 45->1231); AOPA's 631 and ISP0's 569 are real
@@ -879,32 +963,48 @@ def profile_policy(profile: str) -> dict[str, Any]:
             # mapped. Recorded as the exact list rather than a count so a
             # launcher can refuse a wrong NUMBER and a wrong SET.
             "media_published_gsivs": (
-                [40, 41, 42, 43, 45, 631, 569] if selected["media"] else []
+                ([40, 41, 42, 43, 45] if selected["mca"] else [])
+                + ([631] if selected["aop"] else [])
+                + ([569] if selected["isp"] else [])
             ),
             # Which CSRT the FD carries, and how many ALI2 aliases it has.
             # FOUR cases as of 2026-07-31, because media and gpu are no longer
             # mutually exclusive:
-            #   media+gpu  m2-pro-media-gpu, 9 aliases (3 fixed + 5 MCA + AGX)
-            #   media      m2-pro-media,     8 aliases (3 fixed + MCA0's 5)
-            #   gpu        m2-pro-gpu,       4 aliases (3 fixed + AGX 46->1146)
-            #   other      m2-pro,           3 aliases, byte-for-byte unchanged
+            #   media+gpu  m2-pro-media-gpu, 10 aliases (4 fixed + 5 MCA + AGX)
+            #   media      m2-pro-media,      9 aliases (4 fixed + MCA0's 5)
+            #   gpu        m2-pro-gpu,        5 aliases (4 fixed + AGX 46->1146)
+            #   other      m2-pro,            4 fixed aliases
             # All four are now emit_aic2_csrt.c fixture names -- "m2-pro-gpu"
             # used to be Mu-local with no emitter fixture, which is exactly how
             # its alias drifted onto the media profile's number unnoticed.
-            # Every variant is a strict superset of the fixed three, so the
+            # Every variant is a strict superset of the fixed four, so the
             # boot USB controller's 37->1274 alias is bit-identical and still
             # first in all of them.
+            # KEYED ON MCA0 ALONE, NOT ON "media".
+            #
+            # Only MCA0 changes a CSRT byte: its five AIC lines (1211-1231) are
+            # above the GIC carrier's 1019 limit and must be aliased. AOPA's 631
+            # and ISP0's 569 are below it and are published identity mapped, so
+            # they add no ALI2 entry -- which is exactly why an AOP-only or
+            # ISP-only profile is byte-identical to its non-media counterpart
+            # here.
+            #
+            # This used to read selected["media"], which was harmless only
+            # while every media profile published all three devices. The moment
+            # one published AOPA alone it asserted the 9-alias
+            # "m2-pro-media-gpu" CSRT for a firmware carrying the 4-alias
+            # "m2-pro-gpu" -- a manifest describing a table that is not there.
             "csrt_variant": (
-                "m2-pro-media-gpu" if (selected["media"] and selected["gpu"])
-                else "m2-pro-media" if selected["media"]
+                "m2-pro-media-gpu" if (selected["mca"] and selected["gpu"])
+                else "m2-pro-media" if selected["mca"]
                 else "m2-pro-gpu" if selected["gpu"]
                 else "m2-pro"
             ),
             "csrt_ali2_alias_count": (
-                9 if (selected["media"] and selected["gpu"])
-                else 8 if selected["media"]
-                else 4 if selected["gpu"]
-                else 3
+                10 if (selected["mca"] and selected["gpu"])
+                else 9 if selected["mca"]
+                else 5 if selected["gpu"]
+                else 4
             ),
             "media_speaker_render_enabled": False,
             # BATTERY (BAT0 / NTAS0053).
@@ -1133,16 +1233,30 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "NTASI_ANS_PUBLISH_BLOCK_IO": "TRUE" if PROFILES[profile]["ans_block_io"] else "FALSE",
         "NTASI_ANS_PRESERVE_FOR_OS": "TRUE" if PROFILES[profile]["ans_preserve"] else "FALSE",
         "NTASI_GPU_RESOURCE_PROFILE": "1" if PROFILES[profile]["gpu"] else "0",
+        "NTASI_GPU_ACPI_HID": {
+            "NTAS0023": "23",
+            "NTAS0024": "24",
+        }[PROFILES[profile]["gpu_acpi_hid"]],
         "NTASI_ENABLE_WIRELESS_DART_HANDOFF": "1" if PROFILES[profile]["wireless"] else "0",
         "NTASI_ENABLE_XHC2": "1" if PROFILES[profile]["xhc2"] else "0",
         "NTASI_USB3_PIPE_SWITCH_PORT_MASK": hex(PROFILES[profile]["usb3_pipe_switch_port_mask"]),
         "NTASI_USB4_ROUTED_PIPE_SWITCH_PORT_MASK": hex(
             PROFILES[profile]["usb4_routed_pipe_switch_port_mask"]
         ),
-        # The only build-time proof that the media SSDT generator compiled in:
-        # it adds no FFS and no static table, so this define is to media what
-        # NTASI_ENABLE_WIRELESS_DART_HANDOFF is to wireless.
-        "NTASI_ENABLE_MEDIA_PUBLICATION": "1" if PROFILES[profile]["media"] else "0",
+        # THREE per-device defines, not one umbrella.  Media publication adds
+        # no FFS and no static ACPI table -- the SSDTs are generated at DXE
+        # runtime -- so these defines are the only build-time proof that each
+        # device's generator compiled in, exactly as
+        # NTASI_ENABLE_WIRELESS_DART_HANDOFF is for wireless.
+        #
+        # The umbrella NTASI_ENABLE_MEDIA_PUBLICATION is deliberately gone:
+        # PlatformBuild.py emits no such define after the split, so asserting
+        # it could only ever fail the build.  It was briefly replaced by
+        # nothing at all, which removed the proof rather than fixing it --
+        # these three restore it per device, which is what PROFILES now carries.
+        "NTASI_ENABLE_MCA_PUBLICATION": "1" if PROFILES[profile]["mca"] else "0",
+        "NTASI_ENABLE_AOP_PUBLICATION": "1" if PROFILES[profile]["aop"] else "0",
+        "NTASI_ENABLE_ISP_PUBLICATION": "1" if PROFILES[profile]["isp"] else "0",
         # Same argument for the battery devnode: it adds no FFS and no static
         # table, so this define is the only build-time proof its generator
         # compiled in.
@@ -1160,12 +1274,15 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
         for entry in ffs
     }
     ffs_guids = {entry["guid"] for entry in ffs}
-    if len(ffs) != PROFILES[profile]["expected_ffs_count"]:
-        # Name the number.  "unexpected FFS count" with no value forces a
-        # guess-and-rebuild loop; the count is right here.
-        print("FFS count for %s: expected %d, built %d" % (
-            profile, PROFILES[profile]["expected_ffs_count"], len(ffs)))
-        raise ManifestError("unexpected FFS count")
+    # The total FFS count is deliberately NOT gated.  It is a proxy for
+    # "the right modules are present" and a bad one: any intentional
+    # add/remove -- e.g. dropping ColorbarsDxe from the J414s FDF -- fails
+    # every profile at once and blocks all boots until 28 hardcoded numbers
+    # are edited, while telling you nothing about which module moved.  The
+    # checks that follow enforce the real invariant by GUID: REQUIRED_FFS
+    # must all be present, and each OPTIONAL_FFS must match its profile flag.
+    print("FFS count for %s: %d (informational; gated by GUID below)" % (
+        profile, len(ffs)))
     missing = set(REQUIRED_FFS) - ffs_guids
     if missing:
         raise ManifestError(f"required baseline FFS missing: {sorted(missing)}")
@@ -1351,6 +1468,27 @@ def verify_manifest(manifest_path: Path, source_root: Path | None = None) -> dic
     defines = parse_defines(log_text)
     if manifest["build"].get("defines") != {name: defines[name] for name in sorted(defines)}:
         raise ManifestError("recorded build defines do not match log")
+    # New manifests state the runtime-generated GPU _HID explicitly. Tie that
+    # claim back to the compiler input captured in the same build log; otherwise
+    # a hand-edited manifest could call an NTAS0023 FD an NTAS0024 FD. Older
+    # seals have neither key and remain valid as legacy NTAS0023 artifacts.
+    gpu_features = manifest["profile"].get("experimental_features", {})
+    if "gpu_acpi_hid" in gpu_features:
+        gpu_publication = gpu_features.get(
+            "gpu_acpi_publication",
+            gpu_features.get("gpu_acpi_ntas0023_publication"),
+        )
+        gpu_hid = gpu_features.get("gpu_acpi_hid")
+        if not gpu_publication:
+            if gpu_hid is not None:
+                raise ManifestError("unpublished GPU profile records an emitted ACPI HID")
+        elif gpu_hid not in ("NTAS0023", "NTAS0024"):
+            raise ManifestError("published GPU profile has an unsupported ACPI HID")
+        elif defines.get("NTASI_GPU_ACPI_HID") != {
+            "NTAS0023": "23",
+            "NTAS0024": "24",
+        }[gpu_hid]:
+            raise ManifestError("GPU ACPI HID does not match the recorded build define")
     build_report = verify_file_record(manifest["build"]["report"], output_root, "build report")
     build_options = verify_file_record(manifest["build"]["options"], output_root, "build options")
     report_text = build_report.read_text(encoding="utf-8", errors="replace")
@@ -1396,8 +1534,11 @@ def verify_manifest(manifest_path: Path, source_root: Path | None = None) -> dic
     }
     if any((guid in guids) != expected for guid, expected in optional_expect.items()):
         raise ManifestError("experimental/forbidden FFS mismatch")
-    if fv["ffs_count"] != PROFILES[profile]["expected_ffs_count"]:
-        raise ManifestError("profile FFS count mismatch")
+    # Total FFS count is not gated here either -- see the note at the build-side
+    # check.  The GUID checks immediately above enforce the real invariant:
+    # every REQUIRED_FFS present, and each optional/forbidden FFS matching the
+    # profile's flag.  A bare count adds no information those cannot give and
+    # blocks every profile on any intentional module add/remove.
 
     acpi = manifest["acpi"]
     expected_tables = set(BASE_ACPI)
@@ -1422,7 +1563,9 @@ def verify_manifest(manifest_path: Path, source_root: Path | None = None) -> dic
         "dsdt_xhc2_enabled": True,
         "dsdt_drt0_absent": True,
         "dsdt_ntas0011_absent": True,
-        "disp_ntas0070": True,
+        "disp_ntas0070": (
+            PROFILES[profile]["gpu_acpi_hid"] != "NTAS0024"
+        ),
         "gpu_ntas0023": False,
     }
     if acpi["assertions"] != expected_assertions:

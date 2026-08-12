@@ -52,10 +52,11 @@ ACPI_PLATFORM = (
     / "AcpiPlatform.c"
 )
 CSRT_ASLC = REPO / "Silicon" / "Apple" / "T602XFamilyPkg" / "AcpiTables" / "CSRT.aslc"
+DSDT_ASL = REPO / "Platform" / "MacBookProEarly2023Pkg" / "AcpiTables" / "DSDT.asl"
 PLATFORM_BUILD = (
     REPO / "Platform" / "MacBookProEarly2023Pkg" / "PlatformBuild.py"
 )
-MODULE_PATH = REPO / "Tools" / "j414s_mu_profile_manifest.py"
+MODULE_PATH = REPO / "Tools" / "mu_profile_manifest.py"
 SPEC = importlib.util.spec_from_file_location("j414s_mu_profile_manifest", MODULE_PATH)
 M = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -64,16 +65,18 @@ SPEC.loader.exec_module(M)
 # Emitted by drivers/AppleAic/emit_aic2_csrt.c in the driver repo and
 # transcribed verbatim into CSRT.aslc.
 CSRT_SHA256 = {
-    "m2-pro": "cdee0da81d9c54c17d2964510271de453ae2ff0428fe0ff13e69efa9406521a5",
-    "m2-pro-media": "a082eb6c95a12a29cdbc71e0c17fcb4091c1c5c48624595512cf5fa0342f16ba",
-    "m2-pro-gpu": "ddf756c7103303471bc7e558881cf27b4503458a4360fcb3407ad0138008daff",
+    "m2-pro": "97846e552ede9ae962c71ece4b6ca55fb0cb6b64a831be42794ba249b7277c22",
+    "m2-pro-media": "0eeba7fd25f9c9838afa2a15883afeaa43a06b427662d00888edf16af88b4b91",
+    "m2-pro-gpu": "9a37a0c42ef0338a6bff1f645a03d79939104f71877965ed93840408fcd4a9e7",
     "m2-pro-media-gpu": (
-        "9bacd0d00e07af808374990eaaf954f657d2c44976bf2b7341531b85cf8b3759"
+        "466c90641d5c9e05c430cd544b533ec485e7be254bf08c55a1500dbff2e6918a"
     ),
 }
 
 AGX_PUBLISHED_GSIV = 46
 AGX_PHYSICAL_AIC = 1146
+COM0_PUBLISHED_GSIV = 47
+COM0_PHYSICAL_AIC = 1198
 
 # The addresses the deleted GPU.asl published for hw_data_a / hw_data_b /
 # globals.  m1n1's dt_set_gpu() allocated them with top_of_memory_alloc() on a
@@ -152,7 +155,13 @@ def csrt_bytes(media: int, gpu: int) -> bytes:
         result = subprocess.run(
             [
                 _host_cc(), "-E", "-P",
-                f"-DNTASI_ENABLE_MEDIA_PUBLICATION={media}",
+                # Only MCA0 changes a CSRT byte. The parameter is still
+                # named "media" here because every caller in this file
+                # means "the 8-alias MCA table"; AOPA and ISP0 publish
+                # AIC 631/569 identity mapped and touch no CSRT byte.
+                f"-DNTASI_ENABLE_MCA_PUBLICATION={media}",
+                "-DNTASI_ENABLE_AOP_PUBLICATION=0",
+                "-DNTASI_ENABLE_ISP_PUBLICATION=0",
                 f"-DNTASI_GPU_RESOURCE_PROFILE={gpu}",
                 str(path),
             ],
@@ -193,6 +202,16 @@ class GpuResourceContract(unittest.TestCase):
             block.index("AppleAnsAddMemoryResource"),
             block.index("AmlCodeGenRdInterrupt"),
             "the interrupt descriptor must come after the memory windows",
+        )
+
+    def test_wddm_hid_appends_display_and_post_resources(self):
+        block = strip_comments(gpu_block())
+        self.assertIn("#if NTASI_GPU_ACPI_HID == 24", block)
+        self.assertIn("mNtasiDisplayWindows[Index].Base", block)
+        self.assertIn("FramebufferBase, FramebufferLength", block)
+        self.assertIn(
+            "NTASI_GPU_RES_COUNT + ARRAY_SIZE (mNtasiDisplayWindows) + 1",
+            block,
         )
 
     def test_a_short_crs_is_never_published(self):
@@ -250,6 +269,26 @@ class GpuAddressSafety(unittest.TestCase):
         # Zero-filled, and the fact stated in _DSD rather than hidden.
         self.assertIn("ZeroMem", block)
         self.assertIn("ntasp,preboot-handoff-present", block)
+
+    def test_live_handoff_requires_m1n1_canonical_geometry(self):
+        """Six ADT scalars alone are not proof that m1n1 produced the bytes."""
+        source = strip_comments(ACPI_PLATFORM.read_text(encoding="utf-8"))
+        guard = strip_comments(
+            (ACPI_PLATFORM.parent / "NtasiGpuReservationGuard.h").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("NtasiGpuHandoffGeometryIsCanonical", source)
+        self.assertIn("DramWindowTop", source)
+        self.assertIn("refusing preboot provenance", source)
+        for name in (
+            "NTASI_GPU_HANDOFF_TOP_MARGIN",
+            "NTASI_GPU_HANDOFF_HWDATA_A_SIZE",
+            "NTASI_GPU_HANDOFF_HWDATA_B_SIZE",
+            "NTASI_GPU_HANDOFF_GLOBALS_SIZE",
+        ):
+            with self.subTest(constant=name):
+                self.assertIn(name, guard)
 
     def test_no_fabricated_calibration_metadata_is_published(self):
         """The deleted GPU.asl asserted CRC32s for data captured elsewhere."""
@@ -431,8 +470,22 @@ class GpuCsrtVariants(unittest.TestCase):
 
     def test_the_non_gpu_tables_are_byte_for_byte_unchanged(self):
         """Moving the AGX alias must not have touched any other profile."""
-        self.assertEqual(len(csrt_bytes(media=0, gpu=0)), 256)
-        self.assertEqual(len(csrt_bytes(media=1, gpu=0)), 296)
+        self.assertEqual(len(csrt_bytes(media=0, gpu=0)), 264)
+        self.assertEqual(len(csrt_bytes(media=1, gpu=0)), 304)
+
+
+class SerialInterruptContract(unittest.TestCase):
+    def test_every_csrt_variant_carries_the_com0_alias(self):
+        alias = struct.pack("<II", COM0_PUBLISHED_GSIV, COM0_PHYSICAL_AIC)
+        for media, gpu in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            with self.subTest(media=media, gpu=gpu):
+                self.assertIn(alias, csrt_bytes(media=media, gpu=gpu))
+
+    def test_com0_publishes_only_the_low_gsiv(self):
+        source = strip_comments(DSDT_ASL.read_text(encoding="utf-8"))
+        block = source[source.index("Device(COM0)") : source.index("Device(DIE0)")]
+        self.assertRegex(block, r"Interrupt\s*\([^)]*\)\s*\{\s*47\s*\}")
+        self.assertNotRegex(block, r"\{\s*1198\s*\}")
 
 
 class GpuProfilePolicy(unittest.TestCase):
@@ -444,9 +497,39 @@ class GpuProfilePolicy(unittest.TestCase):
                     features["gpu_carveout_reservation"], bool(entry["gpu"])
                 )
                 self.assertIs(
-                    features["gpu_acpi_ntas0023_publication"],
+                    features["gpu_acpi_publication"],
                     bool(entry["gpu_acpi"]),
                 )
+                self.assertIs(
+                    features["gpu_acpi_ntas0023_publication"],
+                    bool(entry["gpu_acpi"])
+                    and entry["gpu_acpi_hid"] == "NTAS0023",
+                )
+
+    def test_internal_storage_selects_wddm_hid_without_a_new_profile(self):
+        entry = M.PROFILES["internal-storage"]
+        features = M.profile_policy("internal-storage")["experimental_features"]
+        self.assertEqual(entry["gpu_acpi_hid"], "NTAS0024")
+        self.assertEqual(features["gpu_acpi_hid"], "NTAS0024")
+        self.assertTrue(features["gpu_acpi_publication"])
+        self.assertFalse(features["gpu_acpi_ntas0023_publication"])
+
+    def test_unpublished_gpu_profile_records_no_actual_hid(self):
+        features = M.profile_policy("internal-storage-gpu-noacpi")[
+            "experimental_features"
+        ]
+        self.assertFalse(features["gpu_acpi_publication"])
+        self.assertIsNone(features["gpu_acpi_hid"])
+
+    def test_c_generator_has_a_closed_two_hid_selector(self):
+        source = strip_comments(ACPI_PLATFORM.read_text(encoding="utf-8"))
+        self.assertIn("#if NTASI_GPU_ACPI_HID == 23", source)
+        self.assertIn("#elif NTASI_GPU_ACPI_HID == 24", source)
+        self.assertIn('#error "NTASI_GPU_ACPI_HID must be 23 (Vulkan) or 24 (WDDM)"', source)
+        self.assertIn(
+            'AmlCodeGenNameString ("_HID", NTASI_GPU_ACPI_HID_STRING',
+            source,
+        )
 
     def test_gpu_noacpi_is_a_true_single_variable_control(self):
         """It must differ from `gpu` in the publication and nothing else."""
@@ -521,12 +604,20 @@ class GpuProfilePolicy(unittest.TestCase):
             r'"internal-storage-gpu-noacpi":\s*\{[^}]*"gpu":\s*"1"[^}]*"gpu_acpi":\s*"0"',
         )
 
+    def test_builder_and_manifest_agree_on_internal_storage_hid(self):
+        source = strip_comments(PLATFORM_BUILD.read_text(encoding="utf-8"))
+        internal = source.split('"internal-storage": {', 1)[1].split("}", 1)[0]
+        self.assertIn('"gpu_acpi_hid": "24"', internal)
+        self.assertIn('values.setdefault("gpu_acpi_hid", "23")', source)
+        self.assertIn("BLD_*_NTASI_GPU_ACPI_HID", source)
+        self.assertIn('profile_values[profile]["gpu_acpi_hid"]', source)
+
     def test_media_and_gpu_can_now_be_selected_together(self):
         entry = M.PROFILES["media-gpu"]
         self.assertTrue(entry["media"] and entry["gpu"])
         features = M.profile_policy("media-gpu")["experimental_features"]
         self.assertEqual(features["csrt_variant"], "m2-pro-media-gpu")
-        self.assertEqual(features["csrt_ali2_alias_count"], 9)
+        self.assertEqual(features["csrt_ali2_alias_count"], 10)
         # Both device sets are published, and their GSIVs are disjoint.
         self.assertEqual(features["gpu_published_gsivs"], [AGX_PUBLISHED_GSIV])
         self.assertFalse(

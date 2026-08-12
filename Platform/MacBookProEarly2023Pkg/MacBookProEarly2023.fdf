@@ -267,7 +267,13 @@ FvNameGuid         = 02e6c12f-69f7-4626-b5de-e3cfd6c0dc56
   #
   # Bds
   #
-  INF AppleSiliconPkg/Drivers/ColorbarsDxe/ColorbarsDxe.inf
+  # ColorbarsDxe is deliberately NOT packaged on J414s.  All it did was
+  # AddDeviceState() six development-state bits, which ColorBarDisplayDeviceStateLib
+  # then painted as six coloured bars over the boot logo on every single boot.
+  # That library is now the Null instance (FrontpageDsc.inc), so this driver
+  # would be a pure no-op; dropping it removes the flag-setting half too.
+  # The other platform FDFs still reference it and still build -- the DSC
+  # component entry is intentionally left in place for them.
   INF MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
   INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
   INF MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf

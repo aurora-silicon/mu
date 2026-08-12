@@ -18,9 +18,10 @@ miniport) do the reading over the SMC transport that SMCG already owns.
   - no write path.  Battery reporting needs READ_KEY and nothing else, and the
     charge-control keys change real power hardware.
 
-Plus the usual profile-gate discipline: default off must mean byte-identical
-firmware, and the two independent profile dicts must not be able to drift (on
-2026-07-31 changing only one produced a manifest that lied about the binary).
+Plus the publication contract: battery publication is ON in every profile
+(the #if gate was removed from AcpiPlatform.c), and the two independent profile
+dicts must not be able to drift (on 2026-07-31 changing only one produced a
+manifest that lied about the binary).
 """
 
 from __future__ import annotations
@@ -45,12 +46,12 @@ DSC = REPO / "Platform" / "MacBookProEarly2023Pkg" / "MacBookProEarly2023.dsc"
 PLATFORM_BUILD = (
     REPO / "Platform" / "MacBookProEarly2023Pkg" / "PlatformBuild.py"
 )
-BUILDER = REPO / "Tools" / "build-j414s-windows-native.sh"
+BUILDER = REPO / "Tools" / "build-windows-native.sh"
 SMCG_ASL = (
     REPO / "Platform" / "MacBookProEarly2023Pkg" / "AcpiTables" / "SMCG.asl"
 )
 
-MODULE_PATH = REPO / "Tools" / "j414s_mu_profile_manifest.py"
+MODULE_PATH = REPO / "Tools" / "mu_profile_manifest.py"
 SPEC = importlib.util.spec_from_file_location("j414s_mu_profile_manifest", MODULE_PATH)
 M = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -74,10 +75,15 @@ FORBIDDEN_SMC_KEYS = (
 
 
 def battery_block() -> str:
-    """The text between the battery generator's #if and its #endif."""
+    """The text of the battery generator, delimited by its BEGIN/END sentinels.
+
+    The generator is compiled unconditionally (the #if gate was removed so every
+    profile publishes BAT0); the sentinels let the shape tests still pin the
+    empty-_CRS / no-GSIV / read-only design without a preprocessor marker.
+    """
     text = ACPI_PLATFORM.read_text(encoding="utf-8")
-    start = text.index(f"#if {FLAG}")
-    end = text.index(f"#endif // {FLAG}", start)
+    start = text.index("NTASI_BATTERY_BLOCK_BEGIN")
+    end = text.index("NTASI_BATTERY_BLOCK_END", start)
     return text[start:end]
 
 
@@ -212,15 +218,17 @@ class BatteryDeviceShape(unittest.TestCase):
 
 
 class BatteryProfileGate(unittest.TestCase):
-    def test_only_the_battery_profile_publishes_the_battery(self):
+    def test_every_profile_publishes_the_battery(self):
+        # Battery publication is unconditional: the #if gate was removed from
+        # AcpiPlatform.c, so every profile publishes BAT0 regardless of its
+        # "battery" flag. The manifest defaults "battery" to True for every
+        # profile, so profile_policy must report publication on everywhere.
         for profile in M.PROFILES:
             with self.subTest(profile=profile):
+                self.assertIs(M.PROFILES[profile]["battery"], True)
                 features = M.profile_policy(profile)["experimental_features"]
-                expected = bool(M.PROFILES[profile]["battery"])
-                self.assertIs(features["battery_publication"], expected)
-                self.assertEqual(
-                    features["battery_acpi_devices"], [HID] if expected else []
-                )
+                self.assertIs(features["battery_publication"], True)
+                self.assertEqual(features["battery_acpi_devices"], [HID])
 
     def test_no_profile_ever_publishes_a_battery_gsiv(self):
         for profile in M.PROFILES:
@@ -261,16 +269,19 @@ class BatteryProfileGate(unittest.TestCase):
             "ntasi.j414s.windows.battery-publication.v1",
         )
 
-    def test_generator_is_preprocessor_gated(self):
-        # Default OFF has to mean byte-identical firmware, not merely
-        # equivalent behaviour.
+    def test_generator_is_unconditionally_compiled(self):
+        # Battery publication is ON in every profile: the generator is no
+        # longer #if-gated in AcpiPlatform.c. The define remains in the DSC for
+        # manifest accounting but no longer controls compilation.
         text = ACPI_PLATFORM.read_text(encoding="utf-8")
-        self.assertIn(f"#if {FLAG}", text)
-        self.assertIn(f"#endif // {FLAG}", text)
+        self.assertNotIn(f"#if {FLAG}", text)
+        self.assertNotIn(f"#endif // {FLAG}", text)
+        self.assertIn("NTASI_BATTERY_BLOCK_BEGIN", text)
+        self.assertIn("NTASI_BATTERY_BLOCK_END", text)
         self.assertIn(
             f"-D{FLAG}=$({FLAG})", DSC.read_text(encoding="utf-8")
         )
-        self.assertIn(f"DEFINE {FLAG} = 0", DSC.read_text(encoding="utf-8"))
+        self.assertIn(f"DEFINE {FLAG} = 1", DSC.read_text(encoding="utf-8"))
 
     def test_expected_defines_track_the_profile_table(self):
         source = MODULE_PATH.read_text(encoding="utf-8")
@@ -312,9 +323,9 @@ class BatteryBuilderAgreesWithTheManifest(unittest.TestCase):
         text = PLATFORM_BUILD.read_text(encoding="utf-8")
         self.assertIn(f'"BLD_*_{FLAG}"', text)
         self.assertIn('profile_values[profile]["battery"]', text)
-        # Defaulted off rather than repeated, so a profile added later cannot
-        # inherit a battery publication by omission.
-        self.assertIn('values.setdefault("battery", "0")', text)
+        # Defaulted ON rather than repeated, so a profile added later inherits
+        # battery publication (the generator is unconditional in AcpiPlatform.c).
+        self.assertIn('values.setdefault("battery", "1")', text)
 
     def test_the_wrapper_script_accepts_the_profile(self):
         text = BUILDER.read_text(encoding="utf-8")

@@ -222,6 +222,80 @@ test_RangeWithinWindow_EdgeCases (void)
   );
 }
 
+static void
+test_CanonicalGpuHandoffGeometry (void)
+{
+  const NTASI_GUARD_U64 DramWindowTop = 0x10400000000ULL;
+  const NTASI_GUARD_U64 CanonicalBase = 0x103ffbdc000ULL;
+  const NTASI_GUARD_U64 HwDataABase   = CanonicalBase;
+  const NTASI_GUARD_U64 HwDataBBase   = HwDataABase + NTASI_GPU_HANDOFF_HWDATA_A_SIZE;
+  const NTASI_GUARD_U64 GlobalsBase   = HwDataBBase + NTASI_GPU_HANDOFF_HWDATA_B_SIZE;
+  NTASI_GUARD_U64       DerivedBase;
+
+  DerivedBase = 0;
+  CHECK(
+    "m1n1/Mu canonical AGX handoff base derives from the real J414s DRAM top",
+    NtasiGpuCanonicalHandoffBase(DramWindowTop, &DerivedBase) == NTASI_GUARD_TRUE &&
+    DerivedBase == CanonicalBase
+  );
+  CHECK(
+    "the exact contiguous 0x8000/0x4000/0x18000 m1n1 handoff is accepted",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_TRUE
+  );
+  CHECK(
+    "a stale handoff base one 16 KiB page away is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase - NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase - NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase - NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a non-contiguous hw_data_b aperture is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase + NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a wrong globals map size is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase, NTASI_GPU_HANDOFF_GLOBALS_SIZE - NTASI_GPU_HANDOFF_PAGE_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "an unaligned handoff is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase + 1, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase + 1, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase + 1, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a DRAM top too small for the firmware margin and handoff is refused",
+    NtasiGpuCanonicalHandoffBase(
+      NTASI_GPU_HANDOFF_TOP_MARGIN + NTASI_GPU_HANDOFF_RESERVATION_SIZE,
+      &DerivedBase
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a null canonical-base output is refused",
+    NtasiGpuCanonicalHandoffBase(DramWindowTop, NULL) == NTASI_GUARD_FALSE
+  );
+}
+
 int
 main (void)
 {
@@ -231,6 +305,7 @@ main (void)
   test_RangeContainsPoint_EdgeCases();
   test_RangesOverlap_EdgeCases();
   test_RangeWithinWindow_EdgeCases();
+  test_CanonicalGpuHandoffGeometry();
 
   if (gFailures != 0) {
     printf("\n%d assertion(s) FAILED\n", gFailures);

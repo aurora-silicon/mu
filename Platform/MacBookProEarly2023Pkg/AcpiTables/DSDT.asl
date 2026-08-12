@@ -310,24 +310,12 @@
                 0x0000000000001000    // RangeLength - LEN
                 )
                 //
-                // NO Interrupt descriptor -- deliberate.
-                //
-                // This used to publish Interrupt(..., Exclusive) { 1198 }. GSIV
-                // 1198 is UNROUTABLE on this platform: the GICv3 carrier
-                // registers SPIs [32, 1024) and the architecture caps SPI at
-                // 1019, so 1198 lands in the reserved 1024..4095 gap. The
-                // identical situation on XHC1 (GSIV 1274) was A/B-proven to
-                // produce CM_PROB_NORMAL_CONFLICT, and removing the Interrupt
-                // descriptor was what cleared it to problem=0 with resources
-                // assigned. Keeping it here would fail COM0's whole requirement
-                // list the same way -- one unsatisfiable descriptor in a
-                // single-alternative list fails everything.
-                //
-                // AppleSerial does not need it: TX is synchronous polled and RX
-                // runs off its own poll timer. The driver accepts zero interrupt
-                // descriptors and only rejects MORE than one; the two changes
-                // are a matched pair and must ship together.
-                //
+                // Physical AIC line 1198 is above Windows' architectural GIC
+                // carrier limit. The AIC2 CSRT ALI2 tail translates this free
+                // low published GSIV to the real UART line in both directions.
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) {
+                    47
+                }
                 // ResourceUsage above is likewise corrected to ResourceConsumer,
                 // which is what a leaf device should declare (XHC1/XHC2 already
                 // do). Note this is NOT believed to be a blocker on its own:

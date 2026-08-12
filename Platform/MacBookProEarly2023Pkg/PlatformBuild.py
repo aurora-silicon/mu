@@ -198,6 +198,10 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
                 "ans": "TRUE", "gpu": "1", "wireless": "1",
                 "ans_acpi": "TRUE", "ans_dxe": "TRUE",
                 "ans_block_io": "TRUE", "ans_preserve": "TRUE",
+                # One-boot WDDM bring-up selector. Keep the sealed profile
+                # name and every storage/handoff bit unchanged; only publish
+                # the alternate HID bound by AppleAgxWddm.
+                "gpu_acpi_hid": "24",
             },
             # Exact copy of internal-storage except NTAS0023 publication is
             # hard-disabled. Keep ANS live handoff, Block I/O, wireless, GPU
@@ -305,8 +309,30 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             "ans-wireless": {"ans": "TRUE", "gpu": "0", "wireless": "1",
                              "ans_acpi": "TRUE", "battery": "1"},
             "media": {"ans_acpi": "FALSE", "ans": "FALSE", "gpu": "0", "wireless": "0", "media": "1"},
+            # internal-storage PLUS AOPA (NTAS0081): the internal microphone
+            # array, with AOP publication as the ONLY variable against the
+            # proven internal-storage baseline.
+            #
+            # Derived from internal-storage rather than from a minimal base
+            # because J414s boots Windows off the internal NVMe -- ANS DXE,
+            # ACPI, Block I/O and the live handoff are load-bearing just to
+            # reach an OS, and the GPU is mandatory on this target. A minimal
+            # aop-only profile was refused by auroradbg's require_safe_profile()
+            # before it could be built, correctly: a firmware that cannot reach
+            # Windows cannot report what the driver measured.
+            #
+            # Adds no CSRT byte relative to internal-storage (AIC 631 is below
+            # the carrier's 1019 limit and is published identity mapped) and no
+            # pmgr_east window, so no Code 12 conflict with KBL0. Must stay in
+            # step with the same key in Tools/mu_profile_manifest.py.
+            "internal-storage-aop-mic": {
+                "ans": "TRUE", "gpu": "1", "wireless": "1",
+                "ans_acpi": "TRUE", "ans_dxe": "TRUE",
+                "ans_block_io": "TRUE", "ans_preserve": "TRUE",
+                "aop": "1",
+            },
             # Everything at once. Must stay in step with the same key in
-            # Tools/j414s_mu_profile_manifest.py PROFILES -- this dict is the
+            # Tools/mu_profile_manifest.py PROFILES -- this dict is the
             # one that reaches the compiler.
             "ans-gpu-wireless-media": {"ans": "TRUE", "ans_acpi": "TRUE", "gpu": "1", "wireless": "1", "media": "1"},
             # Single-variable control for NTAS0023, exactly as ans-noacpi is for
@@ -314,7 +340,7 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             # of the NTASI_GPU_RESOURCE_PROFILE code is still compiled in,
             # but the ACPI device is never published.
             #
-            # ADDED 2026-07-31. Tools/j414s_mu_profile_manifest.py PROFILES has
+            # ADDED 2026-07-31. Tools/mu_profile_manifest.py PROFILES has
             # carried "gpu-noacpi" and "media-gpu" since 3450262, but this dict
             # -- the one that actually reaches the compiler -- did not, so the
             # manifest advertised two profiles the builder rejected with
@@ -351,20 +377,40 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             # Mu driver a strict no-op, so a profile added later cannot inherit
             # a routed mux switch by omission.
             values.setdefault("usb4_routed_pipe_mask", "0x0")
-            values.setdefault("media", "0")
+            # Media publication is per-device: three independent compiler flags.
+            # "media": "1" is shorthand for all three and is expanded here, so
+            # the existing media / media-gpu / ans-gpu-wireless-media profiles
+            # keep exactly their previous meaning while aop-mic can select one.
+            # Only the three per-device keys reach the compiler; there is no
+            # umbrella define, because a stale one is what would silently
+            # re-couple the devices after they were split apart.
+            _media_shorthand = values.pop("media", "0")
+            for _device in ("mca", "aop", "isp"):
+                values.setdefault(_device, _media_shorthand)
             values.setdefault("ans_dxe", "FALSE")
             values.setdefault("ans_block_io", "FALSE")
             values.setdefault("ans_preserve", "FALSE")
             # Same rule for the battery devnode: a profile that does not name
-            # it does not get it. Written as a default so a profile added later
-            # cannot inherit a battery publication by omission.
-            values.setdefault("battery", "0")
+            # it still gets it. Battery publication is unconditional in
+            # AcpiPlatform.c (no #if gate), so every profile publishes BAT0.
+            # Written as a default so a profile added later inherits this.
+            values.setdefault("battery", "1")
             # NTAS0023 publication tracks the gpu flag unless a profile says
             # otherwise, mirroring ans_acpi/ans. Defaulted rather than repeated
             # so a profile added later cannot inherit a publication by
             # omission -- and so a future "gpu-noacpi" control can decouple the
             # two by naming gpu_acpi explicitly, exactly as ans-noacpi does.
             values.setdefault("gpu_acpi", values["gpu"])
+            # The GPU resources and SSDT shape are shared by the Vulkan KMD
+            # (NTAS0023) and WDDM KMD (NTAS0024).  Keep the identity a closed,
+            # profile-owned compiler choice: arbitrary strings must never
+            # reach AML and a missing selector preserves the established HID.
+            values.setdefault("gpu_acpi_hid", "23")
+            if values["gpu_acpi_hid"] not in ("23", "24"):
+                raise ValueError(
+                    "gpu_acpi_hid must select NTAS0023 or NTAS0024, got: "
+                    + repr(values["gpu_acpi_hid"])
+                )
             if values["ans_preserve"] == "TRUE" and not (
                 values["ans"] == "TRUE"
                 and values["ans_acpi"] == "TRUE"
@@ -455,13 +501,18 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             "Selected by NTASI_MU_PROFILE",
         )
         # NTAS0023 publication. Tracks the gpu flag by default (see
-        # PROFILES' gpu_acpi setdefault in Tools/j414s_mu_profile_manifest.py)
+        # PROFILES' gpu_acpi setdefault in Tools/mu_profile_manifest.py)
         # but is a separate switch so "reserve the carveouts" and "publish the
         # ACPI device" can be isolated from each other on hardware, exactly as
         # ans/ans_acpi can.
         self.env.SetValue(
             "BLD_*_NTASI_ENABLE_GPU_ACPI_PUBLICATION",
             profile_values[profile]["gpu_acpi"],
+            "Selected by NTASI_MU_PROFILE",
+        )
+        self.env.SetValue(
+            "BLD_*_NTASI_GPU_ACPI_HID",
+            profile_values[profile]["gpu_acpi_hid"],
             "Selected by NTASI_MU_PROFILE",
         )
         # CORRECTED 2026-07-30: wireless used to require a same-instance,
@@ -499,19 +550,23 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             profile_values[profile]["usb4_routed_pipe_mask"],
             "Selected by NTASI_MU_PROFILE",
         )
-        # Media publication (MCA0/AOPA/ISP0). Like gpu and wireless this is a
-        # pure source-flag decision: the whole generator is inside
-        # "#if NTASI_ENABLE_MEDIA_PUBLICATION" in AcpiPlatform.c, so 0 produces
-        # byte-identical firmware to a tree without this feature at all.
-        self.env.SetValue(
-            "BLD_*_NTASI_ENABLE_MEDIA_PUBLICATION",
-            profile_values[profile]["media"],
-            "Selected by NTASI_MU_PROFILE",
-        )
-        # Battery publication (BAT0 / NTAS0053). Same shape as media: the whole
-        # generator is inside "#if NTASI_ENABLE_BATTERY_PUBLICATION" in
-        # AcpiPlatform.c, so 0 produces byte-identical firmware to a tree
-        # without this feature at all.
+        # Media publication, THREE independent device flags (MCA0/AOPA/ISP0).
+        # Like gpu and wireless these are pure source-flag decisions: each
+        # device's tables are inside its own "#if NTASI_ENABLE_*_PUBLICATION"
+        # in AcpiPlatform.c, so all-zero produces byte-identical firmware to a
+        # tree without the feature at all, and a build that selects one device
+        # carries the bytes of that device only.
+        for _device in ("mca", "aop", "isp"):
+            self.env.SetValue(
+                f"BLD_*_NTASI_ENABLE_{_device.upper()}_PUBLICATION",
+                profile_values[profile][_device],
+                "Selected by NTASI_MU_PROFILE",
+            )
+        # Battery publication (BAT0 / NTAS0053). The generator is unconditional in
+        # AcpiPlatform.c (no #if gate), so every profile publishes BAT0. This
+        # define is informational only -- it no longer controls compilation --
+        # but stays 1 in every profile so build manifests report battery
+        # publication as enabled, matching the firmware.
         self.env.SetValue(
             "BLD_*_NTASI_ENABLE_BATTERY_PUBLICATION",
             profile_values[profile]["battery"],

@@ -118,9 +118,20 @@
   #
   UiRectangleLib|MsGraphicsPkg/Library/BaseUiRectangleLib/BaseUiRectangleLib.inf
   #
-  # display the device state notifications for the platform using color bars
+  # Device-state notifications are NOT drawn.  This used to be
+  # ColorBarDisplayDeviceStateLib, which painted one coloured bar across the
+  # panel for each DEVICE_STATE bit ColorbarsDxe sets -- six of them, on every
+  # boot, permanently, because this is a development firmware and those bits
+  # (secure boot off, manufacturing mode, unit test mode, ...) never clear.
+  # It is a Surface manufacturing-line signal, not a state anyone here needs
+  # reported.  DisplayBootGraphic() calls DisplayDeviceState() before it draws
+  # the logo (BootGraphicsLib.c), so the bars also framed the Aurora logo.
+  # The Null instance keeps that call site intact and draws nothing.
   #
-  DisplayDeviceStateLib|MsGraphicsPkg/Library/ColorBarDisplayDeviceStateLib/ColorBarDisplayDeviceStateLib.inf
+  # NOTE: this class is ALSO bound above in this same [LibraryClasses.common]
+  # section; both bindings must name the Null instance or the duplicate wins.
+  #
+  DisplayDeviceStateLib|MsGraphicsPkg/Library/DisplayDeviceStateLibNull/DisplayDeviceStateLibNull.inf
   #
   # interfaces with alternate boot variable
   #

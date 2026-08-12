@@ -237,6 +237,25 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
      */
     
     dt_node_reg(InterruptControllerNode, 0, &AicV2Base, NULL);
+
+    // AICv3 relocates its capability registers and stores their offsets in the
+    // ADT rather than at the fixed AICv2 positions (matches m1n1 aic23_init()).
+    // Discover cap0/maxnumirq offsets and publish them to AppleAicLib BEFORE
+    // reading NumIrqs/MaxIrqs. They default to the AICv2 positions, so a machine
+    // that omits the properties still reads correctly.
+    UINT32 V3Cap0Offset      = AIC_V2_INFO_REG1;
+    UINT32 V3MaxNumIrqOffset = AIC_V2_INFO_REG3;
+    if (mAicVersion == APPLE_AIC_VERSION_3) {
+        // AppleDTLib treats an absent property as a contract violation even
+        // when a caller supplies a fallback. Never ask an AICv1/v2 ADT for
+        // AICv3-only fields: J414s is AICv2 and intentionally has neither.
+        V3Cap0Offset = (UINT32)dt_node_u32(
+            InterruptControllerNode, "cap0-offset", AIC_V2_INFO_REG1);
+        V3MaxNumIrqOffset = (UINT32)dt_node_u32(
+            InterruptControllerNode, "maxnumirq-offset", AIC_V2_INFO_REG3);
+        AppleAicV3SetDynamicOffsets(V3Cap0Offset, V3MaxNumIrqOffset);
+    }
+
     AicInfoStruct->NumIrqs = AppleAicGetNumInterrupts(AicV2Base);
     AicInfoStruct->MaxIrqs = AppleAicGetMaxInterrupts(AicV2Base);
 
@@ -247,6 +266,13 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     else if(mAicVersion == APPLE_AIC_VERSION_2){
         AicInfoStruct->MaxCpuDies = FIELD_GET(AIC_V2_INFO_REG3_MAX_DIE_COUNT_BITFIELD, MmioRead32(AicV2Base + AIC_V2_INFO_REG3));
         AicInfoStruct->NumCpuDies = (FIELD_GET(AIC_V2_INFO_REG1_LAST_CPU_DIE_BITFIELD, MmioRead32(AicV2Base + AIC_V2_INFO_REG1))) + 1;
+    }
+    else if(mAicVersion == APPLE_AIC_VERSION_3){
+        // AICv3 shares the AICv2 INFO1/INFO3 die bitfields, read at the
+        // ADT-published capability offsets. Die width is treated as 4 bits as on
+        // AICv2; revisit if a multi-die M3-class part reports otherwise.
+        AicInfoStruct->MaxCpuDies = FIELD_GET(AIC_V2_INFO_REG3_MAX_DIE_COUNT_BITFIELD, MmioRead32(AicV2Base + V3MaxNumIrqOffset));
+        AicInfoStruct->NumCpuDies = (FIELD_GET(AIC_V2_INFO_REG1_LAST_CPU_DIE_BITFIELD, MmioRead32(AicV2Base + V3Cap0Offset))) + 1;
     }
 
     
@@ -266,10 +292,25 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     StartOffset = mAicV2IrqCfgOffset = AIC_V2_IRQ_CFG_REG;
 
     if(mAicVersion == APPLE_AIC_VERSION_1){
+        // AICv1 has no IRQ_CFG block; its per-die register banks follow the
+        // TARGET_CPU array (one u32 per IRQ). Seeding the layout from TARGET_CPU
+        // reproduces the Asahi/m1n1 v1 offsets (SW_SET=0x4000, SW_CLR=0x4080,
+        // MASK_SET=0x4100, MASK_CLR=0x4180, die_stride=0x1200).
         StartOffset = mAicV2IrqCfgOffset = AIC_TARGET_CPU;
-        mAicV2EventReg = AicV2Base;
+        // The AICv1 event/ack register lives at a fixed MMIO offset (0x2004),
+        // not in a separate reg entry. The previous `AicV2Base` (base+0) read
+        // acknowledged the wrong register on AICv1 hardware.
+        mAicV2EventReg = AicV2Base + AIC_V1_EVENT_REG;
     }
     else if(mAicVersion == APPLE_AIC_VERSION_2){
+        mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
+    }
+    else if(mAicVersion == APPLE_AIC_VERSION_3){
+        // AICv3 moves the IRQ_CFG block to 0x10000 (ADT-relocatable via
+        // extint-baseaddress). Its event register is a separate page named by
+        // aic-iack-offset, exactly as on AICv2.
+        StartOffset = mAicV2IrqCfgOffset =
+            (UINT64)dt_node_u32(InterruptControllerNode, "extint-baseaddress", AIC_V3_IRQ_CFG_REG);
         mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
     }
 
@@ -291,8 +332,16 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     //HW_STATE (TODO: what is this reg meant for?)
     mAicV2HwStateOffset = CurrentOffset;
     AicInfoStruct->DieStride = CurrentOffset - StartOffset;
-    AicInfoStruct->RegSize = (mAicV2EventReg - AicV2Base) + 4;
-    
+    // AICv1's register banks occupy a fixed 0x8000 window and its event register
+    // (base+0x2004) sits BELOW them, so the v2 "event page" size formula would
+    // undersize the region. AICv2/v3 keep the event-page-relative size because
+    // their event register is a separate, higher page.
+    if (mAicVersion == APPLE_AIC_VERSION_1) {
+        AicInfoStruct->RegSize = AIC_REG_SIZE;
+    } else {
+        AicInfoStruct->RegSize = (mAicV2EventReg - AicV2Base) + 4;
+    }
+
     return EFI_SUCCESS;
 
 }
@@ -602,8 +651,10 @@ VOID EFIAPI AppleAicV2ExitBootServicesEvent(
         AppleAicV2MaskInterrupt(&gHardwareInterruptAicV2Protocol, InterruptIndex);
     }
 
-    //disable the AIC controller
-    MmioAnd32(AicV2Base + AIC_V2_CONFIG, AicConfigValue);
+    //disable the AIC controller (AICv2/v3 CONFIG.ENABLE only; AICv1 has no such bit)
+    if (mAicVersion == APPLE_AIC_VERSION_2 || mAicVersion == APPLE_AIC_VERSION_3) {
+        MmioAnd32(AicV2Base + AIC_V2_CONFIG, AicConfigValue);
+    }
 
 }
 
@@ -658,14 +709,29 @@ EFI_STATUS AppleAicV2DxeInit(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Sys
     (mAicV2EventReg)
     ));
 
-    //enable the AIC
-    DEBUG((DEBUG_VERBOSE, "%a: enabling AIC\n", __FUNCTION__));
-    MmioOr32(AicV2Base + AIC_V2_CONFIG, AIC_V2_CFG_ENABLE);
+    //enable the AIC. AICv2/v3 have a global CONFIG.ENABLE bit at offset 0x14;
+    //AICv1 has no such register (it is always enabled) and 0x14 is not its
+    //config-enable, so the write is skipped there.
+    if (mAicVersion == APPLE_AIC_VERSION_2 || mAicVersion == APPLE_AIC_VERSION_3) {
+        DEBUG((DEBUG_VERBOSE, "%a: enabling AIC\n", __FUNCTION__));
+        MmioOr32(AicV2Base + AIC_V2_CONFIG, AIC_V2_CFG_ENABLE);
+    }
 
     //start from a clean state by disabling all interrupts
     for(InterruptIndex = 0; InterruptIndex < AicV2NumInterrupts; InterruptIndex++)
     {
         AppleAicV2MaskInterrupt(&gHardwareInterruptAicV2Protocol, InterruptIndex);
+    }
+
+    //AICv1 has a real per-IRQ TARGET_CPU register (one u32 per IRQ, value is a
+    //one-hot CPU bitmask). Default every line to CPU0 during firmware, matching
+    //Asahi/m1n1 init. AICv2/v3 have no OS-programmable per-IRQ target and are
+    //left to firmware defaults; the native-AIC HAL owns steering there.
+    if (mAicVersion == APPLE_AIC_VERSION_1) {
+        for(InterruptIndex = 0; InterruptIndex < AicV2NumInterrupts; InterruptIndex++)
+        {
+            MmioWrite32(AicV2Base + AIC_TARGET_CPU + (InterruptIndex * sizeof(UINT32)), BIT0);
+        }
     }
 
     /**

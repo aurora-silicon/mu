@@ -40,12 +40,14 @@ InterruptDxeInitialize (
   switch(Version) {
     case APPLE_AIC_VERSION_1:
     case APPLE_AIC_VERSION_2:
-      Status = AppleAicV2DxeInit(ImageHandle, SystemTable, Version);
-      break;
     case APPLE_AIC_VERSION_3:
       //
-      // TODO: add AICv3 support, seen in M3 and A17 based SoCs.
+      // AICv1/v2/v3 share the same init path; AppleAicV2DxeInit() branches on
+      // the version for the layout differences (AICv1 TARGET_CPU-seeded banks,
+      // AICv3 IRQ_CFG at 0x10000 with ADT-described capability offsets).
       //
+      Status = AppleAicV2DxeInit(ImageHandle, SystemTable, Version);
+      break;
     default:
       DEBUG((DEBUG_INFO, "Unsupported AIC revision, exiting\n"));
       Status = EFI_UNSUPPORTED;

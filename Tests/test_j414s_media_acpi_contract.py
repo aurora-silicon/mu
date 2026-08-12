@@ -44,7 +44,7 @@ ACPI_PLATFORM = (
     / "AcpiPlatformDxe"
     / "AcpiPlatform.c"
 )
-MODULE_PATH = REPO / "Tools" / "j414s_mu_profile_manifest.py"
+MODULE_PATH = REPO / "Tools" / "mu_profile_manifest.py"
 SPEC = importlib.util.spec_from_file_location("j414s_mu_profile_manifest", MODULE_PATH)
 M = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -67,8 +67,8 @@ CSRT_ASLC = (
 # Emitted by drivers/AppleAic/emit_aic2_csrt.c and re-derived by the CSRT tests
 # below; the ordinary table must stay bit-identical in every non-media profile.
 CSRT_SHA256 = {
-    "m2-pro": "cdee0da81d9c54c17d2964510271de453ae2ff0428fe0ff13e69efa9406521a5",
-    "m2-pro-media": "a082eb6c95a12a29cdbc71e0c17fcb4091c1c5c48624595512cf5fa0342f16ba",
+    "m2-pro": "97846e552ede9ae962c71ece4b6ca55fb0cb6b64a831be42794ba249b7277c22",
+    "m2-pro-media": "0eeba7fd25f9c9838afa2a15883afeaa43a06b427662d00888edf16af88b4b91",
 }
 
 # The pmgr_east page KBL0 (NTAS0051) already claims exclusively in KBL.asl.
@@ -175,12 +175,80 @@ def strip_comments(text: str) -> str:
     return re.sub(r"//[^\n]*", "", text)
 
 
+# The exact guard that opens and closes the media generator region. Kept as
+# named constants because the #if and the #endif comment MUST agree, and a
+# 2026-08-05 edit that rewrote the #if without the #endif is what made this
+# helper return an empty string -- see the regression note below.
+MEDIA_BLOCK_GUARD = (
+    "NTASI_ENABLE_MCA_PUBLICATION || NTASI_ENABLE_AOP_PUBLICATION "
+    "|| NTASI_ENABLE_ISP_PUBLICATION"
+)
+MEDIA_BLOCK_OPEN = f"#if {MEDIA_BLOCK_GUARD}"
+MEDIA_BLOCK_CLOSE = f"#endif // {MEDIA_BLOCK_GUARD}"
+
+# Every media build must be able to find these inside the block. They are the
+# things the safety tests below actually search, so if the block ever stops
+# containing them the search is meaningless and must fail LOUDLY rather than
+# silently succeed against nothing.
+MEDIA_BLOCK_SENTINELS = ("mNtasiMediaDevices", "NtasiInstallMediaTables")
+
+
 def media_block() -> str:
-    """The #if NTASI_ENABLE_MEDIA_PUBLICATION region of AcpiPlatform.c."""
+    """The media generator region of AcpiPlatform.c, or a hard failure.
+
+    REGRESSION THIS GUARDS (2026-08-05).  This function used to be::
+
+        start = text.index("#if NTASI_ENABLE_MEDIA_PUBLICATION")
+        end   = text.index("#endif // NTASI_ENABLE_MEDIA_PUBLICATION")
+        return text[start:end]
+
+    When the opening #if was rewritten to the three-flag form but the #endif
+    comment and the call site were not, the ONLY surviving "#if NTASI_ENABLE_
+    MEDIA_PUBLICATION" literal was the call site near the end of the file, while
+    the #endif literal was still up at the top of the block.  So `start` landed
+    AFTER `end`, the slice inverted, and this returned "".
+
+    Nothing raised.  `assertNotIn("mca-allow-render", "")` is trivially true, so
+    MediaRenderGate.test_render_opt_in_is_absent_everywhere reported SUCCESS
+    while checking an empty string -- and the thing it guards is speaker output
+    on amplifiers that power on at maximum analog gain with no thermal
+    protection.  A safety test that passes vacuously is worse than no test,
+    because it is credited as evidence.
+
+    Three defences, each of which alone would have caught it:
+      1. the close is searched FROM `start`, so the slice can never invert;
+      2. an empty or whitespace-only block is an error;
+      3. the block must still contain the identifiers the callers search for.
+    """
     text = ACPI_PLATFORM.read_text(encoding="utf-8")
-    start = text.index("#if NTASI_ENABLE_MEDIA_PUBLICATION")
-    end = text.index("#endif // NTASI_ENABLE_MEDIA_PUBLICATION")
-    return text[start:end]
+    try:
+        start = text.index(MEDIA_BLOCK_OPEN)
+    except ValueError:
+        raise AssertionError(
+            f"AcpiPlatform.c has no {MEDIA_BLOCK_OPEN!r}; the media guard was "
+            "renamed without updating this test, so every search below would "
+            "have run against the wrong region"
+        ) from None
+    try:
+        # Searching from `start` is what makes an inverted slice impossible.
+        end = text.index(MEDIA_BLOCK_CLOSE, start)
+    except ValueError:
+        raise AssertionError(
+            f"AcpiPlatform.c opens the media region with {MEDIA_BLOCK_OPEN!r} "
+            f"but has no matching {MEDIA_BLOCK_CLOSE!r} after it; the #if and "
+            "the #endif comment have drifted apart"
+        ) from None
+
+    block = text[start:end]
+    if not block.strip():
+        raise AssertionError("the media region of AcpiPlatform.c is empty")
+    missing = [s for s in MEDIA_BLOCK_SENTINELS if s not in block]
+    if missing:
+        raise AssertionError(
+            "the media region of AcpiPlatform.c no longer contains "
+            f"{missing}; the safety searches below would pass vacuously"
+        )
+    return block
 
 
 class MediaCrsContract(unittest.TestCase):
@@ -249,18 +317,21 @@ class MediaInterruptFootprint(unittest.TestCase):
                     self.assertLessEqual(gsiv, 1019)
 
     def test_manifest_records_the_exact_published_set(self):
-        expected = [g for _, (_a, _t, _h, _c, gsivs) in DEVICES.items() for g in gsivs]
+        # Per DEVICE, not per profile-name: a build selects any subset of the
+        # three, so the expected GSIV list is assembled from exactly the
+        # devices that profile turns on, in MCA0 / AOPA / ISP0 order.
+        key = {"MCA0": "mca", "AOPA": "aop", "ISP0": "isp"}
         for profile in M.PROFILES:
             with self.subTest(profile=profile):
+                entry = M.PROFILES[profile]
+                expected = [
+                    g
+                    for device, (_a, _t, _h, _c, gsivs) in DEVICES.items()
+                    if entry[key[device]]
+                    for g in gsivs
+                ]
                 features = M.profile_policy(profile)["experimental_features"]
-                self.assertEqual(
-                    features["media_published_gsivs"],
-                    # Every profile NAMED for media, not just "media" itself:
-                    # media-gpu publishes the same three devices and the same
-                    # seven GSIVs. Keyed off the manifest's own media flag so a
-                    # profile added later cannot be missed here.
-                    expected if M.PROFILES[profile]["media"] else [],
-                )
+                self.assertEqual(features["media_published_gsivs"], expected)
 
 
 class MediaCsrt(unittest.TestCase):
@@ -271,7 +342,7 @@ class MediaCsrt(unittest.TestCase):
     and hashing them.
     """
 
-    def _csrt_bytes(self, media: int, gpu: int) -> bytes:
+    def _csrt_bytes(self, mca: int, gpu: int) -> bytes:
         source = CSRT_ASLC.read_text(encoding="utf-8")
         for drop in ("#include <Base.h>", "#include <IndustryStandard/Acpi.h>"):
             source = source.replace(drop, "")
@@ -288,7 +359,9 @@ class MediaCsrt(unittest.TestCase):
                     _host_cc(),
                     "-E",
                     "-P",
-                    f"-DNTASI_ENABLE_MEDIA_PUBLICATION={media}",
+                    f"-DNTASI_ENABLE_MCA_PUBLICATION={mca}",
+                    "-DNTASI_ENABLE_AOP_PUBLICATION=0",
+                    "-DNTASI_ENABLE_ISP_PUBLICATION=0",
                     f"-DNTASI_GPU_RESOURCE_PROFILE={gpu}",
                     str(path),
                 ],
@@ -302,29 +375,30 @@ class MediaCsrt(unittest.TestCase):
         return bytes(int(v, 16) for v in re.findall(r"0x([0-9a-fA-F]{2})", array))
 
     def test_non_media_tables_are_byte_for_byte_unchanged(self):
-        plain = self._csrt_bytes(media=0, gpu=0)
-        self.assertEqual(len(plain), 256)
+        plain = self._csrt_bytes(mca=0, gpu=0)
+        self.assertEqual(len(plain), 264)
         self.assertEqual(hashlib.sha256(plain).hexdigest(), CSRT_SHA256["m2-pro"])
 
-    def test_media_table_is_the_8_alias_superset(self):
-        media = self._csrt_bytes(media=1, gpu=0)
-        plain = self._csrt_bytes(media=0, gpu=0)
-        self.assertEqual(len(media), 296)
+    def test_media_table_is_the_9_alias_superset(self):
+        media = self._csrt_bytes(mca=1, gpu=0)
+        plain = self._csrt_bytes(mca=0, gpu=0)
+        self.assertEqual(len(media), 304)
         self.assertEqual(
             hashlib.sha256(media).hexdigest(), CSRT_SHA256["m2-pro-media"]
         )
-        # Strict superset: the three fixed aliases, including the boot USB
+        # Strict superset: the four fixed aliases, including the boot USB
         # controller's 37 -> 1274, must be bit-identical in both tables.
         for alias in (
             struct.pack("<II", 37, 1274),
             struct.pack("<II", 38, 1832),
             struct.pack("<II", 39, 1292),
+            struct.pack("<II", 47, 1198),
         ):
             self.assertIn(alias, plain)
             self.assertIn(alias, media)
 
     def test_media_table_carries_exactly_the_mca_translations(self):
-        media = self._csrt_bytes(media=1, gpu=0)
+        media = self._csrt_bytes(mca=1, gpu=0)
         for published, physical in (
             (40, 1218), (41, 1211), (42, 1213), (43, 1221), (45, 1231)
         ):
@@ -333,27 +407,27 @@ class MediaCsrt(unittest.TestCase):
         # 44 must appear as neither a published GSIV nor a physical line.
         self.assertNotIn(struct.pack("<I", FORBIDDEN_GSIV), media[-64:])
 
-    def test_media_and_gpu_together_now_build_a_9_alias_table(self):
+    def test_media_and_gpu_together_now_build_a_10_alias_table(self):
         """CHANGED 2026-07-31, and this is a policy change, not a relaxation.
 
         This test used to assert that media+gpu was refused at compile time by
         an #error, because published GSIV 40 meant the AGX mailbox there and
         admac-sio here.  The clash is now GONE rather than refused: the AGX
         mailbox moved to 46.  So the combination must BUILD, and must produce
-        the 9-alias superset.
+        the 10-alias superset.
 
         What replaced the #error is checked by
         test_a_reintroduced_gsiv_collision_still_fails_the_build below -- the
         guard is stricter now, not absent.
         """
-        combined = self._csrt_bytes(media=1, gpu=1)
-        self.assertEqual(len(combined), 304)
-        media = self._csrt_bytes(media=1, gpu=0)
+        combined = self._csrt_bytes(mca=1, gpu=1)
+        self.assertEqual(len(combined), 312)
+        media = self._csrt_bytes(mca=1, gpu=0)
         # Strict superset: every media alias survives unchanged, and the AGX
         # entry is appended.
         for published, physical in (
             (40, 1218), (41, 1211), (42, 1213), (43, 1221), (45, 1231),
-            (37, 1274), (38, 1832), (39, 1292),
+            (37, 1274), (38, 1832), (39, 1292), (47, 1198),
         ):
             with self.subTest(gsiv=published):
                 self.assertIn(struct.pack("<II", published, physical), media)
@@ -392,13 +466,13 @@ class MediaCsrt(unittest.TestCase):
                 mutated = source.replace(*mutation)
                 self.assertNotEqual(mutated, source, "mutation did not apply")
                 self.assertFalse(
-                    self._compiles(mutated, media=1, gpu=1),
+                    self._compiles(mutated, mca=1, gpu=1),
                     f"a collision was accepted: {name}",
                 )
         # Control: unmutated must compile, or the test above proves nothing.
-        self.assertTrue(self._compiles(source, media=1, gpu=1))
+        self.assertTrue(self._compiles(source, mca=1, gpu=1))
 
-    def _compiles(self, source: str, media: int, gpu: int) -> bool:
+    def _compiles(self, source: str, mca: int, gpu: int) -> bool:
         for drop in ("#include <Base.h>", "#include <IndustryStandard/Acpi.h>"):
             source = source.replace(drop, "")
         source = (
@@ -412,26 +486,112 @@ class MediaCsrt(unittest.TestCase):
             return subprocess.run(
                 [
                     _host_cc(), "-std=c11", "-c", "-o", os.devnull,
-                    f"-DNTASI_ENABLE_MEDIA_PUBLICATION={media}",
+                    f"-DNTASI_ENABLE_MCA_PUBLICATION={mca}",
+                    "-DNTASI_ENABLE_AOP_PUBLICATION=0",
+                    "-DNTASI_ENABLE_ISP_PUBLICATION=0",
                     f"-DNTASI_GPU_RESOURCE_PROFILE={gpu}",
                     str(path),
                 ],
                 capture_output=True,
             ).returncode == 0
 
+    def test_aop_and_isp_never_change_a_csrt_byte(self):
+        """The property that makes AOP safe to publish first.
+
+        AOPA publishes AIC 631 and ISP0 publishes AIC 569. Both are below the
+        GIC carrier's 1019 limit, so both are legal as GSIVs and are published
+        IDENTITY MAPPED -- no ALI2 alias, no CSRT byte. Only MCA0, whose five
+        lines are 1211..1231, needs translation.
+
+        Asserted as byte-identity against the SAME profile with the media flags
+        off, at every GPU setting, rather than against a fixed table: a build
+        carrying the GPU legitimately has the AGX alias, so "identical to the
+        bare m2-pro" would be the wrong claim for internal-storage-aop-mic and
+        would fail for a reason that is not a bug.
+
+        This is what lets a media experiment be attributed: if publishing the
+        microphone changed the interrupt translation table, a regression
+        anywhere in the machine could be the microphone's fault.
+        """
+        # AOP and ISP must have NO ARM in CSRT.aslc at all. That absence is the
+        # invariant -- if neither flag can be tested by the preprocessor, then
+        # neither can select a different byte, at any GPU or MCA setting.
+        #
+        # strip_comments() first: the file's own header explains at length why
+        # AOP and ISP touch no CSRT byte, and it names both flags while doing
+        # so. Searching the raw text finds the EXPLANATION and fails. That is
+        # exactly the trap strip_comments() was written for, and this test hit
+        # it on its first run.
+        source = strip_comments(CSRT_ASLC.read_text(encoding="utf-8"))
+        for flag in ("NTASI_ENABLE_AOP_PUBLICATION", "NTASI_ENABLE_ISP_PUBLICATION"):
+            with self.subTest(flag=flag):
+                self.assertNotIn(
+                    flag, source,
+                    f"{flag} reaches CSRT.aslc as code; AOP/ISP must not be "
+                    "able to change an interrupt translation table",
+                )
+        # And the two tables AOP can appear alongside are the expected sizes.
+        self.assertEqual(len(self._csrt_bytes(mca=0, gpu=0)), 264)
+        self.assertEqual(len(self._csrt_bytes(mca=0, gpu=1)), 272)
+
+    def test_aop_profile_carries_its_base_profiles_csrt(self):
+        """internal-storage-aop-mic must carry internal-storage's table.
+
+        Not the bare baseline's: it ships the GPU, so the AGX alias is present
+        and expected. This compares the two profiles the experiment is actually
+        run against, so a future edit that made AOP publication drag in the
+        media CSRT would fail here by name.
+        """
+        pairs = [("internal-storage-aop-mic", "internal-storage")]
+        for media_profile, base_profile in pairs:
+            with self.subTest(profile=media_profile):
+                media = M.PROFILES[media_profile]
+                base = M.PROFILES[base_profile]
+                self.assertTrue(media["aop"], "the media profile must publish AOP")
+                self.assertFalse(base["aop"], "the base profile must not")
+                # Every non-media flag must match, or this is not a controlled
+                # experiment and the CSRT comparison below proves nothing.
+                for key in ("ans", "ans_acpi", "ans_dxe", "ans_block_io",
+                            "ans_preserve", "gpu", "wireless", "mca", "isp"):
+                    self.assertEqual(
+                        media[key], base[key],
+                        f"{media_profile} differs from {base_profile} in {key}; "
+                        "AOP publication is meant to be the ONLY variable",
+                    )
+                media_features = M.profile_policy(media_profile)["experimental_features"]
+                base_features = M.profile_policy(base_profile)["experimental_features"]
+                self.assertEqual(media_features["csrt_variant"],
+                                 base_features["csrt_variant"])
+                self.assertEqual(media_features["csrt_ali2_alias_count"],
+                                 base_features["csrt_ali2_alias_count"])
+                self.assertEqual(
+                    self._csrt_bytes(mca=1 if media["mca"] else 0,
+                                     gpu=1 if media["gpu"] else 0),
+                    self._csrt_bytes(mca=1 if base["mca"] else 0,
+                                     gpu=1 if base["gpu"] else 0),
+                    f"{media_profile}: publishing AOP changed the CSRT",
+                )
+                # The microphone, and only the microphone.
+                self.assertEqual(media_features["media_acpi_devices"], ["NTAS0081"])
+                self.assertEqual(media_features["media_published_gsivs"], [631])
+                self.assertEqual(base_features["media_acpi_devices"], [])
+
     def test_manifest_records_the_csrt_variant_for_every_profile(self):
         for profile in M.PROFILES:
             with self.subTest(profile=profile):
                 entry = M.PROFILES[profile]
                 features = M.profile_policy(profile)["experimental_features"]
-                if entry["media"] and entry["gpu"]:
-                    expected = ("m2-pro-media-gpu", 9)
-                elif entry["media"]:
-                    expected = ("m2-pro-media", 8)
+                # MCA0 alone reaches the CSRT: AOPA's 631 and ISP0's 569 are
+                # below the carrier's 1019 limit and are identity mapped, so an
+                # AOP-only or ISP-only build carries the baseline table.
+                if entry["mca"] and entry["gpu"]:
+                    expected = ("m2-pro-media-gpu", 10)
+                elif entry["mca"]:
+                    expected = ("m2-pro-media", 9)
                 elif entry["gpu"]:
-                    expected = ("m2-pro-gpu", 4)
+                    expected = ("m2-pro-gpu", 5)
                 else:
-                    expected = ("m2-pro", 3)
+                    expected = ("m2-pro", 4)
                 self.assertEqual(
                     (features["csrt_variant"], features["csrt_ali2_alias_count"]),
                     expected,
@@ -440,7 +600,7 @@ class MediaCsrt(unittest.TestCase):
     def test_every_profiles_csrt_variant_is_the_bytes_it_names(self):
         """The manifest's alias COUNT must equal the table the FD really has.
 
-        A profile that claims 9 aliases while its CSRT arm emits 4 would pass
+        A profile that claims 10 aliases while its CSRT arm emits 5 would pass
         every other check here and hand Windows a translation table that does
         not describe what the SSDTs published.
         """
@@ -448,7 +608,7 @@ class MediaCsrt(unittest.TestCase):
             with self.subTest(profile=profile):
                 features = M.profile_policy(profile)["experimental_features"]
                 table = self._csrt_bytes(
-                    media=1 if entry["media"] else 0,
+                    mca=1 if entry["mca"] else 0,
                     gpu=1 if entry["gpu"] else 0,
                 )
                 # ALI2 tail: 8-byte header then 8 bytes per alias entry.
@@ -487,11 +647,26 @@ class MediaProfileGate(unittest.TestCase):
         for profile in M.PROFILES:
             with self.subTest(profile=profile):
                 features = M.profile_policy(profile)["experimental_features"]
-                expected = bool(M.PROFILES[profile]["media"])
+                entry = M.PROFILES[profile]
+                expected = bool(entry["media"])
                 self.assertIs(features["media_publication"], expected)
+                # media_publication is the OR; the three per-device gates are
+                # what actually reach the compiler, so assert both.
+                for device, flag in (
+                    ("NTAS0080", "mca"), ("NTAS0081", "aop"), ("NTAS0090", "isp")
+                ):
+                    self.assertIs(features[f"{flag}_publication"], bool(entry[flag]))
                 self.assertEqual(
                     features["media_acpi_devices"],
-                    ["NTAS0080", "NTAS0081", "NTAS0090"] if expected else [],
+                    [
+                        hid
+                        for hid, flag in (
+                            ("NTAS0080", "mca"),
+                            ("NTAS0081", "aop"),
+                            ("NTAS0090", "isp"),
+                        )
+                        if entry[flag]
+                    ],
                 )
 
     def test_media_adds_no_ffs_module(self):
@@ -522,24 +697,50 @@ class MediaProfileGate(unittest.TestCase):
         # equivalent behaviour, so the whole block is #if'd out rather than
         # compiled in and skipped at runtime.
         text = ACPI_PLATFORM.read_text(encoding="utf-8")
-        self.assertIn("#if NTASI_ENABLE_MEDIA_PUBLICATION", text)
-        self.assertIn("#endif // NTASI_ENABLE_MEDIA_PUBLICATION", text)
-        self.assertIn(
-            "-DNTASI_ENABLE_MEDIA_PUBLICATION=$(NTASI_ENABLE_MEDIA_PUBLICATION)",
-            (
-                REPO
-                / "Platform"
-                / "MacBookProEarly2023Pkg"
-                / "MacBookProEarly2023.dsc"
-            ).read_text(encoding="utf-8"),
+        self.assertIn(MEDIA_BLOCK_OPEN, text)
+        self.assertIn(MEDIA_BLOCK_CLOSE, text)
+        # The call site must carry the SAME condition as the definition. When
+        # they drifted apart on 2026-08-05 the definition became a three-flag
+        # OR while the call site still tested the removed umbrella flag, so an
+        # AOP-only build would have compiled NtasiInstallMediaTables() and then
+        # never called it -- publishing nothing while reporting the device on.
+        self.assertEqual(
+            text.count(MEDIA_BLOCK_OPEN),
+            2,
+            "the media guard must appear exactly twice: the definition and its "
+            "call site. A different count means they have drifted apart.",
         )
+        # And the removed umbrella flag must not come back anywhere.
+        self.assertNotIn(
+            "NTASI_ENABLE_MEDIA_PUBLICATION",
+            strip_comments(text),
+            "the umbrella media flag is back; it is what re-couples the three "
+            "devices into one unattributable experiment",
+        )
+        dsc = (
+            REPO
+            / "Platform"
+            / "MacBookProEarly2023Pkg"
+            / "MacBookProEarly2023.dsc"
+        ).read_text(encoding="utf-8")
+        for device in ("MCA", "AOP", "ISP"):
+            with self.subTest(device=device):
+                self.assertIn(f"DEFINE NTASI_ENABLE_{device}_PUBLICATION = 0", dsc)
+                self.assertIn(
+                    f"-DNTASI_ENABLE_{device}_PUBLICATION="
+                    f"$(NTASI_ENABLE_{device}_PUBLICATION)",
+                    dsc,
+                )
 
     def test_expected_defines_track_the_profile_table(self):
         source = MODULE_PATH.read_text(encoding="utf-8")
-        self.assertIn(
-            '"NTASI_ENABLE_MEDIA_PUBLICATION": "1" if PROFILES[profile]["media"] else "0"',
-            source,
-        )
+        for device in ("mca", "aop", "isp"):
+            with self.subTest(device=device):
+                self.assertIn(
+                    f'"NTASI_ENABLE_{device.upper()}_PUBLICATION": '
+                    f'"1" if PROFILES[profile]["{device}"] else "0"',
+                    source,
+                )
 
 
 class MediaKnownOverlapIsDocumented(unittest.TestCase):

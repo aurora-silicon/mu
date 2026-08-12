@@ -33,6 +33,11 @@
   # control could isolate the 0x144. Setting this without the resource profile
   # does nothing: the whole block is nested inside it.
   DEFINE NTASI_ENABLE_GPU_ACPI_PUBLICATION = 0
+  # Closed selector for the driver-facing GPU ACPI identity. 23 binds the
+  # Vulkan KMD (NTAS0023); 24 binds the WDDM KMD (NTAS0024). PlatformBuild.py
+  # supplies the sealed profile value and AcpiPlatform.c rejects anything else
+  # at compile time.
+  DEFINE NTASI_GPU_ACPI_HID = 23
   DEFINE NTASI_ANS_DXE_BRINGUP = FALSE
   DEFINE NTASI_ANS_PUBLISH_BLOCK_IO = FALSE
   DEFINE NTASI_ANS_PRESERVE_FOR_OS = FALSE
@@ -45,21 +50,40 @@
   # DRT0), so expected_ffs_count and the 94-image count are unchanged. Publishes
   # ZERO interrupt resources and touches no CSRT byte -- see
   # NtasiInstallMediaTables() in AcpiPlatform.c.
-  DEFINE NTASI_ENABLE_MEDIA_PUBLICATION = 0
+  # THREE INDEPENDENT FLAGS, one per device -- there is deliberately no umbrella
+  # flag, because one flag meant a machine that wanted working speakers also got
+  # a camera devnode and its eight memory windows, which is exactly the coupling
+  # that makes an experiment unattributable.
+  #
+  #   MCA0 (NTAS0080)  speakers + headset jack.  The ONLY one that changes a
+  #                    CSRT byte: its five AIC lines (1211-1231) are above the
+  #                    GIC carrier's 1019 limit, so CSRT.aslc must carry the
+  #                    "m2-pro-media" ALI2 table when this is 1.
+  #   AOPA (NTAS0081)  AOP coprocessor; its driver enumerates the internal PDM
+  #                    microphone array as a PnP child.  AIC 631, below 1019,
+  #                    identity mapped, no CSRT entry.  Publishes NO pmgr_east
+  #                    window, so unlike MCA0/ISP0 it cannot collide with KBL0.
+  #   ISP0 (NTAS0090)  FaceTime camera ISP.  AIC 569, likewise no CSRT entry.
+  DEFINE NTASI_ENABLE_MCA_PUBLICATION = 0
+  DEFINE NTASI_ENABLE_AOP_PUBLICATION = 0
+  DEFINE NTASI_ENABLE_ISP_PUBLICATION = 0
   # Battery: publish BAT0 (NTAS0053) from AcpiPlatformDxe, the devnode the
   # AppleSmcBattery battc miniport binds to so Windows shows a real battery.
-  # OFF by default, and off means preprocessor-excluded, so a profile without
-  # it produces byte-identical firmware. Adds no FFS module and no ACPI table
-  # to the FV (the SSDT is generated at DXE runtime, like ANS0, DRT0 and the
-  # media tables), so expected_ffs_count and the 94-image count are unchanged.
-  # Publishes ZERO interrupts and ZERO memory windows -- its _CRS is an empty
-  # resource template -- so it allocates no GSIV, touches no CSRT byte, and
-  # cannot collide with SMCG's exclusive claim on the SMC ASC and SRAM
-  # windows. See NtasiInstallBatteryTable() in AcpiPlatform.c.
-  DEFINE NTASI_ENABLE_BATTERY_PUBLICATION = 0
+  # Unconditional: every profile publishes BAT0. The generator is no longer
+  # #if-gated in AcpiPlatform.c, so this define is informational only (it no
+  # longer controls compilation); it stays 1 so build manifests report battery
+  # publication as enabled in every profile, matching the firmware. Adds no FFS
+  # module and no ACPI table to the FV (the SSDT is generated at DXE runtime,
+  # like ANS0, DRT0 and the media tables), so expected_ffs_count and the
+  # 94-image count are unchanged. Publishes ZERO interrupts and ZERO memory
+  # windows -- its _CRS is an empty resource template -- so it allocates no
+  # GSIV, touches no CSRT byte, and cannot collide with SMCG's exclusive claim
+  # on the SMC ASC and SRAM windows. See NtasiInstallBatteryTable() in
+  # AcpiPlatform.c.
+  DEFINE NTASI_ENABLE_BATTERY_PUBLICATION = 1
   # Display interrupts: add the five AIC lines the DCP path needs -- the ASC
-  # mailbox quad 932-935 and the shared DART fault line 911 -- to DISP.asl's
-  # _CRS. OFF by default, and off means preprocessor-excluded, so a profile
+  # mailbox quad 932-935 and the shared DART fault line 911 -- to the dynamic
+  # NTAS0070 _CRS. OFF by default, and off means preprocessor-excluded, so a profile
   # without it produces byte-identical firmware. The device itself (NTAS0070,
   # its six MMIO windows and its _DSD) is published unconditionally and is
   # unaffected by this switch.
@@ -72,12 +96,15 @@
   # Turn this on only for a boot whose purpose is to test interrupt delivery,
   # and expect to lose the display if the answer is no.
   DEFINE NTASI_ENABLE_DISPLAY_INTERRUPTS = 0
+  # Publish NTAS0070 from AcpiPlatformDxe so its _CRS can include the live,
+  # boot-specific framebuffer interval. A static ASL table cannot express it.
+  DEFINE NTASI_ENABLE_DISPLAY_ACPI_PUBLICATION = 1
   # WinPE deploy-verdict echo (BootRamdiskHelperDxe). OFF by default: it adds a
   # participant to the ReadyToBoot event group and opens every attached FAT
   # volume microseconds before the OS loader starts, on a machine whose boot disk
   # is USB and whose DEBUG build deadloops on any ASSERT. Turn it on for a
   # deploy-verification boot with
-  #   NTASI_DEPLOY_EVIDENCE_ECHO=1 ./Tools/build-j414s-windows-native.sh <profile>
+  #   NTASI_DEPLOY_EVIDENCE_ECHO=1 ./Tools/build-windows-native.sh j414s <profile>
   # and leave it off for every boot whose result is meant to be attributable.
   DEFINE NTASI_DEPLOY_EVIDENCE_ECHO = 0
   PLATFORM_GUID                  = d70b31ca-2cbc-433b-885f-b8bbda409959
@@ -98,7 +125,7 @@
 
 [BuildOptions.common]
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=6020
-  *_*_*_CC_FLAGS = -D DISABLE_NEW_DEPRECATED_INTERFACES -D HAS_MEMCPY_INTRINSICS -DNTASI_T6020_J414S_HOMOGENEOUS_EFFICIENCY=$(NTASI_T6020_J414S_HOMOGENEOUS_EFFICIENCY) -DNTASI_ENABLE_WIRELESS_DART_HANDOFF=$(NTASI_ENABLE_WIRELESS_DART_HANDOFF) -DNTASI_GPU_RESOURCE_PROFILE=$(NTASI_GPU_RESOURCE_PROFILE) -DNTASI_ENABLE_GPU_ACPI_PUBLICATION=$(NTASI_ENABLE_GPU_ACPI_PUBLICATION) -DNTASI_ENABLE_MEDIA_PUBLICATION=$(NTASI_ENABLE_MEDIA_PUBLICATION) -DNTASI_ENABLE_BATTERY_PUBLICATION=$(NTASI_ENABLE_BATTERY_PUBLICATION) -DNTASI_DEPLOY_EVIDENCE_ECHO=$(NTASI_DEPLOY_EVIDENCE_ECHO)
+  *_*_*_CC_FLAGS = -D DISABLE_NEW_DEPRECATED_INTERFACES -D HAS_MEMCPY_INTRINSICS -DNTASI_T6020_J414S_HOMOGENEOUS_EFFICIENCY=$(NTASI_T6020_J414S_HOMOGENEOUS_EFFICIENCY) -DNTASI_ENABLE_WIRELESS_DART_HANDOFF=$(NTASI_ENABLE_WIRELESS_DART_HANDOFF) -DNTASI_GPU_RESOURCE_PROFILE=$(NTASI_GPU_RESOURCE_PROFILE) -DNTASI_ENABLE_GPU_ACPI_PUBLICATION=$(NTASI_ENABLE_GPU_ACPI_PUBLICATION) -DNTASI_GPU_ACPI_HID=$(NTASI_GPU_ACPI_HID) -DNTASI_ENABLE_MCA_PUBLICATION=$(NTASI_ENABLE_MCA_PUBLICATION) -DNTASI_ENABLE_AOP_PUBLICATION=$(NTASI_ENABLE_AOP_PUBLICATION) -DNTASI_ENABLE_ISP_PUBLICATION=$(NTASI_ENABLE_ISP_PUBLICATION) -DNTASI_ENABLE_BATTERY_PUBLICATION=$(NTASI_ENABLE_BATTERY_PUBLICATION) -DNTASI_ENABLE_DISPLAY_ACPI_PUBLICATION=$(NTASI_ENABLE_DISPLAY_ACPI_PUBLICATION) -DNTASI_ENABLE_DISPLAY_INTERRUPTS=$(NTASI_ENABLE_DISPLAY_INTERRUPTS) -DNTASI_DEPLOY_EVIDENCE_ECHO=$(NTASI_DEPLOY_EVIDENCE_ECHO)
   *_*_*_ASLPP_FLAGS = -DNTASI_ENABLE_XHC2=$(NTASI_ENABLE_XHC2) -DNTASI_ENABLE_DISPLAY_INTERRUPTS=$(NTASI_ENABLE_DISPLAY_INTERRUPTS)
 
 
@@ -108,6 +135,16 @@
   # store. The normal first-boot memory-type update reset would therefore
   # repeat on every launch instead of stabilizing after one reboot.
   gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
+  # Boot Windows deterministically. The J414s SSD dual-boots Fedora, whose
+  # installer placed its own ESP at a lower partition number than the Windows
+  # ESP; MsBootPolicy's device sort then reaches Fedora's ESP first, and the
+  # stock removable-media expansion boots its \EFI\BOOT\BOOTAA64.EFI (shim)
+  # instead of Windows (measured: serial-console.log 2026-08-06 20:00 boot,
+  # HD(4,GPT,F923AC81...) shim selected while HD(8,GPT,139FDE03...) still
+  # carried a readable \EFI\Microsoft\Boot\BCD). With this TRUE, the HDD boot
+  # element boots \EFI\Microsoft\Boot\bootmgfw.efi exclusively and skips every
+  # filesystem that lacks it. Set FALSE to restore stock selection.
+  gPcBdsPkgTokenSpaceGuid.PcdForceWindowsBootManager|TRUE
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"MacBook Pro (Early 2023)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"Mac14,5/Mac14,6/Mac14,9/Mac14,10"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"MacBook Pro (Early 2023) (Mac14,5/Mac14,6/Mac14,9/Mac14,10)"

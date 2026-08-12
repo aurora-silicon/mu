@@ -2,15 +2,15 @@
   J414s internal display adapter ACPI device for the AppleDisplay WDDM
   display driver (rungs (a) and (b) of docs/j414s-display-driver.md).
 
-  The inherited framebuffer is deliberately NOT an ACPI resource.  The WDDM
-  display-only path takes its boot-specific physical address, geometry, and
-  format from dxgkrnl at StartDevice via
-  DxgkCbAcquirePostDisplayOwnership (the same POST-display buffer Mu's
-  SimpleFbDxe published as the one-mode GOP). Embedding that framebuffer base
-  here would be wrong twice over: the /vram carveout base is
-  boot-specific (m1n1 rewrites boot_args.video.base each boot,
-  src/display.c:586-606), and it would inject the scanout into Windows PnP
-  arbitration for no benefit.
+  This ASL is now the fixed-resource provenance specification, not a compiled
+  table. AcpiPlatformDxe generates NTAS0070 at runtime and appends the live
+  boot framebuffer from boot_args.video as a seventh QWordMemory descriptor.
+  That descriptor is required: dxgkrnl associates the POST display PDO only
+  when its translated resources contain the complete boot framebuffer.
+  AppleDisplay still obtains authoritative geometry from
+  DxgkCbAcquirePostDisplayOwnership and never maps the seventh descriptor as
+  DCP MMIO. The base cannot be compiled here because m1n1 rewrites it each
+  boot (src/display.c:586-606).
 
   The fixed _CRS ranges below are instead the exact six non-overlapping DCP
   and DART MMIO apertures required by rung (b). REG3 contains both the ASC

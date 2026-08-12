@@ -152,9 +152,298 @@ AppleAnsAddMemoryResource (
            );
 }
 
+#if NTASI_ENABLE_DISPLAY_ACPI_PUBLICATION
+
+typedef struct {
+  UINT64  Base;
+  UINT64  Length;
+} NTASI_DISPLAY_WINDOW;
+
+// Keep the first six entries in lockstep with AppleDisplayDcpResourceCore.
+// The live boot framebuffer is appended as entry seven by the emitter.
+STATIC CONST NTASI_DISPLAY_WINDOW  mNtasiDisplayWindows[] = {
+  { 0x388000000ULL, 0x0061C000ULL },
+  { 0x38930C000ULL, 0x00004000ULL },
+  { 0x389304000ULL, 0x00004000ULL },
+  { 0x389320000ULL, 0x00004000ULL },
+  { 0x389344000ULL, 0x00004000ULL },
+  { 0x389800000ULL, 0x00800000ULL },
+};
+
+STATIC
+EFI_STATUS
+NtasiResolveBootFramebuffer (
+  OUT CONST struct boot_args  **BootArgsOut,
+  OUT UINT64                  *FramebufferBaseOut,
+  OUT UINT64                  *FramebufferLengthOut
+  )
+{
+  CONST struct boot_args  *BootArgs;
+  UINT64                  RawLength;
+  UINT64                  MemSizeActual;
+  UINT64                  DramBase;
+  UINT64                  DramEnd;
+  UINT64                  FramebufferLength;
+
+  if ((FramebufferBaseOut == NULL) || (FramebufferLengthOut == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+  if (BootArgsOut != NULL) {
+    *BootArgsOut = NULL;
+  }
+  *FramebufferBaseOut  = 0;
+  *FramebufferLengthOut = 0;
+  BootArgs = (CONST struct boot_args *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
+  if ((BootArgs == NULL) || (BootArgs->video.base == 0) ||
+      (BootArgs->video.width == 0) || (BootArgs->video.height == 0) ||
+      ((UINT64)BootArgs->video.stride <
+       (UINT64)BootArgs->video.width * 4ULL) ||
+      ((BootArgs->video.depth & 0xFFu) != 30u &&
+       (BootArgs->video.depth & 0xFFu) != 32u) ||
+      ((UINT64)BootArgs->video.stride >
+       MAX_UINT64 / (UINT64)BootArgs->video.height)) {
+    DEBUG ((DEBUG_ERROR, "AppleDisplay ACPI: invalid boot framebuffer geometry; display ownership withheld\n"));
+    return EFI_COMPROMISED_DATA;
+  }
+  RawLength = (UINT64)BootArgs->video.stride *
+              (UINT64)BootArgs->video.height;
+  if (RawLength > MAX_UINT64 - 0x3FFFULL) {
+    return EFI_COMPROMISED_DATA;
+  }
+  FramebufferLength = (RawLength + 0x3FFFULL) & ~0x3FFFULL;
+  MemSizeActual = 0;
+  switch (BootArgs->revision) {
+    case 1:
+      MemSizeActual = BootArgs->rv1.mem_size_actual;
+      break;
+    case 2:
+      MemSizeActual = BootArgs->rv2.mem_size_actual;
+      break;
+    case 3:
+      MemSizeActual = BootArgs->rv3.mem_size_actual;
+      break;
+    default:
+      DEBUG ((DEBUG_ERROR, "AppleDisplay ACPI: unknown boot_args revision %u\n", BootArgs->revision));
+      return EFI_COMPROMISED_DATA;
+  }
+  DramBase = BootArgs->phys_base & ~(0x100000000ULL - 1ULL);
+  if ((MemSizeActual == 0) || (MemSizeActual > (1ULL << 40)) ||
+      (MemSizeActual < BootArgs->mem_size) ||
+      (DramBase > MAX_UINT64 - MemSizeActual) ||
+      (BootArgs->video.base < DramBase) ||
+      (BootArgs->video.base > MAX_UINT64 - FramebufferLength)) {
+    DEBUG ((DEBUG_ERROR, "AppleDisplay ACPI: framebuffer range overflow/outside DRAM\n"));
+    return EFI_COMPROMISED_DATA;
+  }
+  DramEnd = DramBase + MemSizeActual;
+  if (BootArgs->video.base + FramebufferLength > DramEnd) {
+    DEBUG ((DEBUG_ERROR, "AppleDisplay ACPI: framebuffer exceeds installed DRAM\n"));
+    return EFI_COMPROMISED_DATA;
+  }
+  if (BootArgsOut != NULL) {
+    *BootArgsOut = BootArgs;
+  }
+  *FramebufferBaseOut   = BootArgs->video.base;
+  *FramebufferLengthOut = FramebufferLength;
+  return EFI_SUCCESS;
+}
+
+#if NTASI_GPU_ACPI_HID != 24
+STATIC
+EFI_STATUS
+NtasiInstallDisplayTable (
+  IN EFI_ACPI_TABLE_PROTOCOL  *AcpiTable
+  )
+{
+  CONST struct boot_args       *BootArgs;
+  AML_ROOT_NODE_HANDLE         RootNode;
+  AML_OBJECT_NODE_HANDLE       ScopeNode;
+  AML_OBJECT_NODE_HANDLE       DeviceNode;
+  AML_OBJECT_NODE_HANDLE       CrsNode;
+  AML_OBJECT_NODE_HANDLE       DsdNode;
+  AML_OBJECT_NODE_HANDLE       DsdPackageNode;
+  EFI_ACPI_DESCRIPTION_HEADER  *Table;
+  EFI_STATUS                   Status;
+  EFI_STATUS                   DeleteStatus;
+  UINT64                       FramebufferBase;
+  UINT64                       FramebufferLength;
+  UINTN                        TableHandle;
+  UINTN                        Index;
+
+  if (AcpiTable == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Status = NtasiResolveBootFramebuffer (
+             &BootArgs, &FramebufferBase, &FramebufferLength);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  RootNode      = NULL;
+  ScopeNode     = NULL;
+  DeviceNode    = NULL;
+  CrsNode       = NULL;
+  DsdNode       = NULL;
+  DsdPackageNode = NULL;
+  Table         = NULL;
+  TableHandle   = 0;
+
+  Status = AmlCodeGenDefinitionBlock ("SSDT", "Apple", "J414DSP", 3, &RootNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlCodeGenScope ("\\_SB_", RootNode, &ScopeNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlCodeGenDevice ("DISP", ScopeNode, &DeviceNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlCodeGenNameString ("_HID", "NTAS0070", DeviceNode, NULL);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlCodeGenNameInteger ("_UID", 0, DeviceNode, NULL);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlCodeGenNameInteger ("_CCA", 1, DeviceNode, NULL);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlCodeGenNameInteger ("_STA", 0x0F, DeviceNode, NULL);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlCodeGenNameResourceTemplate ("_CRS", DeviceNode, &CrsNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  for (Index = 0; Index < ARRAY_SIZE (mNtasiDisplayWindows); Index++) {
+    Status = AppleAnsAddMemoryResource (
+               CrsNode,
+               mNtasiDisplayWindows[Index].Base,
+               mNtasiDisplayWindows[Index].Length
+               );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+  }
+  // Last by contract: dxgkrnl uses this resource to associate the boot GOP
+  // framebuffer with NTAS0070; AppleDisplay never maps it as DCP MMIO.
+  Status = AppleAnsAddMemoryResource (CrsNode, FramebufferBase, FramebufferLength);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+#if NTASI_ENABLE_DISPLAY_INTERRUPTS
+  {
+    UINT32  Interrupts[] = { 911, 932, 933, 934, 935 };
+
+    Status = AmlCodeGenRdInterrupt (
+               TRUE, FALSE, FALSE, FALSE,
+               Interrupts, (UINT8)ARRAY_SIZE (Interrupts),
+               CrsNode, NULL
+               );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+  }
+#endif
+
+  Status = AmlCodeGenNamePackage ("_DSD", DeviceNode, &DsdNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlAddDeviceDataDescriptorPackage (
+             &gAppleAnsDsdPropertiesGuid,
+             DsdNode,
+             &DsdPackageNode
+             );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlAddNameIntegerPackage (
+             "ntasp,fb-width", BootArgs->video.width, DsdPackageNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlAddNameIntegerPackage (
+             "ntasp,fb-height", BootArgs->video.height, DsdPackageNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlAddNameIntegerPackage (
+             "ntasp,fb-stride", BootArgs->video.stride, DsdPackageNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlAddNameIntegerPackage (
+             "ntasp,fb-base", FramebufferBase, DsdPackageNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AmlAddNameIntegerPackage (
+             "ntasp,fb-length", FramebufferLength, DsdPackageNode);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+  Status = AmlSerializeDefinitionBlock (RootNode, &Table);
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+  Status = AcpiTable->InstallAcpiTable (
+                        AcpiTable,
+                        Table,
+                        Table->Length,
+                        &TableHandle
+                        );
+  if (!EFI_ERROR (Status)) {
+    DEBUG ((
+      DEBUG_INFO,
+      "AppleDisplay ACPI: NTAS0070 published, framebuffer=0x%lx/+0x%lx, "
+      "seven memory resources\n",
+      FramebufferBase,
+      FramebufferLength
+      ));
+  }
+
+Exit:
+  if (Table != NULL) {
+    FreePool (Table);
+  }
+  if (RootNode != NULL) {
+    DeleteStatus = AmlDeleteTree (RootNode);
+    if (!EFI_ERROR (Status) && EFI_ERROR (DeleteStatus)) {
+      Status = DeleteStatus;
+    }
+  }
+  return Status;
+}
+#endif
+
+#endif // NTASI_ENABLE_DISPLAY_ACPI_PUBLICATION
+
 
 #if NTASI_GPU_RESOURCE_PROFILE
 #include "NtasiGpuReservationGuard.h"
+
+//
+// The Vulkan and WDDM front ends deliberately bind different IDs so Windows
+// can never start both on one physical adapter.  The profile chooses one of
+// these exact compile-time values; accepting a free-form HID here would make
+// the sealed manifest incapable of proving what AML the firmware emits.
+//
+#if NTASI_GPU_ACPI_HID == 23
+#define NTASI_GPU_ACPI_HID_STRING  "NTAS0023"
+#elif NTASI_GPU_ACPI_HID == 24
+#define NTASI_GPU_ACPI_HID_STRING  "NTAS0024"
+#else
+#error "NTASI_GPU_ACPI_HID must be 23 (Vulkan) or 24 (WDDM)"
+#endif
 
 //
 // AppleAgxGpu's _CRS is eight memory resources in a FIXED order, matched
@@ -202,10 +491,10 @@ AppleAnsAddMemoryResource (
 // Sizes the driver pins for resources 5-7 (ERR_SIZE otherwise), and the 16 KiB
 // alignment it requires of resources 2-7 (ERR_ALIGN otherwise).
 //
-#define NTASI_GPU_HWDATA_A_SIZE  0x8000ULL
-#define NTASI_GPU_HWDATA_B_SIZE  0x4000ULL
-#define NTASI_GPU_GLOBALS_SIZE   0x18000ULL
-#define NTASI_GPU_PAGE_SIZE      0x4000ULL
+#define NTASI_GPU_HWDATA_A_SIZE  NTASI_GPU_HANDOFF_HWDATA_A_SIZE
+#define NTASI_GPU_HWDATA_B_SIZE  NTASI_GPU_HANDOFF_HWDATA_B_SIZE
+#define NTASI_GPU_GLOBALS_SIZE   NTASI_GPU_HANDOFF_GLOBALS_SIZE
+#define NTASI_GPU_PAGE_SIZE      NTASI_GPU_HANDOFF_PAGE_SIZE
 
 //
 // The granularity the DXE core forces on EfiReservedMemoryType -- 64 KiB on
@@ -749,8 +1038,9 @@ NtasiReportGpuPublicationDecision (
 #if !NTASI_ENABLE_GPU_ACPI_PUBLICATION
   DEBUG ((
     DEBUG_ERROR,
-    "AppleAgxGpu: NTAS0023 NOT PUBLISHED -- this build has NTASI_ENABLE_GPU_ACPI_PUBLICATION "
-    "off, so the GPU profile reserves carveouts only. GPU unavailable; boot unaffected.\n"
+    "AppleAgxGpu: %a NOT PUBLISHED -- this build has NTASI_ENABLE_GPU_ACPI_PUBLICATION "
+    "off, so the GPU profile reserves carveouts only. GPU unavailable; boot unaffected.\n",
+    NTASI_GPU_ACPI_HID_STRING
     ));
 #endif
 }
@@ -874,6 +1164,42 @@ NtasiResolveAndReserveGpuCarveouts (
   }
 
   Handoff->AdtResolvedCount = Resolved;
+
+  //
+  // The host has already read back and authenticated m1n1's three stamps, but
+  // Mu must not turn that host assertion into firmware provenance merely
+  // because six plausible-looking UINT64 properties appeared in the ADT.
+  // Independently require the exact reservation m1n1 itself accepts: one
+  // canonical, contiguous 0x24000 block below the top-of-DRAM firmware band,
+  // split 0x8000/0x4000/0x18000 on 16 KiB boundaries.  This binds the GCD
+  // reservation, _CRS publication and m1n1 producer to the same physical
+  // bytes.  Any disagreement falls back to firmware-owned zero placeholders.
+  //
+  if (Handoff->Resources[NTASI_GPU_RES_HWDATA_A].Resolved &&
+      Handoff->Resources[NTASI_GPU_RES_HWDATA_B].Resolved &&
+      Handoff->Resources[NTASI_GPU_RES_GLOBALS].Resolved &&
+      !NtasiGpuHandoffGeometryIsCanonical (
+         DramWindowTop,
+         Handoff->Resources[NTASI_GPU_RES_HWDATA_A].Base,
+         Handoff->Resources[NTASI_GPU_RES_HWDATA_A].Size,
+         Handoff->Resources[NTASI_GPU_RES_HWDATA_B].Base,
+         Handoff->Resources[NTASI_GPU_RES_HWDATA_B].Size,
+         Handoff->Resources[NTASI_GPU_RES_GLOBALS].Base,
+         Handoff->Resources[NTASI_GPU_RES_GLOBALS].Size
+         ))
+  {
+    DEBUG ((
+      DEBUG_ERROR,
+      "AppleAgxGpu: live-ADT hw_data_a/hw_data_b/globals do not match m1n1's canonical "
+      "top-of-DRAM reservation geometry; refusing preboot provenance and using zero "
+      "placeholders instead\n"
+      ));
+    Handoff->Resources[NTASI_GPU_RES_HWDATA_A].Resolved = FALSE;
+    Handoff->Resources[NTASI_GPU_RES_HWDATA_B].Resolved = FALSE;
+    Handoff->Resources[NTASI_GPU_RES_GLOBALS].Resolved  = FALSE;
+    Resolved -= 3;
+    Handoff->AdtResolvedCount = Resolved;
+  }
 
   //
   // "The preboot handoff is present" means exactly one thing: all three of
@@ -1235,6 +1561,10 @@ NtasiInstallGpuTable (
   UINTN                        TableHandle;
   UINTN                        Index;
   UINT32                       Irq;
+#if NTASI_GPU_ACPI_HID == 24
+  UINT64                       FramebufferBase;
+  UINT64                       FramebufferLength;
+#endif
 
   RootNode = NULL;
   Table    = NULL;
@@ -1265,6 +1595,41 @@ NtasiInstallGpuTable (
       return EFI_NOT_FOUND;
     }
   }
+
+#if NTASI_GPU_ACPI_HID == 24
+  /* The full WDDM adapter is the sole owner of AGX and the internal panel.
+   * Append the exact DCP windows and live boot framebuffer to its _CRS; do
+   * not publish a second NTAS0070 hardware consumer. */
+  Status = NtasiResolveBootFramebuffer (
+             NULL, &FramebufferBase, &FramebufferLength);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AppleAgxWddm: live framebuffer invalid; unified NTAS0024 withheld: %r\n", Status));
+    return Status;
+  }
+  for (Index = 0; Index < ARRAY_SIZE (mNtasiDisplayWindows); Index++) {
+    UINTN  GpuIndex;
+
+    for (GpuIndex = 0; GpuIndex < NTASI_GPU_RES_COUNT; GpuIndex++) {
+      if (NtasiRangesOverlap (
+            mNtasiDisplayWindows[Index].Base,
+            mNtasiDisplayWindows[Index].Length,
+            Handoff->Resources[GpuIndex].Base,
+            Handoff->Resources[GpuIndex].Size)) {
+        DEBUG ((DEBUG_ERROR, "AppleAgxWddm: DCP window %u overlaps GPU resource %u; NTAS0024 withheld\n", (UINT32)Index, (UINT32)GpuIndex));
+        return EFI_INVALID_PARAMETER;
+      }
+    }
+  }
+  for (Index = 0; Index < NTASI_GPU_RES_COUNT; Index++) {
+    if (NtasiRangesOverlap (
+          FramebufferBase, FramebufferLength,
+          Handoff->Resources[Index].Base,
+          Handoff->Resources[Index].Size)) {
+      DEBUG ((DEBUG_ERROR, "AppleAgxWddm: boot framebuffer overlaps GPU resource %u; NTAS0024 withheld\n", (UINT32)Index));
+      return EFI_INVALID_PARAMETER;
+    }
+  }
+#endif
 
   //
   // Last line of defence, and deliberately independent of how each resource got
@@ -1316,7 +1681,7 @@ NtasiInstallGpuTable (
     goto Exit;
   }
 
-  Status = AmlCodeGenNameString ("_HID", "NTAS0023", DeviceNode, NULL);
+  Status = AmlCodeGenNameString ("_HID", NTASI_GPU_ACPI_HID_STRING, DeviceNode, NULL);
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
@@ -1367,6 +1732,28 @@ NtasiInstallGpuTable (
       goto Exit;
     }
   }
+
+#if NTASI_GPU_ACPI_HID == 24
+  for (Index = 0; Index < ARRAY_SIZE (mNtasiDisplayWindows); Index++) {
+    Status = AppleAnsAddMemoryResource (
+               CrsNode,
+               mNtasiDisplayWindows[Index].Base,
+               mNtasiDisplayWindows[Index].Length
+               );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "AppleAgxWddm: DCP _CRS resource %u refused: %r; NTAS0024 withheld\n", (UINT32)Index, Status));
+      goto Exit;
+    }
+  }
+  // The framebuffer is last among memory descriptors by the unified KMD
+  // contract. The sole AGX mailbox interrupt follows it.
+  Status = AppleAnsAddMemoryResource (
+             CrsNode, FramebufferBase, FramebufferLength);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AppleAgxWddm: framebuffer _CRS resource refused: %r; NTAS0024 withheld\n", Status));
+    goto Exit;
+  }
+#endif
 
   //
   // One level-triggered, active-high, exclusive vector: the AGX ASC mailbox
@@ -1485,9 +1872,15 @@ NtasiInstallGpuTable (
   if (!EFI_ERROR (Status)) {
     DEBUG ((
       DEBUG_WARN,
-      "AppleAgxGpu: NTAS0023 PUBLISHED, 8 memory resources + 1 interrupt (GSIV %u -> AIC %u). "
+      "AppleAgxGpu: %a PUBLISHED, %u memory resources + 1 interrupt (GSIV %u -> AIC %u). "
       "uat_ttbs=0x%lx/+0x%lx uat_pagetables=0x%lx/+0x%lx uat_handoff=0x%lx/+0x%lx (live ADT); "
       "hw_data_a=0x%lx hw_data_b=0x%lx globals=0x%lx (%a). preboot-handoff-present=%u\n",
+      NTASI_GPU_ACPI_HID_STRING,
+#if NTASI_GPU_ACPI_HID == 24
+      (UINT32)(NTASI_GPU_RES_COUNT + ARRAY_SIZE (mNtasiDisplayWindows) + 1),
+#else
+      (UINT32)NTASI_GPU_RES_COUNT,
+#endif
       (UINT32)NTASI_GPU_PUBLISHED_GSIV,
       (UINT32)NTASI_GPU_PHYSICAL_AIC,
       Handoff->Resources[NTASI_GPU_RES_TTBS].Base,
@@ -1901,24 +2294,42 @@ Exit:
 }
 #endif // NTASI_ENABLE_WIRELESS_DART_HANDOFF
 
-#if NTASI_ENABLE_MEDIA_PUBLICATION
+#if NTASI_ENABLE_MCA_PUBLICATION || NTASI_ENABLE_AOP_PUBLICATION || NTASI_ENABLE_ISP_PUBLICATION
 //
 // ===========================================================================
-// J414s MEDIA PROFILE -- MCA0 (NTAS0080), AOPA (NTAS0081), ISP0 (NTAS0090)
+// J414s MEDIA DEVICES -- MCA0 (NTAS0080), AOPA (NTAS0081), ISP0 (NTAS0090)
 // ===========================================================================
 //
 // Publishes the three ACPI devices the J414s media drivers bind to: the MCA
-// I2S/TDM audio complex (speakers and headset jack), the AOP internal PDM
-// microphone array, and the FaceTime camera ISP coprocessor.
+// I2S/TDM audio complex (speakers and headset jack), the AOP coprocessor
+// (whose driver enumerates the internal PDM microphone array and the lid-angle
+// sensor as PnP children of NTAS0081 -- firmware declares ONE device, not two),
+// and the FaceTime camera ISP coprocessor.
 //
-// GATING.  The whole block is preprocessor-excluded unless
-// NTASI_ENABLE_MEDIA_PUBLICATION is 1, exactly like the GPU carveout and
-// wireless DART blocks above.  A profile without the flag therefore compiles
-// byte-identical firmware -- not merely "behaviourally identical" -- and this
-// is why the tables are generated at runtime with AmlLib instead of being
-// static ASL sources: a static .aml would land in the firmware volume of EVERY
-// profile, including the baseline that boots today.  ANS0 and DRT0 use the
-// same technique for the same reason.
+// GATING.  THREE INDEPENDENT FLAGS, one per device:
+//
+//   NTASI_ENABLE_MCA_PUBLICATION  MCA0
+//   NTASI_ENABLE_AOP_PUBLICATION  AOPA
+//   NTASI_ENABLE_ISP_PUBLICATION  ISP0
+//
+// They were one flag until this split.  One flag meant a machine that wanted
+// working speakers also got a camera devnode and its eight memory windows,
+// which is exactly the coupling that makes an experiment unattributable.  There
+// is deliberately NO umbrella flag left: a stale one is what would silently
+// re-couple them.
+//
+// This shared machinery -- the three types, the AmlLib emitter and the install
+// loop -- compiles if ANY of the three is on.  The per-device window, interrupt
+// and property tables and their mNtasiMediaDevices[] entries are each guarded
+// by their own flag, so a build that selects one device carries the bytes of
+// that device only.
+//
+// A profile with none of the flags therefore compiles byte-identical firmware
+// -- not merely "behaviourally identical" -- and this is why the tables are
+// generated at runtime with AmlLib instead of being static ASL sources: a
+// static .aml would land in the firmware volume of EVERY profile, including the
+// baseline that boots today.  ANS0 and DRT0 use the same technique for the same
+// reason.
 //
 // INTERRUPTS.  Seven descriptors' worth of vectors across the three devices,
 // each list appended AFTER that device's memory windows:
@@ -1930,15 +2341,19 @@ Exit:
 //   AOPA  631                  real AIC line, below 1019, identity-mapped.
 //   ISP0  569                  real AIC line, below 1019, identity-mapped.
 //
-// Because MCA0 needs translations, the media profile MUST build the
-// "m2-pro-media" CSRT (8 aliases, 296 bytes,
+// Because MCA0 needs translations, a build with NTASI_ENABLE_MCA_PUBLICATION
+// MUST carry the "m2-pro-media" CSRT (8 aliases, 296 bytes,
 // sha256 a082eb6c95a12a29...) instead of the ordinary "m2-pro" (3 aliases, 256
-// bytes, sha256 cdee0da81d9c54c1...).  CSRT.aslc selects it on this same
-// NTASI_ENABLE_MEDIA_PUBLICATION flag, so the two cannot get out of step, and
-// it #errors at compile time if the GPU profile is selected alongside --
-// published GSIV 40 means the AGX mailbox there and admac-sio here.
+// bytes, sha256 cdee0da81d9c54c1...).  CSRT.aslc selects it on that same
+// NTASI_ENABLE_MCA_PUBLICATION flag, so the two cannot get out of step.
 //
-// Every non-media profile's CSRT is byte-for-byte unchanged; the media table
+// AOP AND ISP TOUCH NO CSRT BYTE, which is the whole reason the three flags are
+// worth separating rather than the split being cosmetic: 631 and 569 are below
+// the carrier's 1019 limit, so they are published identity-mapped and need no
+// alias.  A build with AOP and/or ISP on and MCA off carries the ordinary
+// 3-alias table, byte-for-byte as baseline.
+//
+// Every non-MCA profile's CSRT is byte-for-byte unchanged; the MCA table
 // is a strict SUPERSET, so the boot USB controller's 37 -> 1274 alias is
 // bit-identical in both.
 //
@@ -1987,9 +2402,11 @@ Exit:
 // resource claim.  It is NOT applied here because it is not firmware's to
 // make: both drivers index _CRS positionally, so removing window 4 shifts
 // every later window and breaks the contract above.  Expect
-// CM_PROB_NORMAL_CONFLICT (Code 12) on one of KBL0 / MCA0 / ISP0 while the
-// media profile is selected.  No other profile is affected: with the flag off,
-// none of these three devices exists.
+// CM_PROB_NORMAL_CONFLICT (Code 12) on one of KBL0 / MCA0 / ISP0 whenever
+// NTASI_ENABLE_MCA_PUBLICATION or NTASI_ENABLE_ISP_PUBLICATION is on -- both
+// devices claim that page, and KBL0 claims it in every profile.  AOPA does not:
+// none of its four windows touches pmgr_east, so an AOP-only build has no
+// overlap at all.  With a flag off its device does not exist.
 //
 // The specification these tables implement is
 // Platform/MacBookProEarly2023Pkg/AcpiTables/Media/{MCA,AOPA,ISP}.asl, which
@@ -2030,6 +2447,7 @@ typedef struct {
   UINTN                         PropertyCount;
 } NTASI_MEDIA_DEVICE;
 
+#if NTASI_ENABLE_MCA_PUBLICATION
 //
 // MCA0 -- NTAS0080, speakers and headset jack.  Order per MCA.asl.
 //
@@ -2053,11 +2471,10 @@ STATIC CONST NTASI_MEDIA_WINDOW  mNtasiMcaWindows[] = {
 //   40 -> 1218 admac-sio   41 -> 1211 mca0   42 -> 1213 mca2
 //   43 -> 1221 i2c2        45 -> 1231 dart-sio
 //
-// This is exactly why the media profile must build the "m2-pro-media" CSRT
-// (8 aliases, 296 bytes) rather than the ordinary "m2-pro" (3 aliases, 256
-// bytes); CSRT.aslc selects it on the same NTASI_ENABLE_MEDIA_PUBLICATION flag
-// and #errors if the GPU profile -- which gives 40 a different meaning -- is
-// selected alongside.
+// This is exactly why a build with NTASI_ENABLE_MCA_PUBLICATION must carry the
+// "m2-pro-media" CSRT (8 aliases, 296 bytes) rather than the ordinary "m2-pro"
+// (3 aliases, 256 bytes); CSRT.aslc selects it on that same flag, and on that
+// flag ALONE -- the AOP and ISP flags add no alias and are not consulted there.
 //
 // NOT 44: AIC 44 belongs to /arm-io/i2c0/hpmBusManager in the live ADT.
 //
@@ -2065,6 +2482,34 @@ STATIC CONST UINT32  mNtasiMcaInterrupts[] = { 40, 41, 42, 43, 45 };
 
 STATIC CONST NTASI_MEDIA_PROPERTY  mNtasiMcaProperties[] = {
   { "ntasp,mca-cluster-count",              4          },
+  //
+  // KNOWN WRONG, DELIBERATELY LEFT ALONE -- DO NOT "CORRECT" THIS BACK.
+  //
+  // mca-speaker-cluster-right = 1 is inherited from Asahi's device tree, whose
+  // Speakers dai-link is cpu = <&mca 0>, <&mca 1>.  THE LIVE J414s ADT SAYS
+  // OTHERWISE, and it was re-read first-hand on 2026-08-05 (ADT 0def1b70,
+  // 188 checks, tools/verify-j414s-av-adt.py in the AuroraSilicon tree):
+  //
+  //   /arm-io/mca0/mca0a/audio-speaker    audio-data,sn012776
+  //                                       tx=6 (mask 0x3f), rx=12 (mask 0xfff)
+  //   /arm-io/mca1/mca1a/audio-loopback   audio-data,audio-loopback
+  //                                       tx=2 (mask 0x3),  rx=2  (mask 0x3)
+  //   /arm-io/mca2/mca2a/audio-codec-output   audio-data,cs42l84
+  //
+  // ALL SIX AMPLIFIERS AND ALL TWELVE I/V SENSE CHANNELS ARE ON CLUSTER 0.
+  // Cluster 1 is a two-channel internal loopback with no speaker on it.  Two
+  // further facts agree: mca0a carries `internal-bclk-loopback` (meaningful
+  // only when its RX and TX are the same physical bus) and mca1a does not, and
+  // twelve sense channels is exactly six amplifiers' worth of I and V -- which
+  // cluster 0 could not see if the amps were split across two clusters.
+  //
+  // It is left wrong ON PURPOSE.  No Windows driver reads this property today,
+  // so the error is latent, and correcting it is a change to the SPEAKER
+  // topology -- the one path on this machine that can physically destroy
+  // hardware.  It gets fixed as part of the render work, where it can be
+  // tested against a running I/V sense capture, not as a drive-by edit to a
+  // constant nobody consumes.  Until then MCA publication stays off.
+  //
   { "ntasp,mca-speaker-cluster-left",       0          },
   { "ntasp,mca-speaker-cluster-right",      1          },
   { "ntasp,mca-jack-cluster",               2          },
@@ -2093,8 +2538,16 @@ STATIC CONST NTASI_MEDIA_PROPERTY  mNtasiMcaProperties[] = {
   { "ntasp,admac-channel-speaker-play",     0          },
 };
 
+#endif // NTASI_ENABLE_MCA_PUBLICATION
+
+#if NTASI_ENABLE_AOP_PUBLICATION
 //
-// AOPA -- NTAS0081, internal PDM microphone array.  Order per AOPA.asl.
+// AOPA -- NTAS0081, the Always-On Processor.  Order per AOPA.asl.
+//
+// ONE DEVICE, NOT TWO.  The AOP coprocessor driver enumerates its services --
+// the internal PDM microphone array and the lid-angle sensor -- as PnP children
+// of this devnode.  There is deliberately no second _HID for the lid angle:
+// firmware declares the coprocessor, the driver declares what it hosts.
 //
 STATIC CONST NTASI_MEDIA_WINDOW  mNtasiAopWindows[] = {
   { 0x2A6400000ULL, 0x6C000ULL  },  // 0: aop ASC control (mailbox at +0x8000)
@@ -2150,6 +2603,9 @@ STATIC CONST NTASI_MEDIA_PROPERTY  mNtasiAopProperties[] = {
   { "ntasp,aop-pdm-coefficient-slots",    120       },
 };
 
+#endif // NTASI_ENABLE_AOP_PUBLICATION
+
+#if NTASI_ENABLE_ISP_PUBLICATION
 //
 // ISP0 -- NTAS0090, FaceTime camera.  Order per ISP.asl.
 //
@@ -2206,31 +2662,45 @@ STATIC CONST NTASI_MEDIA_PROPERTY  mNtasiIspProperties[] = {
   { "ntasp,isp-power-domain-count",         7             },
 };
 
+#endif // NTASI_ENABLE_ISP_PUBLICATION
+
 //
-// One SSDT per device, matching the three DefinitionBlocks in the ASL specs.
-// OEM ID and OEM table ID are byte-identical to what iasl emits for those
-// files (both fields are NUL-padded by iasl, and CopyMem() copies the same
-// 6 and 8 bytes from these literals).
+// One SSDT per SELECTED device, matching the three DefinitionBlocks in the ASL
+// specs.  OEM ID and OEM table ID are byte-identical to what iasl emits for
+// those files (both fields are NUL-padded by iasl, and CopyMem() copies the
+// same 6 and 8 bytes from these literals).
+//
+// Each entry is guarded by its own flag, and the tables it names are guarded by
+// the same one, so a build selecting a subset has neither an entry pointing at
+// a table that was not compiled nor a table nothing references.  This array can
+// never be zero-length: it is inside the outer OR-guard, so at least one flag
+// is on wherever this text is compiled at all.
 //
 STATIC CONST NTASI_MEDIA_DEVICE  mNtasiMediaDevices[] = {
+ #if NTASI_ENABLE_MCA_PUBLICATION
   {
     "MCA0", "NTAS0080", "J414MCA",
     mNtasiMcaWindows, ARRAY_SIZE (mNtasiMcaWindows),
     mNtasiMcaInterrupts, ARRAY_SIZE (mNtasiMcaInterrupts),
     mNtasiMcaProperties, ARRAY_SIZE (mNtasiMcaProperties)
   },
+ #endif
+ #if NTASI_ENABLE_AOP_PUBLICATION
   {
     "AOPA", "NTAS0081", "J414AOPA",
     mNtasiAopWindows, ARRAY_SIZE (mNtasiAopWindows),
     mNtasiAopInterrupts, ARRAY_SIZE (mNtasiAopInterrupts),
     mNtasiAopProperties, ARRAY_SIZE (mNtasiAopProperties)
   },
+ #endif
+ #if NTASI_ENABLE_ISP_PUBLICATION
   {
     "ISP0", "NTAS0090", "J414ISP",
     mNtasiIspWindows, ARRAY_SIZE (mNtasiIspWindows),
     mNtasiIspInterrupts, ARRAY_SIZE (mNtasiIspInterrupts),
     mNtasiIspProperties, ARRAY_SIZE (mNtasiIspProperties)
   },
+ #endif
 };
 
 /**
@@ -2523,9 +2993,9 @@ NtasiInstallMediaTables (
     }
   }
 }
-#endif // NTASI_ENABLE_MEDIA_PUBLICATION
+#endif // NTASI_ENABLE_MCA_PUBLICATION || NTASI_ENABLE_AOP_PUBLICATION || NTASI_ENABLE_ISP_PUBLICATION
 
-#if NTASI_ENABLE_BATTERY_PUBLICATION
+// ===== NTASI_BATTERY_BLOCK_BEGIN ============================================
 //
 // ===========================================================================
 // J414s BATTERY -- BAT0 (NTAS0053)
@@ -2599,8 +3069,8 @@ NtasiInstallMediaTables (
 
 //
 // Deliberately its own type rather than a reuse of NTASI_MEDIA_PROPERTY: that
-// struct lives inside #if NTASI_ENABLE_MEDIA_PUBLICATION, and the battery is
-// an independent switch that must build with media off.
+// struct lives inside the three-flag media region, and the battery is an
+// independent switch that must build with all three media flags off.
 //
 typedef struct {
   CONST CHAR8    *Name;
@@ -2809,7 +3279,7 @@ Exit:
 
   return Status;
 }
-#endif // NTASI_ENABLE_BATTERY_PUBLICATION
+// ===== NTASI_BATTERY_BLOCK_END ==============================================
 
 /**
   Publish the native Apple ANS controller to Windows.  Addresses and the
@@ -4112,6 +4582,17 @@ AcpiPlatformEntryPoint (
 
   // Status = AcpiPlatformInstallMadtTable();
 
+#if NTASI_ENABLE_DISPLAY_ACPI_PUBLICATION && (NTASI_GPU_ACPI_HID != 24)
+  // NTAS0070 must be generated from the live boot framebuffer. dxgkrnl marks
+  // a POST display PDO only when one translated memory resource contains the
+  // boot framebuffer interval; a static ASL table cannot satisfy that rule.
+  Status = NtasiInstallDisplayTable (AcpiTable);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AppleDisplay ACPI: SSDT installation failed: %r\n", Status));
+    return EFI_ABORTED;
+  }
+#endif
+
   // Publish ANS after the static namespace has been installed.  Failure is
   // fatal when the ADT contains ANS: silently omitting the boot controller
   // would make the Windows storage driver impossible to bind.
@@ -4164,19 +4645,25 @@ AcpiPlatformEntryPoint (
 
 #endif
 
-#if NTASI_ENABLE_MEDIA_PUBLICATION
+#if NTASI_ENABLE_MCA_PUBLICATION || NTASI_ENABLE_AOP_PUBLICATION || NTASI_ENABLE_ISP_PUBLICATION
   //
-  // Publish MCA0/AOPA/ISP0 for the media profile.  Non-fatal by construction:
-  // NtasiInstallMediaTables() logs and continues, consistent with "never let a
-  // firmware bug here take down a boot that would otherwise reach Windows" for
-  // everything after the mandatory ANS table.  The matching CSRT ALI2 entries
-  // for MCA0's published GSIVs come from CSRT.aslc, gated on the same flag.
+  // Publish whichever of MCA0/AOPA/ISP0 this build selected.  The three are
+  // independent flags, so this call site must be guarded by the SAME condition
+  // as the definition above -- a narrower guard here would leave the function
+  // defined and uncalled, and a wider one would call an undefined function.
+  //
+  // Non-fatal by construction: NtasiInstallMediaTables() logs and continues,
+  // consistent with "never let a firmware bug here take down a boot that would
+  // otherwise reach Windows" for everything after the mandatory ANS table.  The
+  // matching CSRT ALI2 entries for MCA0's published GSIVs come from CSRT.aslc,
+  // gated on NTASI_ENABLE_MCA_PUBLICATION alone -- AOPA and ISP0 publish AIC
+  // 631 and 569, both below the carrier's 1019 limit, so they are identity
+  // mapped and touch no CSRT byte.
   //
   NtasiInstallMediaTables (AcpiTable);
 #endif
 
-#if NTASI_ENABLE_BATTERY_PUBLICATION
-  //
+//
   // Publish BAT0 (NTAS0053), the devnode AppleSmcBattery.sys binds to.
   // Non-fatal by construction, like DRT0, the GPU and the media tables: a
   // machine that reaches Windows without a battery icon is strictly better
@@ -4185,12 +4672,14 @@ AcpiPlatformEntryPoint (
   // resource away from a devnode that boots -- see the block comment on
   // NtasiInstallBatteryTable for why the SMC windows stay with SMCG.
   //
+  // Unconditional: every profile publishes BAT0. The publication is empty-_CRS
+  // and read-only, so it cannot take a resource from a devnode that boots or
+  // touch power hardware; see the block comment on NtasiInstallBatteryTable.
+  //
   Status = NtasiInstallBatteryTable (AcpiTable);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "AppleBattery ACPI: SSDT installation failed: %r\n", Status));
   }
-
-#endif
 
   //
   // Dump every non-conventional memory region, in EVERY profile.

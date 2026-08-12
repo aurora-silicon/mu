@@ -110,6 +110,20 @@ class AicTimerRegistrationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "non-progressing"):
             model.deliver_reflected_tick()
 
+    def test_aicv3_only_adt_fields_are_not_read_on_j414s_aicv2(self) -> None:
+        calculate = function_body(
+            self.aic, "AppleAicV2CalculateRegisterOffsets"
+        )
+        gate = calculate.index(
+            "if (mAicVersion == APPLE_AIC_VERSION_3)"
+        )
+        cap0 = calculate.index('"cap0-offset"')
+        maxnumirq = calculate.index('"maxnumirq-offset"')
+        publish = calculate.index("AppleAicV3SetDynamicOffsets")
+        self.assertLess(gate, cap0)
+        self.assertLess(gate, maxnumirq)
+        self.assertLess(maxnumirq, publish)
+
 
 if __name__ == "__main__":
     unittest.main()
