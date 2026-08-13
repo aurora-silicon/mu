@@ -2870,6 +2870,7 @@ AcpiPlatformInstallAppleAnsTable (
   BOOLEAN                      Legacy;
   CONST CHAR8                  *HardwareId;
   CONST CHAR8                  *InterruptContract;
+  CONST CHAR8                  *PmgrDomainName;
 
   RootNode = NULL;
   Table    = NULL;
@@ -3006,26 +3007,68 @@ AcpiPlatformInstallAppleAnsTable (
     HardwareId = "NTAS2003";
 
     //
-    // Resolve all four PMGR domains live from the ADT, by exact uppercase
-    // name -- never from a hardcoded constant. See
-    // AppleAnsPmgrResolveDomain() (Include/Drivers/AppleAnsPmgrDomain.h)
-    // for why: a hardcoded constant is
-    // exactly what pointed these four words at DCS_09/DCS_10 (DRAM
-    // controller power domains) on 2026-07-30. Any single domain failing
-    // to resolve uniquely withholds NTAS2003 entirely (EFI_NOT_FOUND,
-    // handled by the caller as "no ANS device today") rather than
-    // publishing three good addresses and one wrong or missing one.
+    // Resolve every PMGR domain live from the ADT, by exact uppercase name --
+    // never from a hardcoded constant. See AppleAnsPmgrResolveDomain()
+    // (Include/Drivers/AppleAnsPmgrDomain.h) for why: a hardcoded constant is
+    // exactly what pointed these words at DCS_09/DCS_10 (DRAM controller power
+    // domains) on 2026-07-30. Any domain failing to resolve uniquely withholds
+    // NTAS2003 entirely (EFI_NOT_FOUND, handled by the caller as "no ANS device
+    // today") rather than publishing good addresses alongside a wrong one.
     //
-    if (EFI_ERROR (AppleAnsPmgrResolveDomain (mAppleAnsAcpiTag, "ANS2", &PmgrResetBase)) ||
+    // TWO NAMES PER ROLE, AND THREE DOMAINS NOT ALWAYS FOUR. T602x calls the
+    // controller domain "ANS2" and the system-storage parent "APCIE_ST_SYS";
+    // T8142 calls the same two roles "ANS" and "APCIE_SYS_ST", and has no
+    // "APCIE_ST1_SYS" at all. Measured on J813 from the live ADT: the storage
+    // domains present are ANS (0x380700300), APCIE_ST (0x380700410) and
+    // APCIE_SYS_ST (0x380700520) -- exactly the three addresses the DSC's
+    // hardware-confirmed PCDs already record, with PcdAppleAnsPmgrApcieSt1SysBase
+    // deliberately zero to record the fourth domain's absence.
+    //
+    // This mirrors AppleNANDStorageDxe, which has always selected by both
+    // spellings; only this publication path still asked for the T602x names
+    // unconditionally, so on T8142 it withheld NTAS2003 even once the
+    // ps-groups layout was understood.
+    //
+    if (EFI_ERROR (AppleAnsPmgrSelectDomain (mAppleAnsAcpiTag, "ANS2", "ANS", &PmgrDomainName, &PmgrResetBase)) ||
         EFI_ERROR (AppleAnsPmgrResolveDomain (mAppleAnsAcpiTag, "APCIE_ST", &PmgrApcieStBase)) ||
-        EFI_ERROR (AppleAnsPmgrResolveDomain (mAppleAnsAcpiTag, "APCIE_ST_SYS", &PmgrApcieStSysBase)) ||
-        EFI_ERROR (AppleAnsPmgrResolveDomain (mAppleAnsAcpiTag, "APCIE_ST1_SYS", &PmgrApcieSt1SysBase)))
+        EFI_ERROR (
+          AppleAnsPmgrSelectDomain (
+            mAppleAnsAcpiTag,
+            "APCIE_ST_SYS",
+            "APCIE_SYS_ST",
+            &PmgrDomainName,
+            &PmgrApcieStSysBase
+            )
+          ))
     {
       DEBUG ((
         DEBUG_ERROR,
-        "AppleANS ACPI: could not resolve all four PMGR domains from the live ADT; NTAS2003 withheld\n"
+        "AppleANS ACPI: could not resolve the ANS PMGR domains from the live ADT; NTAS2003 withheld\n"
         ));
       return EFI_NOT_FOUND;
+    }
+
+    //
+    // The fourth domain is T602x-only. A platform that has it records its
+    // address in the PCD; a zero PCD means "this SoC does not have it", which
+    // is a fact to honour, not a resolution failure to report.
+    //
+    PmgrApcieSt1SysBase = 0;
+    if (FixedPcdGet64 (PcdAppleAnsPmgrApcieSt1SysBase) != 0) {
+      if (EFI_ERROR (
+            AppleAnsPmgrResolveDomain (
+              mAppleAnsAcpiTag,
+              "APCIE_ST1_SYS",
+              &PmgrApcieSt1SysBase
+              )
+            ))
+      {
+        DEBUG ((
+          DEBUG_ERROR,
+          "AppleANS ACPI: APCIE_ST1_SYS is expected by PCD but did not resolve; NTAS2003 withheld\n"
+          ));
+        return EFI_NOT_FOUND;
+      }
     }
 
     //
@@ -3045,7 +3088,8 @@ AcpiPlatformInstallAppleAnsTable (
       if (PcdResetBase != PmgrResetBase) {
         DEBUG ((
           DEBUG_WARN,
-          "AppleANS ACPI: PcdAppleAnsPmgrResetBase 0x%lx disagrees with ADT-resolved ANS2 0x%lx\n",
+          "AppleANS ACPI: PcdAppleAnsPmgrResetBase 0x%lx disagrees with the ADT-resolved "
+          "controller domain (ANS2/ANS) 0x%lx\n",
           PcdResetBase,
           PmgrResetBase
           ));
@@ -3063,7 +3107,8 @@ AcpiPlatformInstallAppleAnsTable (
       if (PcdApcieStSysBase != PmgrApcieStSysBase) {
         DEBUG ((
           DEBUG_WARN,
-          "AppleANS ACPI: PcdAppleAnsPmgrApcieStSysBase 0x%lx disagrees with ADT-resolved APCIE_ST_SYS 0x%lx\n",
+          "AppleANS ACPI: PcdAppleAnsPmgrApcieStSysBase 0x%lx disagrees with the ADT-resolved "
+          "system-storage domain (APCIE_ST_SYS/APCIE_SYS_ST) 0x%lx\n",
           PcdApcieStSysBase,
           PmgrApcieStSysBase
           ));
@@ -3080,28 +3125,66 @@ AcpiPlatformInstallAppleAnsTable (
     }
 
     //
-    // Defense in depth on top of name-based resolution: the resolved
-    // addresses must still be four aligned, distinct words, exactly as
-    // required before.
+    // Defense in depth on top of name-based resolution: every domain this SoC
+    // actually has must still be a non-zero, aligned word, distinct from all
+    // the others.
     //
-    if ((PmgrResetBase == 0) || (PmgrApcieStBase == 0) ||
-        (PmgrApcieStSysBase == 0) || (PmgrApcieSt1SysBase == 0) ||
-        ((PmgrResetBase & (APPLE_ANS_PMGR_RESET_SIZE - 1)) != 0) ||
-        ((PmgrApcieStBase & (APPLE_ANS_PMGR_RESET_SIZE - 1)) != 0) ||
-        ((PmgrApcieStSysBase & (APPLE_ANS_PMGR_RESET_SIZE - 1)) != 0) ||
-        ((PmgrApcieSt1SysBase & (APPLE_ANS_PMGR_RESET_SIZE - 1)) != 0) ||
-        (PmgrResetBase == PmgrApcieStBase) ||
-        (PmgrResetBase == PmgrApcieStSysBase) ||
-        (PmgrResetBase == PmgrApcieSt1SysBase) ||
-        (PmgrApcieStBase == PmgrApcieStSysBase) ||
-        (PmgrApcieStBase == PmgrApcieSt1SysBase) ||
-        (PmgrApcieStSysBase == PmgrApcieSt1SysBase))
+    // Written over the resolved set rather than as a fixed four-way comparison
+    // because the set is three words on T8142 and four on T602x. The old fixed
+    // form treated the absent fourth domain's zero as a failure, which would
+    // have rejected J813 even with every domain it does have resolved
+    // correctly. Nothing is relaxed: the same non-zero, alignment and pairwise
+    // distinctness rules apply to each member of the set.
+    //
     {
-      DEBUG ((
-        DEBUG_ERROR,
-        "AppleANS ACPI: NTAS2003 requires four aligned distinct PMGR words\n"
-        ));
-      return EFI_UNSUPPORTED;
+      UINT64  PmgrWords[4];
+      UINTN   PmgrWordCount;
+      UINTN   WordIndex;
+      UINTN   OtherIndex;
+      BOOLEAN PmgrWordsValid;
+
+      PmgrWordCount = 0;
+      PmgrWords[PmgrWordCount++] = PmgrResetBase;
+      PmgrWords[PmgrWordCount++] = PmgrApcieStBase;
+      PmgrWords[PmgrWordCount++] = PmgrApcieStSysBase;
+      if (PmgrApcieSt1SysBase != 0) {
+        PmgrWords[PmgrWordCount++] = PmgrApcieSt1SysBase;
+      }
+
+      PmgrWordsValid = TRUE;
+      for (WordIndex = 0; WordIndex < PmgrWordCount; WordIndex++) {
+        if ((PmgrWords[WordIndex] == 0) ||
+            ((PmgrWords[WordIndex] & (APPLE_ANS_PMGR_RESET_SIZE - 1)) != 0))
+        {
+          PmgrWordsValid = FALSE;
+          break;
+        }
+
+        for (OtherIndex = 0; OtherIndex < WordIndex; OtherIndex++) {
+          if (PmgrWords[WordIndex] == PmgrWords[OtherIndex]) {
+            PmgrWordsValid = FALSE;
+            break;
+          }
+        }
+
+        if (!PmgrWordsValid) {
+          break;
+        }
+      }
+
+      if (!PmgrWordsValid) {
+        DEBUG ((
+          DEBUG_ERROR,
+          "AppleANS ACPI: NTAS2003 requires %u aligned distinct PMGR words "
+          "(ans=0x%lx apcie-st=0x%lx st-sys=0x%lx st1-sys=0x%lx)\n",
+          (UINT32)PmgrWordCount,
+          PmgrResetBase,
+          PmgrApcieStBase,
+          PmgrApcieStSysBase,
+          PmgrApcieSt1SysBase
+          ));
+        return EFI_UNSUPPORTED;
+      }
     }
     SartMinimumSize = APPLE_ANS_SART_V3_MIN_SIZE;
   } else {

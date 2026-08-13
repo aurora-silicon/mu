@@ -14,6 +14,22 @@ case "$profile" in
         ans_block_io=TRUE
         mtp_hid_build=FALSE
         ;;
+    internal-storage-windows)
+        # internal-storage, plus the \_SB.ANS0 ACPI device Windows needs to bind
+        # a storage driver.  Kept as a separate profile rather than flipping the
+        # one above: that profile is the proven firmware-owned boot path, and
+        # publishing a device to Windows is exactly the kind of change worth
+        # being able to A/B against it.
+        ans=true
+        ans_block_io=TRUE
+        ans_acpi=TRUE
+        # Must stay identical to internal-storage above except for ans_acpi.
+        # It was briefly TRUE here, which made this profile differ from the
+        # proven one in two ways at once; the resulting boot spun inside Mu
+        # (guest PCs clustered under the Mu vbar, framebuffer at 0.03 fps) and
+        # never reached Setup, and the second variable made that unattributable.
+        mtp_hid_build=FALSE
+        ;;
     storage-probe)
         ans=true
         ans_block_io=FALSE
@@ -25,6 +41,7 @@ case "$profile" in
         ;;
 esac
 
+ans_acpi=${ans_acpi:-FALSE}
 if test "$ans" = true; then
     ans_enable=TRUE
     ans_dxe=TRUE
@@ -34,6 +51,7 @@ else
     ans_dxe=FALSE
     ans_block_io=FALSE
     ans_preserve=FALSE
+    ans_acpi=FALSE
 fi
 
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -111,7 +129,7 @@ platform_build=Platform/MacBookAir2026Pkg/PlatformBuild.py
 echo "Building J813 $profile"
 if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG \
     "BLD_*_NTASI_ENABLE_ANS=$ans_enable" \
-    "BLD_*_NTASI_ANS_PUBLISH_ACPI=FALSE" \
+    "BLD_*_NTASI_ANS_PUBLISH_ACPI=$ans_acpi" \
     "BLD_*_NTASI_ANS_DXE_BRINGUP=$ans_dxe" \
     "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
     "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
@@ -129,7 +147,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
         )
         "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG \
             "BLD_*_NTASI_ENABLE_ANS=$ans_enable" \
-            "BLD_*_NTASI_ANS_PUBLISH_ACPI=FALSE" \
+            "BLD_*_NTASI_ANS_PUBLISH_ACPI=$ans_acpi" \
             "BLD_*_NTASI_ANS_DXE_BRINGUP=$ans_dxe" \
             "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
             "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
@@ -153,12 +171,13 @@ clean=true
 test -z "$(git -C "$source_root" status --porcelain=v1 --untracked-files=no --ignore-submodules=none)" || clean=false
 manifest=$artifact_dir/manifest.json
 "$venv/bin/python" - "$manifest" "$commit" "$clean" "$profile" "$size" "$digest" \
-    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" <<'PY'
+    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" <<'PY'
 import json
 import pathlib
 import sys
 
-path, commit, clean, profile, size, digest, ans, ans_dxe, ans_block_io, ans_preserve = sys.argv[1:]
+(path, commit, clean, profile, size, digest, ans, ans_dxe, ans_block_io,
+ ans_preserve, ans_acpi) = sys.argv[1:]
 enabled = lambda value: value == "TRUE"
 record = {
     "schema": "aurora.j813.mu-profile.v1",
@@ -168,7 +187,7 @@ record = {
         "name": profile,
         "aic": True,
         "ans": enabled(ans),
-        "ans_acpi": False,
+        "ans_acpi": enabled(ans_acpi),
         "ans_dxe": enabled(ans_dxe),
         "ans_block_io": enabled(ans_block_io),
         "ans_preserve": enabled(ans_preserve),
@@ -186,7 +205,7 @@ record = {
     "build": {
         "pcds": {
             "PcdAppleUsb3PipeSwitchPortMask": 0,
-            "PcdAppleAnsPublishAcpiDevice": False,
+            "PcdAppleAnsPublishAcpiDevice": enabled(ans_acpi),
             "PcdAppleAnsPerformDxeBringUp": enabled(ans_dxe),
             "PcdAppleAnsPublishBlockIo": enabled(ans_block_io),
             "PcdAppleAnsPreserveForOs": enabled(ans_preserve),

@@ -116,12 +116,26 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase|0x380700410
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase|0x380700520
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase|0
-  # The physical ANS NVMe line is ADT interrupt[4] == 1155. Do not publish it
-  # directly as a Windows GSIV: 1155 lies in GIC's reserved 1024..4095 range.
-  # A zero/zero pair keeps ACPI publication fail-closed until J813 has an ALI2
-  # alias contract equivalent to J414s's 38 -> 1832 mapping.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|0
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt|0
+  # The physical ANS NVMe line is ADT interrupt[4] == 1155. It cannot be
+  # published directly as a Windows GSIV: 1155 lies in GIC's reserved
+  # 1024..4095 range, and a devnode that names it comes up problem=12
+  # (CM_PROB_NO_VALID_LOG_CONFIG) with its driver never loaded.
+  #
+  # J813 has the alias contract this used to wait for, but it is not ALI2:
+  # there is no built CSRT here and HalExtAppleInterruptController never loads,
+  # so the guest stays on m1n1's emulated GICv3 carrier for its whole life and
+  # m1n1 is the only thing translating between AIC lines and guest INTIDs.
+  # The table is hv_aic_aliases_t8142 in m1n1's src/hv_aic_alias.c, and these
+  # two values must stay equal to the {published, physical} pair it holds for
+  # ans -- Mu publishes the GSIV, m1n1 performs the renumbering, and neither
+  # can discover the other's choice at runtime.
+  #
+  # 996 was measured free, not assumed: 443 distinct lines appear in ADT
+  # `interrupts` properties on this machine and none of them is 996. Publishing
+  # a number that is also a live line would deliver another device's interrupts
+  # under ANS0's INTID, because injection is the identity on an alias miss.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|996
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt|1155
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishAcpiDevice|$(NTASI_ANS_PUBLISH_ACPI)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|$(NTASI_ANS_DXE_BRINGUP)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|$(NTASI_ANS_PUBLISH_BLOCK_IO)

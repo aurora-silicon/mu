@@ -76,7 +76,42 @@ class J813InternalStorageContractTests(unittest.TestCase):
         self.assertIn(
             '"BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve"', self.build
         )
-        self.assertIn('"BLD_*_NTASI_ANS_PUBLISH_ACPI=FALSE"', self.build)
+        # ACPI publication is per-profile now that one profile publishes it,
+        # but it still has to default closed: only a profile that opts in may
+        # set it, and a profile with ANS disabled may never set it.
+        self.assertIn('"BLD_*_NTASI_ANS_PUBLISH_ACPI=$ans_acpi"', self.build)
+        self.assertIn("ans_acpi=${ans_acpi:-FALSE}", self.build)
+        self.assertNotIn("ans_acpi=TRUE\n        mtp_hid_build=FALSE", self.build)
+
+    def test_windows_profile_publishes_acpi_with_the_alias_pair(self) -> None:
+        """The one profile that exposes ANS to Windows, and its GSIV contract.
+
+        996/1155 must stay equal to the {published, physical} pair in m1n1's
+        hv_aic_aliases_t8142.  Mu publishes the GSIV and m1n1 performs the
+        renumbering; neither can discover the other's choice at runtime, so
+        the only thing keeping them in step is this assertion.
+        """
+        profile = load_manifest_module().PROFILES["internal-storage-windows"]
+        self.assertTrue(profile["ans"])
+        self.assertTrue(profile["ans_acpi"])
+        self.assertTrue(profile["ans_dxe"])
+        self.assertTrue(profile["ans_block_io"])
+        self.assertTrue(profile["ans_preserve"])
+        self.assertIn("internal-storage-windows)", self.build)
+        self.assertIn("PcdAppleAnsPublishedInterrupt|996", self.dsc)
+        self.assertIn("PcdAppleAnsExpectedPhysicalInterrupt|1155", self.dsc)
+
+    def test_sealed_manifest_reports_the_real_acpi_setting(self) -> None:
+        """A sealed manifest that lied about this would defeat the boot contract.
+
+        The boot-artifact validator compares the manifest against what m1n1
+        will do, so a hardcoded False here would let a publishing build ship
+        under a manifest claiming it publishes nothing.
+        """
+        self.assertIn('"ans_acpi": enabled(ans_acpi),', self.build)
+        self.assertIn(
+            '"PcdAppleAnsPublishAcpiDevice": enabled(ans_acpi),', self.build
+        )
 
     def test_fdf_embeds_real_ans_driver_only_for_the_storage_profile(self) -> None:
         guarded = (
@@ -98,10 +133,17 @@ class J813InternalStorageContractTests(unittest.TestCase):
         for pcd, value in expected.items():
             self.assertIn(f"{pcd}|{value}", self.dsc)
 
-    def test_reserved_physical_interrupt_is_not_published_as_a_gsiv(self) -> None:
-        self.assertIn("PcdAppleAnsPublishedInterrupt|0", self.dsc)
-        self.assertIn("PcdAppleAnsExpectedPhysicalInterrupt|0", self.dsc)
+    def test_reserved_physical_interrupt_is_never_published_directly(self) -> None:
+        """1155 itself must never reach Windows as a GSIV.
+
+        It sits in GIC's reserved 1024..4095 range, so a devnode naming it
+        comes up problem=12 (CM_PROB_NO_VALID_LOG_CONFIG) with its driver never
+        loaded.  It is published under alias 996 instead; see the paired
+        assertions in test_windows_profile_publishes_acpi_with_the_alias_pair.
+        """
         self.assertIn("interrupt[4] == 1155", self.dsc)
+        self.assertNotIn("PcdAppleAnsPublishedInterrupt|1155", self.dsc)
+        # The DSC default stays closed; only a profile opts in.
         self.assertIn("DEFINE NTASI_ANS_PUBLISH_ACPI = FALSE", self.dsc)
 
     def test_live_adt_domain_names_cover_t602x_and_t8142(self) -> None:
