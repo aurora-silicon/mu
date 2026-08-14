@@ -58,20 +58,26 @@
             0, // Version
             0, // Level Index
             2, // Count
-            Package() { // WFI for CPU
-            1, // Min residency (uS)
-            1, // Wake latency (uS)
-            1, // Flags
-            0, // Arch Context Flags
-            0, //Residency Counter Frequency
-            0, // No parent state
+            //
+            // State 0: architectural WFI, entered natively by the HAL
+            // (FFH address 0xFFFFFFFF is the Arm FFH spec's "plain WFI"
+            // encoding).  This is exactly the idle behavior every boot has
+            // always had; it exists so the deeper states below have a
+            // baseline sibling and Windows gets residency accounting.
+            //
+            Package() {
+            1,   // Min residency (uS)
+            1,   // Wake latency (uS)
+            1,   // Flags: enabled
+            0,   // Arch Context Lost Flags: nothing lost
+            0,   // Residency Counter Frequency
+            0,   // No parent state
             ResourceTemplate () {
-                // Register Entry method
-                Register (SystemMemory,
-                0x00,               // Bit Width
-                0x00,               // Bit Offset
-                0x00,         // Address
-                0x00,               // Access Size
+                Register (FFixedHW,
+                32,          // Bit Width
+                0,           // Bit Offset
+                0xFFFFFFFF,  // Address: plain WFI (Arm FFH spec)
+                3,           // Access Size
                 )
             },
             ResourceTemplate() { // Null Residency Counter
@@ -82,20 +88,27 @@
             },
             "WFI",
             },
-            Package() { // Power Gating state for CPU
-            1, // Min residency (uS)
-            1, // Wake latency (uS)
-            1, // Flags
-            1, // Arch Context Flags
-            0, //Residency Counter Frequency
-            1, // Parent node can be in any state
+            //
+            // State 1: PSCI CPU_SUSPEND standby, power_state 0x00000001 --
+            // m1n1 hv_psci.c valid_idle_states[0], the (On, On, WFI-standby)
+            // extended-StateID encoding its validator accepts.  The HV
+            // serves it from the standby fast path (EL2 wfi, context
+            // retained), so Arch Context Lost Flags is 0.  Residency/latency
+            // account for the SMC trap round-trip through the hypervisor.
+            //
+            Package() {
+            50,  // Min residency (uS)
+            10,  // Wake latency (uS)
+            1,   // Flags: enabled
+            0,   // Arch Context Lost Flags: retention, nothing lost
+            0,   // Residency Counter Frequency
+            0,   // No parent state
             ResourceTemplate () {
-                // Register Entry method
-                Register (SystemMemory,
-                0x00,               // Bit Width
-                0x00,               // Bit Offset
-                0x00000000,         // Address
-                0x00,               // Access Size
+                Register (FFixedHW,
+                32,          // Bit Width
+                0,           // Bit Offset
+                0x00000001,  // Address: PSCI power_state (CPU standby)
+                3,           // Access Size
                 )
             },
             ResourceTemplate() { // Null Residency Counter
@@ -104,8 +117,24 @@
             ResourceTemplate() { // Null Usage Counter
                 Register (SystemMemory, 0, 0, 0, 0)
             },
-            "CorePwrDn"
+            "CpuStandby",
             },
+            //
+            // State 2 (STAGED, NOT YET PUBLISHED -- bump Count to 3 to
+            // enable): PSCI power_state 0x00000011, m1n1's (On, Retention,
+            // Retention/deep-WFI) cluster-retention standby.  The HV's
+            // ATF-ported full suspend path serves it, which has never run
+            // on hardware; enable only after a supervised soak.
+            //
+            // Package() {
+            // 800, 200, 1, 0, 0, 0,
+            // ResourceTemplate () {
+            //     Register (FFixedHW, 32, 0, 0x00000011, 3,)
+            // },
+            // ResourceTemplate() { Register (SystemMemory, 0, 0, 0, 0) },
+            // ResourceTemplate() { Register (SystemMemory, 0, 0, 0, 0) },
+            // "ClusterRetention",
+            // },
         })
 
 

@@ -203,12 +203,37 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
                 # the alternate HID bound by AppleAgxWddm.
                 "gpu_acpi_hid": "24",
             },
+            # Exact copy of internal-storage plus the five DCP mailbox/DART
+            # vectors, which is the only variable. Without them the display
+            # side reports no completion source and the WDDM miniport falls
+            # back to a full-surface CPU copy per present; with them D589
+            # swap-complete can drive real flips. Separate from
+            # internal-storage because an unroutable grant costs the whole
+            # device, and internal-storage has to keep working.
+            "internal-storage-dcpirq": {
+                "ans": "TRUE", "gpu": "1", "wireless": "1",
+                "ans_acpi": "TRUE", "ans_dxe": "TRUE",
+                "ans_block_io": "TRUE", "ans_preserve": "TRUE",
+                "gpu_acpi_hid": "24",
+                "display_interrupts": "1",
+            },
             # Exact copy of internal-storage except NTAS0023 publication is
             # hard-disabled. Keep ANS live handoff, Block I/O, wireless, GPU
             # carveout reservation, and the power sequence unchanged; only
             # the Windows-visible AppleAgxGpu devnode is omitted.
             "internal-storage-gpu-noacpi": {
                 "ans": "TRUE", "gpu": "1", "wireless": "1",
+                "ans_acpi": "TRUE", "ans_dxe": "TRUE",
+                "ans_block_io": "TRUE", "ans_preserve": "TRUE",
+                "gpu_acpi": "0",
+            },
+            # internal-storage-gpu-noacpi with wireless additionally off:
+            # same ANS live handoff / Block I/O / GPU carveout reservation,
+            # NTAS0023 still withheld, and no DRT0/BCM4388 publication or
+            # wireless SID-1 rails. Added 2026-08-14 for driver bring-up
+            # boots that must not co-run the wireless stack.
+            "internal-storage-gpu-noacpi-no-wireless": {
+                "ans": "TRUE", "gpu": "1", "wireless": "0",
                 "ans_acpi": "TRUE", "ans_dxe": "TRUE",
                 "ans_block_io": "TRUE", "ans_preserve": "TRUE",
                 "gpu_acpi": "0",
@@ -406,6 +431,8 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
             # profile-owned compiler choice: arbitrary strings must never
             # reach AML and a missing selector preserves the established HID.
             values.setdefault("gpu_acpi_hid", "23")
+            # Fail closed: only a profile that names the DCP vectors gets them.
+            values.setdefault("display_interrupts", "0")
             if values["gpu_acpi_hid"] not in ("23", "24"):
                 raise ValueError(
                     "gpu_acpi_hid must select NTAS0023 or NTAS0024, got: "
@@ -513,6 +540,13 @@ class PlatformBuilder( UefiBuilder, BuildSettingsManager):
         self.env.SetValue(
             "BLD_*_NTASI_GPU_ACPI_HID",
             profile_values[profile]["gpu_acpi_hid"],
+            "Selected by NTASI_MU_PROFILE",
+        )
+        # The five DCP mailbox/DART vectors. Off everywhere except a profile
+        # that opts in, because an unroutable grant costs the whole device.
+        self.env.SetValue(
+            "BLD_*_NTASI_ENABLE_DISPLAY_INTERRUPTS",
+            profile_values[profile]["display_interrupts"],
             "Selected by NTASI_MU_PROFILE",
         )
         # CORRECTED 2026-07-30: wireless used to require a same-instance,

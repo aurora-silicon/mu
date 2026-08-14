@@ -51,6 +51,10 @@ ACPI_PLATFORM = (
     REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "Drivers" / "AcpiPlatformDxe"
     / "AcpiPlatform.c"
 )
+MEMORY_INIT = (
+    REPO / "Silicon" / "Apple" / "T602XFamilyPkg" / "Library"
+    / "MemoryInitPeiLib" / "MemoryInitPeiLib.c"
+)
 CSRT_ASLC = REPO / "Silicon" / "Apple" / "T602XFamilyPkg" / "AcpiTables" / "CSRT.aslc"
 DSDT_ASL = REPO / "Platform" / "MacBookProEarly2023Pkg" / "AcpiTables" / "DSDT.asl"
 PLATFORM_BUILD = (
@@ -177,6 +181,22 @@ def csrt_bytes(media: int, gpu: int) -> bytes:
 class GpuResourceContract(unittest.TestCase):
     """The eight-resource _CRS order AppleAgxGpu matches positionally."""
 
+    def test_pre_mmu_backing_pool_probe_is_arithmetic_and_bounded(self):
+        source = MEMORY_INIT.read_text(encoding="utf-8")
+        start = source.index("NtasiValidateEarlyGpuBackingPool (")
+        end = source.index("#if NTASI_ENABLE_WIRELESS_DART_HANDOFF", start)
+        body = source[start:end]
+        code = strip_comments(body)
+        self.assertNotIn("dt_get", code)
+        self.assertNotIn("dt_node_prop", code)
+        self.assertIn("SystemMemoryTop > PhysicalTop", body)
+        self.assertIn(
+            "NTASI_GPU_BACKING_POOL_V1_RESERVATION_SIZE > PhysicalTop - SystemMemoryTop",
+            body,
+        )
+        self.assertLess(body.index("PhysicalTop - SystemMemoryTop"), body.index("Header ="))
+        self.assertIn("Header = (CONST VOID *)(UINTN)SystemMemoryTop", body)
+
     def test_resource_indices_are_the_drivers_order(self):
         expected = [
             ("NTASI_GPU_RES_ASC", 0),
@@ -210,9 +230,11 @@ class GpuResourceContract(unittest.TestCase):
         self.assertIn("mNtasiDisplayWindows[Index].Base", block)
         self.assertIn("FramebufferBase, FramebufferLength", block)
         self.assertIn(
-            "NTASI_GPU_RES_COUNT + ARRAY_SIZE (mNtasiDisplayWindows) + 1",
+            "NTASI_GPU_RES_COUNT + ARRAY_SIZE (mNtasiDisplayWindows) + 2",
             block,
         )
+        self.assertIn("NtasiAddCacheableMemoryResource", block)
+        self.assertIn("BackingPool.ReservationBase", block)
 
     def test_a_short_crs_is_never_published(self):
         """Every resource, or none.  A gap cannot be expressed positionally."""

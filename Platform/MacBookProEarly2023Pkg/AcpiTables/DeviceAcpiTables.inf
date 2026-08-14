@@ -28,6 +28,9 @@
   KBL.asl
   MTP.asl
   SMCG.asl
+  CPUF.asl
+  PBTN.asl
+  LIDA.asl
 
 [Packages]
   ArmPkg/ArmPkg.dec

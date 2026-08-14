@@ -35,6 +35,7 @@
 
 #include <IndustryStandard/Acpi.h>
 #include <IndustryStandard/WirelessHandoff.h>
+#include <IndustryStandard/GpuBackingPool.h>
 #include <Drivers/AppleAnsHardware.h>
 //
 // Moved out of this directory on 2026-07-30 so AppleNANDStorageDxe can share
@@ -62,6 +63,11 @@ STATIC CONST EFI_GUID  gAppleAnsDsdPropertiesGuid = {
 #if NTASI_ENABLE_WIRELESS_DART_HANDOFF
 STATIC CONST EFI_GUID  mNtasiWirelessDartReservationHobGuid =
   NTASI_WIRELESS_DART_RESERVATION_HOB_GUID;
+#endif
+
+#if NTASI_GPU_ACPI_HID == 24
+STATIC CONST EFI_GUID  mNtasiGpuBackingPoolHobGuid =
+  NTASI_GPU_BACKING_POOL_HOB_GUID;
 #endif
 
 STATIC
@@ -151,6 +157,26 @@ AppleAnsAddMemoryResource (
            NULL
            );
 }
+
+#if NTASI_GPU_ACPI_HID == 24
+STATIC
+EFI_STATUS
+NtasiAddCacheableMemoryResource (
+  IN AML_OBJECT_NODE_HANDLE  CrsNode,
+  IN UINT64                  Base,
+  IN UINT64                  Length
+  )
+{
+  if ((Length == 0) || (Base > MAX_UINT64 - (Length - 1))) {
+    return EFI_INVALID_PARAMETER;
+  }
+  return AmlCodeGenRdQWordMemory (
+           TRUE, TRUE, TRUE, TRUE, AmlMemoryCacheable, TRUE, 0,
+           Base, Base + Length - 1, 0, Length, 0, NULL,
+           AmlAddressRangeMemory, TRUE, CrsNode, NULL
+           );
+}
+#endif
 
 #if NTASI_ENABLE_DISPLAY_ACPI_PUBLICATION
 
@@ -567,6 +593,8 @@ typedef struct {
   UINTN               AdtResolvedCount;
   BOOLEAN             PrebootHandoffPresent;
   BOOLEAN             PlaceholdersAllocated;
+  BOOLEAN             BackingPoolPresent;
+  NTASI_GPU_BACKING_POOL_V1  BackingPool;
 } NTASI_GPU_HANDOFF;
 
 //
@@ -1068,6 +1096,19 @@ NtasiResolveAndReserveGpuCarveouts (
   Total    = 6;
 
   ZeroMem (Handoff, sizeof (*Handoff));
+
+#if NTASI_GPU_ACPI_HID == 24
+  {
+    EFI_HOB_GUID_TYPE  *GuidHob;
+    GuidHob = GetFirstGuidHob (&mNtasiGpuBackingPoolHobGuid);
+    if ((GuidHob != NULL) &&
+        (GET_GUID_HOB_DATA_SIZE (GuidHob) == sizeof (Handoff->BackingPool)))
+    {
+      CopyMem (&Handoff->BackingPool, GET_GUID_HOB_DATA (GuidHob), sizeof (Handoff->BackingPool));
+      Handoff->BackingPoolPresent = TRUE;
+    }
+  }
+#endif
 
   DEBUG ((DEBUG_INFO, "AppleAgxGpu: bring-up starting\n"));
 
@@ -1600,6 +1641,10 @@ NtasiInstallGpuTable (
   /* The full WDDM adapter is the sole owner of AGX and the internal panel.
    * Append the exact DCP windows and live boot framebuffer to its _CRS; do
    * not publish a second NTAS0070 hardware consumer. */
+  if (!Handoff->BackingPoolPresent) {
+    DEBUG ((DEBUG_ERROR, "AppleAgxWddm: authenticated AGBP HOB absent; NTAS0024 withheld\n"));
+    return EFI_NOT_FOUND;
+  }
   Status = NtasiResolveBootFramebuffer (
              NULL, &FramebufferBase, &FramebufferLength);
   if (EFI_ERROR (Status)) {
@@ -1628,6 +1673,32 @@ NtasiInstallGpuTable (
       DEBUG ((DEBUG_ERROR, "AppleAgxWddm: boot framebuffer overlaps GPU resource %u; NTAS0024 withheld\n", (UINT32)Index));
       return EFI_INVALID_PARAMETER;
     }
+    if (NtasiRangesOverlap (
+          Handoff->BackingPool.ReservationBase,
+          Handoff->BackingPool.ReservationSize,
+          Handoff->Resources[Index].Base,
+          Handoff->Resources[Index].Size)) {
+      DEBUG ((DEBUG_ERROR, "AppleAgxWddm: AGBP overlaps GPU resource %u; NTAS0024 withheld\n", (UINT32)Index));
+      return EFI_INVALID_PARAMETER;
+    }
+  }
+  for (Index = 0; Index < ARRAY_SIZE (mNtasiDisplayWindows); Index++) {
+    if (NtasiRangesOverlap (
+          Handoff->BackingPool.ReservationBase,
+          Handoff->BackingPool.ReservationSize,
+          mNtasiDisplayWindows[Index].Base,
+          mNtasiDisplayWindows[Index].Length)) {
+      DEBUG ((DEBUG_ERROR, "AppleAgxWddm: AGBP overlaps DCP window %u; NTAS0024 withheld\n", (UINT32)Index));
+      return EFI_INVALID_PARAMETER;
+    }
+  }
+  if (NtasiRangesOverlap (
+        Handoff->BackingPool.ReservationBase,
+        Handoff->BackingPool.ReservationSize,
+        FramebufferBase,
+        FramebufferLength)) {
+    DEBUG ((DEBUG_ERROR, "AppleAgxWddm: AGBP overlaps boot framebuffer; NTAS0024 withheld\n"));
+    return EFI_INVALID_PARAMETER;
   }
 #endif
 
@@ -1745,12 +1816,24 @@ NtasiInstallGpuTable (
       goto Exit;
     }
   }
-  // The framebuffer is last among memory descriptors by the unified KMD
-  // contract. The sole AGX mailbox interrupt follows it.
+  // The framebuffer retains descriptor 14 in the unified KMD contract. The
+  // authenticated hidden backing pool is appended as descriptor 15, then the
+  // sole AGX mailbox interrupt follows all memory descriptors.
   Status = AppleAnsAddMemoryResource (
              CrsNode, FramebufferBase, FramebufferLength);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "AppleAgxWddm: framebuffer _CRS resource refused: %r; NTAS0024 withheld\n", Status));
+    goto Exit;
+  }
+  // Resource 15: hidden, cacheable native-16K backing pool. The first 15
+  // memory descriptors retain their established ABI positions.
+  Status = NtasiAddCacheableMemoryResource (
+             CrsNode,
+             Handoff->BackingPool.ReservationBase,
+             Handoff->BackingPool.ReservationSize
+             );
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AppleAgxWddm: AGBP _CRS resource refused: %r; NTAS0024 withheld\n", Status));
     goto Exit;
   }
 #endif
@@ -1776,6 +1859,55 @@ NtasiInstallGpuTable (
     DEBUG ((DEBUG_ERROR, "AppleAgxGpu: interrupt descriptor refused: %r; NTAS0023 withheld\n", Status));
     goto Exit;
   }
+
+#if NTASI_GPU_ACPI_HID == 24 && NTASI_ENABLE_DISPLAY_INTERRUPTS
+  {
+    //
+    // The unified node also owns DCP, so it must carry DCP's vectors: 911 is
+    // the DART fault shared by dcp_dart/disp0_dart, and 932/933/934/935 are
+    // the ASC mailbox quad (send-empty, send-not-empty, recv-empty,
+    // recv-not-empty). The D589 swap-complete callback -- this platform's ONLY
+    // present-completion signal, and therefore the only route out of the
+    // per-present CPU copy -- arrives on 935.
+    //
+    // Appended AFTER the AGX doorbell on purpose: the miniport takes the first
+    // interrupt descriptor as its own and hands the remainder to the display
+    // resource validator, which accepts this exact five-vector set all-or-none.
+    //
+    // Off by default for the reason DISP.asl documents: publishing a resource
+    // is a promise PnP must keep, so a line that cannot be routed costs the
+    // whole device rather than just the completion path.
+    //
+    UINT32  DisplayInterrupts[] = { 911, 932, 933, 934, 935 };
+
+    //
+    // One descriptor carrying five vectors. AmlCodeGenRdInterrupt sizes and
+    // allocates the variable-length Extended Interrupt descriptor for exactly
+    // this case; before that was fixed it built the fixed-size struct on the
+    // stack and any IrqCount > 1 smashed it (measured: firmware hung with CPU0
+    // in a branch-to-self dead loop).
+    //
+    // The ACPI driver expands this into five CmResourceTypeInterrupt partial
+    // descriptors and the display resource validator normalises by value, not
+    // position, so the grouping is not load-bearing -- correctness of the
+    // emitted descriptor is.
+    //
+    Status = AmlCodeGenRdInterrupt (
+               TRUE,                              // ResourceConsumer
+               FALSE,                             // EdgeTriggered -> Level
+               FALSE,                             // ActiveLow -> ActiveHigh
+               FALSE,                             // Shared -> Exclusive
+               DisplayInterrupts,
+               (UINT8)ARRAY_SIZE (DisplayInterrupts),
+               CrsNode,
+               NULL
+               );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "AppleAgxWddm: DCP interrupt descriptors refused: %r; NTAS0024 withheld\n", Status));
+      goto Exit;
+    }
+  }
+#endif
 
   //
   // _DSD carries data, never a resource claim, so nothing below is visible to
@@ -1877,7 +2009,7 @@ NtasiInstallGpuTable (
       "hw_data_a=0x%lx hw_data_b=0x%lx globals=0x%lx (%a). preboot-handoff-present=%u\n",
       NTASI_GPU_ACPI_HID_STRING,
 #if NTASI_GPU_ACPI_HID == 24
-      (UINT32)(NTASI_GPU_RES_COUNT + ARRAY_SIZE (mNtasiDisplayWindows) + 1),
+      (UINT32)(NTASI_GPU_RES_COUNT + ARRAY_SIZE (mNtasiDisplayWindows) + 2),
 #else
       (UINT32)NTASI_GPU_RES_COUNT,
 #endif

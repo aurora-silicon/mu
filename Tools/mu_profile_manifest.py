@@ -51,6 +51,32 @@ PROFILES = {
         "wireless": True,
         "expected_ffs_count": 88,
     },
+    # Exact internal-storage handoff plus the five DCP mailbox/DART vectors.
+    # The ONLY variable against internal-storage is display_interrupts.
+    #
+    # Why it exists as a separate profile: without interrupts the display side
+    # reports completion_source=NONE / retirement=QUIESCE_BARRIER, and the WDDM
+    # miniport therefore selects DIAGNOSTIC_CPU scanout -- a full-surface CPU
+    # copy on every present, which is what produced VIDEO_TDR_FAILURE. With the
+    # vectors granted, D589 swap-complete arrives on 935 and the miniport can
+    # select DIRECT_V3, where a present is a flip rather than a copy.
+    #
+    # Kept separate rather than folded into internal-storage because a partial
+    # or unroutable grant makes NTAS0024 fail to start at all, and
+    # internal-storage is the profile that must keep working.
+    "internal-storage-dcpirq": {
+        "profile_abi": "ntasi.j414s.windows.internal-storage-dcpirq.v1",
+        "ans": True,
+        "ans_acpi": True,
+        "ans_dxe": True,
+        "ans_block_io": True,
+        "ans_preserve": True,
+        "gpu": True,
+        "gpu_acpi_hid": "NTAS0024",
+        "display_interrupts": True,
+        "wireless": True,
+        "expected_ffs_count": 88,
+    },
     # Exact internal-storage handoff plus AOPA (NTAS0081), the internal
     # microphone array.  AOP publication is the ONLY variable against
     # internal-storage: same ANS DXE/ACPI/Block-I/O/live-handoff posture, same
@@ -93,6 +119,21 @@ PROFILES = {
         "gpu_acpi": False,
         "wireless": True,
         "expected_ffs_count": 88,
+    },
+    # internal-storage-gpu-noacpi with wireless additionally off: no
+    # DRT0/BCM4388 publication and no wireless SID-1 rails, everything else
+    # identical. Added 2026-08-14 for driver bring-up boots that must not
+    # co-run the wireless stack.
+    "internal-storage-gpu-noacpi-no-wireless": {
+        "profile_abi": "ntasi.j414s.windows.internal-storage-gpu-no-acpi-no-wireless.v1",
+        "ans": True,
+        "ans_acpi": True,
+        "ans_dxe": True,
+        "ans_block_io": True,
+        "ans_preserve": True,
+        "gpu": True,
+        "gpu_acpi": False,
+        "expected_ffs_count": 87,
     },
     # Same sealed shape as `internal-storage` -- the profile that boots Windows
     # off the internal NVMe today -- plus the routed USB4 PIPE opt-in for ATC
@@ -500,6 +541,12 @@ for _profile in PROFILES.values():
     # publication by omission.
     _profile.setdefault("gpu_acpi", _profile["gpu"])
     _profile.setdefault("gpu_acpi_hid", "NTAS0023")
+    # DCP mailbox/DART vectors {911,932,933,934,935}. Defaulted OFF, and
+    # deliberately not tracking any other flag: publishing an interrupt is a
+    # promise PnP must keep, so a line that cannot be routed costs the entire
+    # device rather than just the completion path. Only a profile that opts in
+    # explicitly carries them.
+    _profile.setdefault("display_interrupts", False)
     if _profile["gpu_acpi_hid"] not in ("NTAS0023", "NTAS0024"):
         raise ValueError(
             "gpu_acpi_hid must select NTAS0023 or NTAS0024, got: "
@@ -541,9 +588,19 @@ ACPI_CONTAINERS = {
     "KBL.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "MTP.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "SMCG.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
+    # CPUF (NTAS0031): CPU cluster DVFS windows for AppleCpuFreq. Added
+    # 2026-08-14; profile-independent like KBL/SMCG.
+    "CPUF.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
+    # PBTN (NTAS0054): resourceless power/sleep-button companion devnode for
+    # AppleSmcButtons. LIDA (NTAS0082): AOP lid-angle-sensor windows for
+    # AppleLidAngle -- mutually exclusive with AOP audio (NTAS0081), which the
+    # profiles carrying these do not publish. Added 2026-08-14.
+    "PBTN.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
+    "LIDA.aml": "3FF4732C-9411-4E10-A10C-8B39DF282E83",
     "CSRT.acpi": "D1430D86-24A4-4C2F-8F22-D24376E2E888",
 }
-BASE_ACPI = ("DSDT.aml", "MCFG.acpi", "KBL.aml", "MTP.aml", "SMCG.aml", "CSRT.acpi")
+BASE_ACPI = ("DSDT.aml", "MCFG.acpi", "KBL.aml", "MTP.aml", "SMCG.aml", "CPUF.aml",
+             "PBTN.aml", "LIDA.aml", "CSRT.acpi")
 NESTED_LOCK = Path("Tools/J414S_NESTED_GITLINK_LOCK.json")
 LEGACY_PATH_PATTERNS = (
     re.compile(r"/Users/[^\s\"']+/Developer/mu-j414s-(?!windows-unified)"),

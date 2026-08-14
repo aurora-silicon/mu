@@ -31,6 +31,7 @@
 #include <Library/T602XFamilyVirtualMemoryMapDefines.h>
 #include <AppendedRamdisk.h>
 #include <IndustryStandard/WirelessHandoff.h>
+#include <IndustryStandard/GpuBackingPool.h>
 
 // Bumped from 44 on 2026-07-30 to make room for
 // APPLE_CORE_SYSTEM_MMIO_RANGE_17 (the /arm-io/ans MMIO-gap fix) without
@@ -42,6 +43,76 @@
 
 STATIC BOOLEAN  mAppendedRamdiskCorrupt;
 STATIC UINT64   mAppendedRamdiskReservationSize;
+STATIC BOOLEAN  mGpuBackingPoolValid;
+STATIC NTASI_GPU_BACKING_POOL_V1  mGpuBackingPool;
+
+STATIC CONST EFI_GUID  mNtasiGpuBackingPoolHobGuid =
+  NTASI_GPU_BACKING_POOL_HOB_GUID;
+
+STATIC
+VOID
+NtasiValidateEarlyGpuBackingPool (
+  IN EFI_PHYSICAL_ADDRESS  SystemMemoryBase,
+  IN EFI_PHYSICAL_ADDRESS  SystemMemoryTop
+  )
+{
+  CONST struct boot_args             *BootArgs;
+  CONST NTASI_GPU_BACKING_POOL_V1    *Header;
+  UINT64                             MemSizeActual;
+  UINT64                             PhysicalTop;
+
+  mGpuBackingPoolValid = FALSE;
+  BootArgs = (CONST struct boot_args *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
+  if (BootArgs == NULL) {
+    return;
+  }
+  switch (BootArgs->revision) {
+    case 1: MemSizeActual = BootArgs->rv1.mem_size_actual; break;
+    case 2: MemSizeActual = BootArgs->rv2.mem_size_actual; break;
+    case 3: MemSizeActual = BootArgs->rv3.mem_size_actual; break;
+    default: return;
+  }
+  PhysicalTop = (SystemMemoryBase & ~(SIZE_4GB - 1)) + MemSizeActual;
+  //
+  // This executes in SEC before the permanent virtual-memory map exists.
+  // Calling AppleDTLib's recursive dt_get() here crosses into a separately
+  // placed PE section and faults at VA 0x200 on J414s.  The reservation ABI
+  // already fixes the header at the reduced SystemMemoryTop, so derive the
+  // candidate arithmetically and validate its full signed identity instead.
+  // The bounds check must precede the dereference: without an installed pool,
+  // SystemMemoryTop can be the first unmapped byte below a firmware carveout.
+  //
+  if ((SystemMemoryTop > PhysicalTop) ||
+      (NTASI_GPU_BACKING_POOL_V1_RESERVATION_SIZE > PhysicalTop - SystemMemoryTop))
+  {
+    return;
+  }
+  Header = (CONST VOID *)(UINTN)SystemMemoryTop;
+  if (!NtasiValidateGpuBackingPoolV1 (
+         Header,
+         SystemMemoryTop,
+         SystemMemoryBase,
+         PhysicalTop
+         ))
+  {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: AGBP v1 header invalid; pool withheld\n"));
+    return;
+  }
+  if (((Header->GpuInitdataSize != 0) &&
+       ((Header->GpuInitdataBase < Header->ReservationBase + Header->ReservationSize) &&
+        (Header->ReservationBase < Header->GpuInitdataBase + Header->GpuInitdataSize))) ||
+      ((Header->WirelessSize != 0) &&
+       ((Header->WirelessBase < Header->ReservationBase + Header->ReservationSize) &&
+        (Header->ReservationBase < Header->WirelessBase + Header->WirelessSize))))
+  {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: AGBP overlaps a fixed handoff; pool withheld\n"));
+    return;
+  }
+  mGpuBackingPool = *Header;
+  mGpuBackingPoolValid = TRUE;
+  DEBUG ((DEBUG_INFO, "MemoryInitPeiLib: authenticated AGBP v1 at 0x%lx/+0x%lx\n",
+          mGpuBackingPool.ReservationBase, mGpuBackingPool.ReservationSize));
+}
 
 #if NTASI_ENABLE_WIRELESS_DART_HANDOFF
 //
@@ -334,6 +405,14 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   EFI_PHYSICAL_ADDRESS          ResourceTop;
   BOOLEAN                       Found;
 
+  // Validate and copy the 128-byte header while the pre-MMU physical identity
+  // view is still available. The 1 GiB data extent is intentionally not added
+  // to the generic virtual-memory map.
+  NtasiValidateEarlyGpuBackingPool (
+    PcdGet64 (PcdSystemMemoryBase),
+    PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize)
+    );
+
 #if NTASI_ENABLE_WIRELESS_DART_HANDOFF
   //
   // Derive (never hardcode -- see NtasiDeriveWirelessReservation()'s own
@@ -413,6 +492,29 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
       PcdGet64 (PcdSystemMemoryBase),
       PcdGet64 (PcdSystemMemorySize)
       );
+  }
+
+  if (mGpuBackingPoolValid) {
+    BuildResourceDescriptorHob (
+      EFI_RESOURCE_SYSTEM_MEMORY,
+      ResourceAttributes,
+      mGpuBackingPool.ReservationBase,
+      mGpuBackingPool.ReservationSize
+      );
+    BuildMemoryAllocationHob (
+      mGpuBackingPool.ReservationBase,
+      mGpuBackingPool.ReservationSize,
+      EfiReservedMemoryType
+      );
+    if (BuildGuidDataHob (
+          &mNtasiGpuBackingPoolHobGuid,
+          &mGpuBackingPool,
+          sizeof (mGpuBackingPool)
+          ) == NULL)
+    {
+      DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: AGBP HOB allocation failed; NTAS0024 pool withheld\n"));
+      mGpuBackingPoolValid = FALSE;
+    }
   }
 
   //
