@@ -180,6 +180,15 @@
 #define T8142_J813_GSIV_ANS          996U   // -> 1155, internal NVMe
 #define T8142_J813_AIC_LINE_ANS     1155U   // /arm-io/ans, interrupts[4]
 
-#define T8142_J813_ALIAS_COUNT         2U
+// The LEFT Type-C port.  1511 is interrupts[0] of /arm-io/usb-drd0, the
+// DWC3/xHCI controller line -- the same index T8103 published as its lone 777.
+// Only this port is aliased: usb-drd1 carries the debug proxy's own cable and
+// m1n1 removes its ADT node from the guest device tree entirely.  997 was
+// confirmed free by re-running the interrupts walk described above; of
+// 980..999 only 984 is claimed.
+#define T8142_J813_GSIV_USB          997U   // -> 1511, usb-drd0 xHCI
+#define T8142_J813_AIC_LINE_USB     1511U   // /arm-io/usb-drd0, interrupts[0]
+
+#define T8142_J813_ALIAS_COUNT         3U
 
 #endif /* T8142_J813_TOPOLOGY_H_ */

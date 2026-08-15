@@ -57,8 +57,10 @@ APPLE_AIC = AURORA / "drivers" / "AppleAic"
 M1N1_ALIAS_C = REPO.parent / "m1n1" / "src" / "hv_aic_alias.c"
 
 # Emitted by drivers/AppleAic/emit_aic3_csrt.c "t8142-j813".
-CSRT_SHA256 = "2685cb40be6cc7ff4d9e9d8ae5c732c0165de739e4ffc3d5acaa0fde8265b5de"
-CSRT_SIZE = 248
+# Three aliases as of 2026-08-15 (usb-drd0 joined mtp and ans); the table grew
+# by one 8-byte ALI2 pair, 248 -> 256.
+CSRT_SHA256 = "23f7f62535d7f0fcc880f2c25a0ced210df6e730981593b82fd16bd7cb3b23e7"
+CSRT_SIZE = 256
 
 # Fixed envelope offsets (ACPI header 36, resource group 24, descriptor 12).
 GROUP_OFFSET = 36
@@ -370,8 +372,11 @@ class J813Csrt(unittest.TestCase):
             [
                 (t["T8142_J813_GSIV_MTP"], t["T8142_J813_AIC_LINE_MTP"]),
                 (t["T8142_J813_GSIV_ANS"], t["T8142_J813_AIC_LINE_ANS"]),
+                (t["T8142_J813_GSIV_USB"], t["T8142_J813_AIC_LINE_USB"]),
             ],
         )
+        # The header's own count is a fifth place the number could drift.
+        self.assertEqual(t["T8142_J813_ALIAS_COUNT"], len(self._aliases()))
 
     def test_published_gsivs_are_legal_and_physical_ones_are_not(self):
         """The arbiter accepts [32, 1024); an alias for a legal line is a bug."""

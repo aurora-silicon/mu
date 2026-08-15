@@ -102,7 +102,43 @@
             },
         })
 
-        /*
+        //
+        // XHC0 -- the LEFT Type-C port's xHCI host controller.
+        //
+        // Both the address and the interrupt below were read from J813's own
+        // ADT (/arm-io/usb-drd0) on 2026-08-15.  The previous values were
+        // 0x382280000 and GSIV 777, which are T8103's -- inherited with the
+        // rest of this table exactly like COM0's 1097 and the old UART base.
+        // Note 0x382280000 and the real 0x402280000 share the low bits
+        // 2280000: same register offset, wrong base.
+        //
+        //   ADT /arm-io/usb-drd0  reg[0] = 0x402280000 size 0x11800
+        //                         interrupts = <1511 1512 1513 1514 1489>
+        //                         compatible = usb-drd,t8142
+        //
+        // LENGTH IS 0x11800, NOT 0x100000.  The old 1 MiB window was invented
+        // along with the address; the DWC3 register block really is 0x11800.
+        //
+        // WHY THE LEFT PORT AND ONLY THE LEFT PORT.  m1n1 brings every DRD up
+        // in device mode so any one of them can carry the proxy, then releases
+        // the unused one to the guest in USB2 host mode -- the boot log says
+        // "USB0: releasing controller for guest / USB2 PHY off in guest host
+        // mode; DWC3 held for Mu DART handoff".  The proxy's own cable is
+        // usb-drd1 (0x40a280000, atc-phy1, port-number 2 = right), and m1n1
+        // deletes /arm-io/usb-drd1 and /arm-io/dart-usb1 from the guest device
+        // tree so nothing downstream can take the console away.  Publishing a
+        // second controller here would hand Windows the port you are debugging
+        // over.  XHC1 below stays absent for that reason as well as its own.
+        //
+        // GSIV 997 IS AN ALIAS, NOT THE PHYSICAL LINE.  1511 is interrupts[0],
+        // the DWC3/xHCI controller interrupt -- the same index T8103 published
+        // as its single 777.  Windows' PnP interrupt arbiter only accepts
+        // GSIVs inside the GICv3 SPI range [32, 1024), and every line this
+        // controller owns is above it, so m1n1 aliases published 997 <->
+        // physical 1511 on T8142 (src/hv_aic_alias.c, which is the authority
+        // for this pairing; 995/1277 and 996/1155 are the same mechanism for
+        // MTP and ANS).  997 was picked because an ADT walk shows it free.
+        //
         Device (XHC0) {
             Name (_HID, "PNP0D15")
             Name (_UID, One)
@@ -118,13 +154,13 @@
                         NonCacheable,         // Cacheable
                         ReadWrite,            // ReadAndWrite
                         0,                    // AddressGranularity - GRA
-                        0x382280000,          // AddressMinimum - MIN
-                        0x38237FFFF,          // AddressMaximum - MAX
+                        0x402280000,          // AddressMinimum - MIN
+                        0x4022917FF,          // AddressMaximum - MAX
                         0,                    // AddressTranslation - TRA
-                        0x100000              // RangeLength - LEN
+                        0x11800               // RangeLength - LEN
                         )
                     Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) {
-                        777
+                        997
                     }
                 })
                 Return (RBUF)
@@ -134,7 +170,6 @@
                 Return (0xF)
             }
         }
-        */
 
         Device (XHC1) {
             Name (_HID, "PNP0D15")
@@ -194,7 +229,7 @@
             Name(_UID, Zero)
             Name (_CRS, ResourceTemplate () {
                 QWordMemory (
-                ResourceProducer,     // ResourceUsage
+                ResourceConsumer,     // ResourceUsage
                 PosDecode,            // Decode
                 MinFixed,             // IsMinFixed
                 MaxFixed,             // IsMaxFixed
@@ -220,7 +255,38 @@
                 0x0000000000000000,   // AddressTranslation - TRA
                 0x0000000000001000    // RangeLength - LEN
                 )
-                Interrupt(ResourceConsumer, Level, ActiveHigh, Exclusive) { 1097 }
+                //
+                // NO Interrupt descriptor -- deliberate, and the same fix
+                // MacBookProEarly2023Pkg already applied to its own COM0.
+                //
+                // This used to publish Interrupt(..., Exclusive) { 1097 }.  Two
+                // separate defects, both measured against J813's own ADT:
+                //
+                //   1. 1097 is not this machine's UART line at all.  It is
+                //      T8103's, inherited with the rest of this table exactly
+                //      like the 0x235200000 base above -- MacBookAirMid2020Pkg,
+                //      MacMini2020Pkg, MacBookProLate2020/2025Pkg and
+                //      MacStudio2022Pkg all carry the identical 1097.  J813's
+                //      real uart0 line is 1231 (ADT /arm-io/uart0 interrupts),
+                //      and 1097 appears nowhere in J813's device tree.
+                //
+                //   2. 1231 would not be publishable either.  The GICv3 carrier
+                //      registers SPIs [32, 1024) and the architecture caps SPI
+                //      at 1019, so 1231 lands in the reserved 1024..4095 gap.
+                //      The identical situation on XHC1 (GSIV 1274) was
+                //      A/B-proven to produce CM_PROB_NORMAL_CONFLICT, and
+                //      removing the Interrupt descriptor was what cleared it to
+                //      problem=0 with resources assigned.  One unsatisfiable
+                //      descriptor fails the whole requirement list.
+                //
+                // Aliasing it low (the mtp/ans treatment in m1n1's
+                // src/hv_aic_alias.c) would also work and is NOT needed here:
+                // AppleSerial does not want the interrupt.  TX is synchronous
+                // polled and RX runs off its own poll timer; the driver accepts
+                // zero interrupt descriptors and rejects only MORE than one
+                // (AppleSerial.c, `interruptResources > 1`).  That half already
+                // shipped -- the two changes are a matched pair.
+                //
             })
             Method (_STA) {
                 Return (0xF)
