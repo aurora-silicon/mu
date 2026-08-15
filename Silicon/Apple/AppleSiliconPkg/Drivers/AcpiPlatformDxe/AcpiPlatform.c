@@ -1872,22 +1872,36 @@ NtasiInstallGpuTable (
     //
     // Appended AFTER the AGX doorbell on purpose: the miniport takes the first
     // interrupt descriptor as its own and hands the remainder to the display
-    // resource validator, which accepts this exact five-vector set all-or-none.
+    // resource validator, which normalises by value and accepts any subset.
     //
     // Off by default for the reason DISP.asl documents: publishing a resource
     // is a promise PnP must keep, so a line that cannot be routed costs the
     // whole device rather than just the completion path.
     //
-    UINT32  DisplayInterrupts[] = { 911, 932, 933, 934, 935 };
+    // Only the receive-not-empty line is published, and the omission is
+    // deliberate. The four ASC mailbox vectors are, in AIC order,
+    // 932 send-empty, 933 send-not-empty, 934 recv-empty, 935 recv-not-empty.
+    // These are LEVEL triggered, and send-empty/recv-empty are asserted
+    // exactly when the mailbox is IDLE -- which is almost always. Publishing
+    // 932 or 934 arms two lines held high whenever there is no traffic, so the
+    // moment AIC delivery starts working the machine wedges at DIRQL in an
+    // interrupt storm with no driver path to mask them.
+    //
+    // 935 is the only line carrying information the completion path needs: an
+    // inbound message is waiting, which is how D589 arrives. 911 is the DART
+    // fault line -- a fault reporter, not part of the completion path -- and
+    // is left out until a handler does something with it beyond taking it.
+    //
+    UINT32  DisplayInterrupts[] = { 935 };
 
     //
-    // One descriptor carrying five vectors. AmlCodeGenRdInterrupt sizes and
+    // AmlCodeGenRdInterrupt sizes and
     // allocates the variable-length Extended Interrupt descriptor for exactly
     // this case; before that was fixed it built the fixed-size struct on the
     // stack and any IrqCount > 1 smashed it (measured: firmware hung with CPU0
     // in a branch-to-self dead loop).
     //
-    // The ACPI driver expands this into five CmResourceTypeInterrupt partial
+    // The ACPI driver expands this into CmResourceTypeInterrupt partial
     // descriptors and the display resource validator normalises by value, not
     // position, so the grouping is not load-bearing -- correctness of the
     // emitted descriptor is.
