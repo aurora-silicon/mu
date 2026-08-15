@@ -175,8 +175,28 @@ class DeferredUsb3HandoffContract(unittest.TestCase):
 
         dart = function_body(self.driver, "UsbDartVerifyControllerBypass")
         self.assertIn("USB_DART_REG_COUNT", dart)
-        self.assertIn("Tcr != ExpectedTcr", dart)
+        self.assertIn("Tcr == ExpectedTcr", dart)
         self.assertIn("return EFI_NOT_READY", dart)
+
+        # A DART is transparent either in bypass or under an identity map.
+        # T8142's usb DART advertises bypass in PARAMS2 and hardwires the TCR
+        # bypass bits to zero, so bypass alone would hold DWC3 in reset for
+        # ever on that SoC; identity has to be accepted as well.
+        self.assertIn("USB_DART_T8110_TCR_IDENTITY", dart)
+
+        # ...but only with a live TTBR behind it. TRANSLATE_ENABLE over a zero
+        # TTBR reads back exactly like a configured DART and blocks every
+        # transfer, which is the failure mode this whole function exists to
+        # keep off the wire.
+        self.assertIn("USB_DART_T8110_TTBR_VALID", dart)
+        self.assertLess(
+            dart.index("USB_DART_T8110_TCR_IDENTITY"),
+            dart.index("USB_DART_T8110_TTBR_VALID"),
+        )
+
+        # PARAMS2's bypass bit must not be a gate: it is set on hardware that
+        # refuses bypass, and clear on hardware that is transparent anyway.
+        self.assertNotIn("return EFI_UNSUPPORTED", dart.split("USB_DART_PARAMS2")[1])
 
         usb2 = function_body(self.driver, "AtcPhyPowerOnUsb2AfterDwc3Release")
         required_usb2 = (

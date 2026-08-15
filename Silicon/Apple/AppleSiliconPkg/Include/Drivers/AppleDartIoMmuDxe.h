@@ -52,6 +52,13 @@ typedef struct AppleDartInfoStruct {
 	INT32 TtbrBase;
 	UINT32 TtbrIsValid;
 	//
+	// Set when this DART could not be put in bypass and was given an
+	// identity map instead (see AppleDartBuildIdentityMap).  IdentityMapRoot
+	// is the physical address of the top-level table the TTBRs point at.
+	//
+	BOOLEAN IdentityMapped;
+	UINT64 IdentityMapRoot;
+	//
 	// This is needed due to different peripherals potentially having different types of DARTs. (T8110 style and T8020 style DARTs flush the TLB differently.)
 	//
 	void (*TlbFlush)(VOID *DartInfoStruct);
@@ -91,11 +98,29 @@ typedef struct AppleDartMapping {
 #define DART_T8020_TTBR_BASE		0x0200
 #define  DART_T8020_TTBR_VALID			BIT(31)
 
+#define DART_T8110_PARAMS3		0x0008
+#define  DART_T8110_PARAMS3_VER_MIN_MASK	(0xff << 0)
+#define  DART_T8110_PARAMS3_VER_MAJ_MASK	(0xff << 8)
+#define  DART_T8110_PARAMS3_VA_WIDTH_SHIFT	16
+#define  DART_T8110_PARAMS3_PA_WIDTH_SHIFT	24
+#define  DART_T8110_PARAMS3_WIDTH_MASK		0x3f
+
 #define DART_T8110_PARAMS4		0x000c
 #define  DART_T8110_PARAMS4_NSID_MASK		(0x1ff << 0)
 #define DART_T8110_TLB_CMD		0x0080
 #define  DART_T8110_TLB_CMD_BUSY		BIT(31)
-#define  DART_T8110_TLB_CMD_FLUSH_ALL		BIT(8)
+//
+// The OP field selects the operation; it is NOT a bitmask.  FLUSH_ALL is the
+// value zero, so a "flush all" is a bare write of 0 to DART_T8110_TLB_CMD.
+// The constant this replaced was named FLUSH_ALL but held BIT(8), which is
+// OP == 1, i.e. FLUSH_SID -- and it was being passed as the register OFFSET
+// as well, so the write landed on DART_T8110_ERROR and no TLB was ever
+// flushed.  Both halves of that are fixed; see AppleDartT8110TlbFlush.
+//
+#define  DART_T8110_TLB_CMD_OP_SHIFT		8
+#define  DART_T8110_TLB_CMD_OP_FLUSH_ALL	0
+#define  DART_T8110_TLB_CMD_OP_FLUSH_SID	1
+#define  DART_T8110_TLB_CMD_STREAM_MASK		0xff
 #define DART_T8110_ERROR		0x0100
 #define DART_T8110_ERROR_MASK		0x0104
 #define DART_T8110_ERROR_ADDR_LO	0x0170
@@ -104,11 +129,44 @@ typedef struct AppleDartMapping {
 #define  DART_T8110_PROTECT_TTBR_TCR		BIT(0)
 #define DART_T8110_SID_ENABLE_BASE	0x0c00
 #define DART_T8110_TCR_BASE		0x1000
+#define  DART_T8110_TCR_REMAP_MASK		(0xf << 8)
+#define  DART_T8110_TCR_REMAP_EN		BIT(7)
+//
+// Selects a four-level walk (the TTBR counts as one level), which is what
+// raises the addressable DVA range from the three-level 64GB to the full
+// PARAMS3 VA_WIDTH.  T8142 needs it: DRAM sits at 0x100_0000_0000.
+//
+#define  DART_T8110_TCR_FOUR_LEVEL		BIT(3)
 #define  DART_T8110_TCR_BYPASS_DAPF		BIT(2)
 #define  DART_T8110_TCR_BYPASS_DART		BIT(1)
 #define  DART_T8110_TCR_TRANSLATE_ENABLE	BIT(0)
 #define DART_T8110_TTBR_BASE		0x1400
 #define  DART_T8110_TTBR_VALID			BIT(0)
+#define  DART_T8110_TTBR_ADDR_SHIFT		14
+#define  DART_T8110_TTBR_ADDR_FIELD_SHIFT	2
+#define  DART_T8110_TTBR_ADDR_MASK		0x3ffffffcU
+
+//
+// Page table entry format, "DART2" style (t8110 and t6000).  Verified against
+// AsahiLinux io-pgtable-dart.c and read back off J813 hardware.
+//
+//   bits 37:10  physical address >> 4  (so PA bits 41:14 -- a 16KB granule and
+//               a 42-bit output address, matching PARAMS3 PA_WIDTH == 42)
+//   bits 51:40  subpage end,   0xfff == the whole page is accessible
+//   bits 63:52  subpage start, 0     == ditto
+//   bit 0       valid
+//
+// Table descriptors use the same address encoding with no subpage field.
+//
+#define APPLE_DART2_PTE_ADDR_MASK	0x0000003FFFFFFC00ULL
+#define APPLE_DART2_PTE_ADDR_SHIFT	4
+#define APPLE_DART_PTE_SUBPAGE_ALL	(0xfffULL << 40)
+#define APPLE_DART_PTE_VALID_BIT	BIT(0)
+
+#define DART_TABLE_SIZE			SIZE_16KB
+#define DART_PTES_PER_TABLE		(DART_TABLE_SIZE / sizeof(UINT64))
+#define DART_LEVEL_BITS			11
+#define DART_LEVEL_INDEX_MASK		((1U << DART_LEVEL_BITS) - 1)
 
 #define DART_SID_ENABLE(DartInfo, idx) \
 	((DartInfo).SidEnableBase + 4 * (idx))
