@@ -1,0 +1,29 @@
+{
+  "repo": "https://github.com/aurora-silicon/linux",
+  "ref": "asahi",
+  "commit": "e8efe09d4f378992c890d181d65e2ed8d8cb1194",
+  "path": "arch/arm64/boot/dts/apple",
+  "license": "MIT (these files are GPL-2.0+ OR MIT; taken under MIT)",
+  "files": [
+    "hwmon-common.dtsi",
+    "hwmon-fan-dual.dtsi",
+    "hwmon-fan.dtsi",
+    "hwmon-laptop.dtsi",
+    "isp-common.dtsi",
+    "isp-imx558-cfg0.dtsi",
+    "isp-imx558.dtsi",
+    "multi-die-cpp.h",
+    "spi1-nvram.dtsi",
+    "t600x-j314-j316.dtsi",
+    "t6020-j414s.dts",
+    "t6020.dtsi",
+    "t6021.dtsi",
+    "t602x-common.dtsi",
+    "t602x-die0.dtsi",
+    "t602x-dieX.dtsi",
+    "t602x-gpio-pins.dtsi",
+    "t602x-j414-j416.dtsi",
+    "t602x-nvme.dtsi",
+    "t602x-pmgr.dtsi"
+  ]
+}

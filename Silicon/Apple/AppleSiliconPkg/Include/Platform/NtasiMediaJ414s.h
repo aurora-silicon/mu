@@ -24,6 +24,8 @@
 #ifndef NTASI_MEDIA_J414S_H_
 #define NTASI_MEDIA_J414S_H_
 
+#include <Platform/NtasiJ414sWindows.h>
+
 #if (NTASI_ENABLE_MCA_PUBLICATION || NTASI_ENABLE_AOP_PUBLICATION || \
      NTASI_ENABLE_ISP_PUBLICATION)
 //
@@ -41,16 +43,23 @@ STATIC_ASSERT (
 // MCA0 -- NTAS0080, speakers and headset jack.  Order per MCA.asl.
 //
 STATIC CONST NTASI_MEDIA_WINDOW  mNtasiMcaWindows[] = {
-  { 0x39B600000ULL, 0x10000ULL },  // 0: MCA cluster registers (4 x 0x4000)
-  { 0x39B500000ULL, 0x20000ULL },  // 1: MCA switch / DMA glue
-  { 0x39B400000ULL, 0x34000ULL },  // 2: ADMAC (audio DMA)
-  { 0x28E03C000ULL, 0x14000ULL },  // 3: NCO clock generator (5 x 0x4000)
-  { 0x290280000ULL, 0x1000ULL  },  // 4: pmgr_east PS page (overlaps KBL0)
-  { 0x39B044000ULL, 0x4000ULL  },  // 5: i2c1 -- left amps
-  { 0x39B04C000ULL, 0x4000ULL  },  // 6: i2c3 -- right amps
-  { 0x39B028000ULL, 0x4000ULL  },  // 7: pinctrl_ap -- speaker SDZ is pin 57
-  { 0x28E03807CULL, 0x18ULL    },  // 8: mca-switch clock mux, sub-page by design
+  //
+  // _CRS order. The seven NTASI_J414S_W_* entries are generated from Asahi's
+  // device tree by Tools/dtwindows.py -- they were hand-transcribed before, and
+  // all seven reproduce byte for byte. The two literals are sub-page slices
+  // that no device-tree node describes, so they stay authored here.
+  //
+  NTASI_J414S_W_MCA_CLUSTER,        // 0
+  NTASI_J414S_W_MCA_SWITCH,         // 1
+  NTASI_J414S_W_ADMAC,              // 2
+  NTASI_J414S_W_NCO,                // 3
+  { 0x290280000ULL, 0x1000ULL },    // 4: pmgr_east PS page (overlaps KBL0)
+  NTASI_J414S_W_I2C1,               // 5
+  NTASI_J414S_W_I2C3,               // 6
+  NTASI_J414S_W_PINCTRL_AP,         // 7
+  { 0x28E03807CULL, 0x18ULL },      // 8: mca-switch clock mux, sub-page by design
 };
+
 
 //
 // MCA0's PUBLISHED GSIVs -- not its physical AIC lines.  Every line in this

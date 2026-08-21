@@ -11,8 +11,12 @@ usage() {
 test "$#" -eq 2 || usage
 target=$1
 profile=$2
+# Output directory name per target. The rest of what a target means -- platform
+# build directory, FD name, profiles -- comes from Platform/Profiles.py and
+# TARGETS in Tools/mu_profile_manifest.py.
 case "$target" in
     j414s) output_target=m2-pro ;;
+    j813)  output_target=m5 ;;
     *) echo "error: unsupported Mu target: $target" >&2; exit 2 ;;
 esac
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -27,19 +31,17 @@ test -x "$mu_python" || {
     exit 1
 }
 
-# The manifest is the profile authority. This avoids a third hand-maintained
-# profile list drifting from the policy and compiler tables.
-"$mu_python" - "$profile_tool" "$profile" <<'PY'
-import ast, pathlib, sys
-tree = ast.parse(pathlib.Path(sys.argv[1]).read_text())
-for node in tree.body:
-    if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "PROFILES" for t in node.targets):
-        profiles = ast.literal_eval(node.value)
-        break
-else:
-    raise SystemExit("profile manifest has no PROFILES table")
-if sys.argv[2] not in profiles:
-    raise SystemExit(f"unknown Mu profile: {sys.argv[2]}")
+# Platform/Profiles.py is the profile authority for the build script, the
+# manifest tool and this. It used to be AST-parsed out of the manifest tool,
+# which was a fourth reader of a table that then existed twice.
+"$mu_python" - "$source_root" "$target" "$profile" <<'PY'
+import sys
+sys.path.insert(0, f"{sys.argv[1]}/Platform")
+import Profiles
+try:
+    Profiles.profile(sys.argv[2], sys.argv[3])
+except (KeyError, ValueError) as error:
+    raise SystemExit(str(error))
 PY
 
 test "$(uname -s)" = Darwin || {
