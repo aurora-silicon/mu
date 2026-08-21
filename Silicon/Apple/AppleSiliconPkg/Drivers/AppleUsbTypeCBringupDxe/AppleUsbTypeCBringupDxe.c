@@ -264,6 +264,19 @@
 #define USB_DART_T8110_PARAMS4_NSID_MASK      0x1FF
 #define USB_DART_T8110_TCR_BASE               0x1000
 #define USB_DART_T8110_TCR_BYPASS             (BIT1 | BIT2)
+//
+// The second acceptable resting state. T8142's usb DART advertises bypass in
+// PARAMS2 and hardwires the TCR bypass bits to zero, so AppleDartIoMmuDxe
+// gives it a four-level identity map (DVA == PA) instead. That is equally
+// transparent to a controller and to an OS that has never heard of a DART,
+// but it only holds if the TTBR actually points somewhere -- translation
+// enabled against an invalid TTBR blocks every transfer while reading back
+// as a configured DART, which is the exact failure this whole function
+// exists to keep off the wire.
+//
+#define USB_DART_T8110_TCR_IDENTITY           (BIT0 | BIT3)
+#define USB_DART_T8110_TTBR_BASE              0x1400
+#define USB_DART_T8110_TTBR_VALID             BIT0
 
 STATIC EFI_STATUS UsbDartVerifyControllerBypass(IN UINT32 PortIndex) {
   CHAR8      NodeName[31];
@@ -309,11 +322,18 @@ STATIC EFI_STATUS UsbDartVerifyControllerBypass(IN UINT32 PortIndex) {
              NodeName, Instance));
       return EFI_COMPROMISED_DATA;
     }
+    //
+    // Logged, not enforced. PARAMS2's bypass bit is not evidence either way:
+    // J813 sets it on a DART whose TCR bypass bits are hardwired to zero, and
+    // a DART that honestly reports no bypass is still perfectly transparent
+    // once it carries an identity map. What the controller can actually do is
+    // decided by the TCR/TTBR check below, so that is the only gate.
+    //
     if ((MmioRead32((UINTN)DartBase + USB_DART_PARAMS2) &
          USB_DART_PARAMS2_BYPASS_SUPPORT) == 0) {
-      DEBUG((DEBUG_ERROR, "UsbDartVerifyControllerBypass: %a reg[%d] lacks bypass\n",
+      DEBUG((DEBUG_INFO, "UsbDartVerifyControllerBypass: %a reg[%d] reports no bypass; "
+                         "identity translation is the only acceptable state\n",
              NodeName, Instance));
-      return EFI_UNSUPPORTED;
     }
 
     if (AsciiStrCmp(Compatible, "dart,t8110") == 0) {
@@ -328,17 +348,40 @@ STATIC EFI_STATUS UsbDartVerifyControllerBypass(IN UINT32 PortIndex) {
 
     for (UINT32 Sid = 0; Sid < Nsid; Sid++) {
       UINT32 Tcr = MmioRead32((UINTN)DartBase + TcrBase + 4 * Sid);
-      if (Tcr != ExpectedTcr) {
+
+      if (Tcr == ExpectedTcr) {
+        continue;
+      }
+
+      //
+      // Identity translation is the other way this controller can be made
+      // transparent, and on T8142 it is the only way. Accept it, but only
+      // with a valid TTBR behind it: TRANSLATE_ENABLE over a zero TTBR is
+      // indistinguishable from a working DART right up until the first
+      // transfer, and would hand Windows the same dead controller that
+      // bypass-checking already refuses to.
+      //
+      if ((AsciiStrCmp(Compatible, "dart,t8110") == 0) &&
+          (Tcr == USB_DART_T8110_TCR_IDENTITY)) {
+        UINT32 Ttbr = MmioRead32((UINTN)DartBase + USB_DART_T8110_TTBR_BASE + 4 * Sid);
+        if ((Ttbr & USB_DART_T8110_TTBR_VALID) != 0) {
+          continue;
+        }
         DEBUG((DEBUG_ERROR, "UsbDartVerifyControllerBypass: %a reg[%d] SID %d "
-                 "TCR=0x%x, expected bypass 0x%x; keeping DWC3 reset\n",
-               NodeName, Instance, Sid, Tcr, ExpectedTcr));
+                 "translates with an invalid TTBR (0x%x); keeping DWC3 reset\n",
+               NodeName, Instance, Sid, Ttbr));
         return EFI_NOT_READY;
       }
+
+      DEBUG((DEBUG_ERROR, "UsbDartVerifyControllerBypass: %a reg[%d] SID %d "
+               "TCR=0x%x, expected bypass 0x%x or identity 0x%x; keeping DWC3 reset\n",
+             NodeName, Instance, Sid, Tcr, ExpectedTcr, USB_DART_T8110_TCR_IDENTITY));
+      return EFI_NOT_READY;
     }
   }
 
-  DEBUG((DEBUG_INFO, "UsbDartVerifyControllerBypass: port %d both DARTs are in "
-                     "all-stream bypass\n", PortIndex));
+  DEBUG((DEBUG_INFO, "UsbDartVerifyControllerBypass: port %d both DARTs are "
+                     "transparent on every stream\n", PortIndex));
   return EFI_SUCCESS;
 }
 
@@ -1343,7 +1386,8 @@ AppleUsbTypeCBringupDxeBringupCallback(IN EFI_EVENT Event, IN VOID *Context)
       (UINTN)Dwc3ControllerBaseAddr,
       (DWC3_CONTROLLER *)(UINTN)(Dwc3ControllerBaseAddr + DWC3_REG_OFFSET));
 
-    Status = RegisterNonDiscoverableMmioDevice(NonDiscoverableDeviceTypeXhci,
+    Status = RegisterNonDiscoverableMmioDevice((UINTN)Dwc3Index,
+             NonDiscoverableDeviceTypeXhci,
              NonDiscoverableDeviceDmaTypeCoherent,
              NULL,
              NULL,

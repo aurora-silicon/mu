@@ -74,14 +74,20 @@
 
   #EFI debug settings
   gEfiMdePkgTokenSpaceGuid.PcdDebugPropertyMask|0x2f
-  gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel|0xFFFFFF4F
+!ifndef NTASI_DEBUG_PRINT_ERROR_LEVEL
+  DEFINE NTASI_DEBUG_PRINT_ERROR_LEVEL = 0xFFFFFF4F
+!endif
+  gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel|$(NTASI_DEBUG_PRINT_ERROR_LEVEL)
   gEfiMdePkgTokenSpaceGuid.PcdUefiLibMaxPrintBufferSize|320
   gEfiMdePkgTokenSpaceGuid.PcdReportStatusCodePropertyMask|0xff
   #gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel|0x80000002
 
   #variable size
   gEfiMdeModulePkgTokenSpaceGuid.PcdMaxVariableSize|0x2000
-  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut|3
+!ifndef NTASI_PLATFORM_BOOT_TIMEOUT
+  DEFINE NTASI_PLATFORM_BOOT_TIMEOUT = 3
+!endif
+  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut|$(NTASI_PLATFORM_BOOT_TIMEOUT)
   gEfiMdePkgTokenSpaceGuid.PcdUartDefaultBaudRate|115200
   #
   # Make VariableRuntimeDxe work at emulated non-volatile variable mode.
@@ -95,10 +101,6 @@
 
   gPcBdsPkgTokenSpaceGuid.PcdLowResolutionInternalShell|FALSE
   gEfiMdeModulePkgTokenSpaceGuid.PcdPciDisableBusEnumeration|FALSE
-
-!if $(ARCH) == AARCH64
-  gArmTokenSpaceGuid.PcdVFPEnabled|1
-!endif
 
   #Debugger control
   DebuggerFeaturePkgTokenSpaceGuid.PcdForceEnableDebugger|FALSE
@@ -196,6 +198,7 @@
   CacheMaintenanceLib|ArmPkg/Library/ArmCacheMaintenanceLib/ArmCacheMaintenanceLib.inf
   DefaultExceptionHandlerLib|ArmPkg/Library/DefaultExceptionHandlerLib/DefaultExceptionHandlerLib.inf
   CpuExceptionHandlerLib|ArmPkg/Library/ArmExceptionLib/ArmExceptionLib.inf
+  ArmHvcLib|ArmPkg/Library/ArmHvcLib/ArmHvcLib.inf
   #
   # Dropped in 202502
   #
@@ -355,7 +358,7 @@
   # ArmSmcPsciResetSystemLib is refactored into a single PSCI reset system lib as of 202502
   HwResetSystemLib|ArmPkg/Library/ArmPsciResetSystemLib/ArmPsciResetSystemLib.inf
   ResetSystemLib|MdeModulePkg/Library/DxeResetSystemLib/DxeResetSystemLib.inf
-  FltUsedLib|MdePkg/Library/FltUsedLib/FltUsedLib.inf
+  FltUsedLib|MsCorePkg/Library/FltUsedLib/FltUsedLib.inf
 
   # UI and graphics
   FrameBufferMemDrawLib    |MsGraphicsPkg/Library/FrameBufferMemDrawLib/FrameBufferMemDrawLibDxe.inf
@@ -662,6 +665,7 @@
   # HID Support
   HidPkg/HidKeyboardDxe/HidKeyboardDxe.inf
   HidPkg/HidMouseAbsolutePointerDxe/HidMouseAbsolutePointerDxe.inf
+  AppleSiliconPkg/Drivers/AppleMtpHidDxe/AppleMtpHidDxe.inf
   # Rng Protocol producer
   SecurityPkg/RandomNumberGenerator/RngDxe/RngDxe.inf
 

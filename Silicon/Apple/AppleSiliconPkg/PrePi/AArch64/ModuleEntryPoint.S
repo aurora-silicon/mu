@@ -12,8 +12,25 @@ GCC_ASM_IMPORT (ArmEnableInstructionCache)
 GCC_ASM_IMPORT (ArmEnableDataCache)
 GCC_ASM_IMPORT(InitializeUART)
 GCC_ASM_IMPORT(UARTRelocationDebugMessage)
+GCC_ASM_IMPORT(gMuCheckpoint)
+
+.macro MU_CHECKPOINT stage
+  adrp x9, ASM_PFX(gMuCheckpoint)
+  add  x9, x9, :lo12:ASM_PFX(gMuCheckpoint)
+  mov  x10, #\stage
+  str  x10, [x9, #8]
+  dsb  sy
+.endm
 
 ASM_FUNC(_ModuleEntryPoint)
+
+  // The resident T8142 hypervisor can deliver an AIC FIQ while the SEC image
+  // is still relocating itself.  VBAR_EL1 is not installed at that point, so
+  // the processor vectors through address 0x300 and immediately takes an
+  // instruction abort.  Close that early window; DXE will install its vectors
+  // and deliberately unmask interrupts later in the normal boot flow.
+  msr daifset, #0xf
+  MU_CHECKPOINT 0x01
 
   //back up initial start addr and ADT pointer
   mov x27, x0
@@ -22,7 +39,9 @@ ASM_FUNC(_ModuleEntryPoint)
 
   // m1n1's run_guest ABI passes boot_args in x0.  Installed payloads using
   // the original AppleWOA convention may still pass it in x4, so only prefer
-  // x0 when it has a plausible, self-consistent boot_args header.
+  // x0 when it has a plausible boot_args header.  Revision and version are
+  // independent fields (current m1n1 emits revision 3, version 2), so they
+  // must not be required to match.
   cbz x0, 1f
   ldrh w8, [x0]
   cmp w8, #1
@@ -30,10 +49,12 @@ ASM_FUNC(_ModuleEntryPoint)
   cmp w8, #3
   b.hi 1f
   ldrh w9, [x0, #2]
-  cmp w8, w9
-  b.ne 1f
+  cbz w9, 1f
+  cmp w9, #3
+  b.hi 1f
   mov x25, x0
 1:
+  MU_CHECKPOINT 0x02
 
   // Use ADT to discover usable DRAM and patch platform addresses before the
   // UART library consumes those addresses.  Calling InitializeUART first is
@@ -41,7 +62,9 @@ ASM_FUNC(_ModuleEntryPoint)
   mov x0, x27
   mov x1, x26
   bl ASM_PFX(DiscoverDramFromDt)
+  MU_CHECKPOINT 0x03
   bl ASM_PFX(InitializeUART)
+  MU_CHECKPOINT 0x04
   b _ModuleEntrySetupStack
 
 _ModuleEntrySetupStack:
@@ -128,10 +151,12 @@ _ClearStack:
 
   //set stack pointer to addr in x1
   add sp, x1, xzr
+  MU_CHECKPOINT 0x05
 
 _EnableCaches:
   bl ASM_PFX(ArmEnableInstructionCache)
   bl ASM_PFX(ArmEnableDataCache)
+  MU_CHECKPOINT 0x06
 
 _PrepareArgumentsAndJump:
   mov x0, x12 //Stack Base
@@ -142,6 +167,7 @@ _PrepareArgumentsAndJump:
   ldr x4, =ASM_PFX(CEntryPoint)
   //null frame pointer such that backtraces terminate here
   mov x29, xzr
+  MU_CHECKPOINT 0x07
   blr x4
 
 // if we get here, something *very bad* has happened. (or we're debugging)

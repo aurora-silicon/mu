@@ -54,6 +54,7 @@
   BaseMemoryLib
   DebugLib
   DevicePathLib
+  HobLib
   IoLib
   MemoryAllocationLib
   PrintLib
@@ -62,6 +63,7 @@
   UefiDriverEntryPoint
 
 [Protocols]
+  gAppleAnsDiagnosticBlockIoProtocolGuid ## PRODUCES
   gEfiBlockIoProtocolGuid      ## PRODUCES
   gEfiDevicePathProtocolGuid   ## PRODUCES
   gEfiPartitionInfoProtocolGuid ## CONSUMES
@@ -70,8 +72,10 @@
 [Guids]
   gEfiEventExitBootServicesGuid
   gEfiEventReadyToBootGuid
+  gAppleSiliconPkgFdInfoHobGuid
 
 [Pcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer           ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo    ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs     ## CONSUMES

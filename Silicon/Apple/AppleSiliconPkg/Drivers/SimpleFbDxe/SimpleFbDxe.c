@@ -76,6 +76,223 @@ DISPLAY_DEVICE_PATH mDisplayDevicePath = {
 STATIC FRAME_BUFFER_CONFIGURE *mFrameBufferBltLibConfigure;
 STATIC UINTN mFrameBufferBltLibConfigureSize;
 
+/*
+ * Integer-downscaled modes.
+ *
+ * The panel is HiDPI but the UEFI console is not: GraphicsConsoleDxe lays text
+ * out on a fixed EFI_GLYPH_WIDTH x EFI_GLYPH_HEIGHT (8 x 19) grid and has no
+ * notion of a scale factor, so on J813's 2560 x 1664 panel a glyph is 8 x 19
+ * physical pixels and the console is unreadably small no matter how many rows
+ * and columns it is given.
+ *
+ * Rather than teach the console about scaling -- it is MU_BASECORE code shared
+ * with every other platform -- publish additional GOP modes at 1/N of the panel
+ * and replicate each logical pixel into an N x N block on the way out. A 1/2
+ * mode turns an 8 x 19 glyph into 16 x 38 physical pixels while still covering
+ * the whole display.
+ *
+ * Mode 0 is always the native panel, unscaled and blitted by FrameBufferBltLib
+ * exactly as before, so anything that wants the real scanout can still ask for
+ * it. Only scaled modes take the replication path below.
+ */
+#define SIMPLEFB_MAX_MODES 4
+
+STATIC UINT32               mModeScale[SIMPLEFB_MAX_MODES];
+STATIC UINT32               mModeCount;
+STATIC UINT32               mNativeWidth;
+STATIC UINT32               mNativeHeight;
+STATIC UINT32               mNativeStridePixels;
+STATIC UINT32               mNativeDepth;
+STATIC EFI_PHYSICAL_ADDRESS mNativeFrameBufferBase;
+
+/*
+ * A scaled mode is only worth publishing if what is left is still a sane
+ * console. 640 x 480 is the floor the UEFI spec expects any GOP to be able to
+ * describe, so stop before dropping under it.
+ */
+#define SIMPLEFB_MIN_SCALED_WIDTH  640
+#define SIMPLEFB_MIN_SCALED_HEIGHT 480
+
+STATIC VOID SimpleFbBuildModeList(VOID)
+{
+  UINT32 Divisor = PcdGet32(PcdConsoleScaleDivisor);
+  UINT32 Scale;
+
+  mModeCount = 0;
+
+  /*
+   * Not opted in: publish the panel exactly as it is, one mode, blitted by
+   * FrameBufferBltLib. Byte-for-byte the behaviour every other Mac had before
+   * scaling existed.
+   */
+  if (Divisor <= 1) {
+    mModeScale[mModeCount++] = 1;
+    return;
+  }
+
+  /*
+   * Opted in: publish *only* divided geometry, largest first.
+   *
+   * The unscaled panel is deliberately not offered. PcBdsPkg's MsBootPolicy
+   * calls SetGraphicsConsoleMode(GCM_NATIVE_RES) before launching any boot
+   * option, and GraphicsConsoleHelper then picks the GOP's largest mode and
+   * writes it back into PcdVideoHorizontalResolution/VerticalResolution. A
+   * scaled mode therefore only survives to the application if it *is* the
+   * largest mode -- offering the raw panel above it gets reverted before the
+   * application ever draws, which is exactly what the first attempt did.
+   */
+  for (Scale = Divisor; mModeCount < SIMPLEFB_MAX_MODES; Scale *= 2) {
+    if ((mNativeWidth / Scale) < SIMPLEFB_MIN_SCALED_WIDTH ||
+        (mNativeHeight / Scale) < SIMPLEFB_MIN_SCALED_HEIGHT)
+      break;
+    mModeScale[mModeCount++] = Scale;
+  }
+
+  /* A panel too small to divide still needs one mode to be a valid GOP. */
+  if (mModeCount == 0)
+    mModeScale[mModeCount++] = 1;
+}
+
+/*
+ * Apple scans out X2R10G10B10 on this panel, so the 8-bit channels of a BLT
+ * pixel have to be widened to 10 bits. Replicating the top two bits keeps full
+ * white at full white instead of losing a hair of range.
+ */
+STATIC UINT32 SimpleFbEncodePixel(IN CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Pixel)
+{
+  if (mNativeDepth == 30) {
+    UINT32 Red   = ((UINT32)Pixel->Red << 2) | (UINT32)(Pixel->Red >> 6);
+    UINT32 Green = ((UINT32)Pixel->Green << 2) | (UINT32)(Pixel->Green >> 6);
+    UINT32 Blue  = ((UINT32)Pixel->Blue << 2) | (UINT32)(Pixel->Blue >> 6);
+
+    return (Red << 20) | (Green << 10) | Blue;
+  }
+
+  return ((UINT32)Pixel->Red << 16) | ((UINT32)Pixel->Green << 8) |
+         (UINT32)Pixel->Blue;
+}
+
+STATIC VOID SimpleFbDecodePixel(
+    IN UINT32 Raw, OUT EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Pixel)
+{
+  if (mNativeDepth == 30) {
+    Pixel->Red   = (UINT8)((Raw >> 22) & 0xFF);
+    Pixel->Green = (UINT8)((Raw >> 12) & 0xFF);
+    Pixel->Blue  = (UINT8)((Raw >> 2) & 0xFF);
+  } else {
+    Pixel->Red   = (UINT8)((Raw >> 16) & 0xFF);
+    Pixel->Green = (UINT8)((Raw >> 8) & 0xFF);
+    Pixel->Blue  = (UINT8)(Raw & 0xFF);
+  }
+
+  Pixel->Reserved = 0;
+}
+
+STATIC UINT32 *SimpleFbRow(IN UINTN LogicalY, IN UINT32 Scale, IN UINTN SubY)
+{
+  return (UINT32 *)(UINTN)mNativeFrameBufferBase +
+         (LogicalY * Scale + SubY) * mNativeStridePixels;
+}
+
+/*
+ * Software blt for the scaled modes. Coordinates and extents arrive in logical
+ * (scaled-down) pixels; every write fans out to a Scale x Scale block.
+ */
+STATIC EFI_STATUS SimpleFbScaledBlt(
+    IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *BltBuffer,
+    IN EFI_GRAPHICS_OUTPUT_BLT_OPERATION BltOperation, IN UINTN SourceX,
+    IN UINTN SourceY, IN UINTN DestinationX, IN UINTN DestinationY,
+    IN UINTN Width, IN UINTN Height, IN UINTN Delta, IN UINT32 Scale)
+{
+  UINTN DeltaPixels;
+  UINTN X, Y, SubX, SubY;
+
+  if (Width == 0 || Height == 0)
+    return EFI_SUCCESS;
+
+  DeltaPixels = (Delta == 0)
+                    ? Width
+                    : Delta / sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
+
+  switch (BltOperation) {
+  case EfiBltVideoFill: {
+    UINT32 Raw = SimpleFbEncodePixel(BltBuffer);
+
+    for (Y = 0; Y < Height; Y++) {
+      for (SubY = 0; SubY < Scale; SubY++) {
+        UINT32 *Row = SimpleFbRow(DestinationY + Y, Scale, SubY) +
+                      DestinationX * Scale;
+
+        for (X = 0; X < Width * Scale; X++)
+          Row[X] = Raw;
+      }
+    }
+    break;
+  }
+
+  case EfiBltBufferToVideo:
+    for (Y = 0; Y < Height; Y++) {
+      EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Source =
+          BltBuffer + (SourceY + Y) * DeltaPixels + SourceX;
+
+      for (SubY = 0; SubY < Scale; SubY++) {
+        UINT32 *Row = SimpleFbRow(DestinationY + Y, Scale, SubY) +
+                      DestinationX * Scale;
+
+        for (X = 0; X < Width; X++) {
+          UINT32 Raw = SimpleFbEncodePixel(&Source[X]);
+
+          for (SubX = 0; SubX < Scale; SubX++)
+            Row[X * Scale + SubX] = Raw;
+        }
+      }
+    }
+    break;
+
+  case EfiBltVideoToBltBuffer:
+    for (Y = 0; Y < Height; Y++) {
+      UINT32 *Row = SimpleFbRow(SourceY + Y, Scale, 0) + SourceX * Scale;
+      EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Destination =
+          BltBuffer + (DestinationY + Y) * DeltaPixels + DestinationX;
+
+      /* Every block is uniform, so the top-left sample is the whole story. */
+      for (X = 0; X < Width; X++)
+        SimpleFbDecodePixel(Row[X * Scale], &Destination[X]);
+    }
+    break;
+
+  case EfiBltVideoToVideo:
+    /*
+     * Console scrolling overlaps source and destination, so walk whichever
+     * direction keeps the copy from eating its own input.
+     */
+    for (Y = 0; Y < Height; Y++) {
+      UINTN Line = (DestinationY > SourceY) ? (Height - 1 - Y) : Y;
+
+      for (SubY = 0; SubY < Scale; SubY++) {
+        UINT32 *From = SimpleFbRow(SourceY + Line, Scale, SubY) +
+                       SourceX * Scale;
+        UINT32 *To = SimpleFbRow(DestinationY + Line, Scale, SubY) +
+                     DestinationX * Scale;
+
+        if (DestinationX > SourceX) {
+          for (X = Width * Scale; X > 0; X--)
+            To[X - 1] = From[X - 1];
+        } else {
+          for (X = 0; X < Width * Scale; X++)
+            To[X] = From[X];
+        }
+      }
+    }
+    break;
+
+  default:
+    return EFI_INVALID_PARAMETER;
+  }
+
+  return EFI_SUCCESS;
+}
+
 STATIC
 EFI_STATUS
 EFIAPI
@@ -119,13 +336,28 @@ DisplayQueryMode(
     return Status;
 
   ZeroMem(*Info, sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION));
-  *SizeOfInfo                   = sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION);
-  (*Info)->Version              = This->Mode->Info->Version;
-  (*Info)->HorizontalResolution = This->Mode->Info->HorizontalResolution;
-  (*Info)->VerticalResolution   = This->Mode->Info->VerticalResolution;
-  (*Info)->PixelFormat          = This->Mode->Info->PixelFormat;
-  (*Info)->PixelInformation     = This->Mode->Info->PixelInformation;
-  (*Info)->PixelsPerScanLine    = This->Mode->Info->PixelsPerScanLine;
+  *SizeOfInfo               = sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION);
+  (*Info)->Version          = This->Mode->Info->Version;
+  (*Info)->PixelFormat      = This->Mode->Info->PixelFormat;
+  (*Info)->PixelInformation = This->Mode->Info->PixelInformation;
+
+  /*
+   * Describe the mode that was asked about, not the one that happens to be
+   * current. Returning the current mode for every query made the caller
+   * believe MaxMode modes all had identical geometry, which is exactly the
+   * bug that made mode selection meaningless.
+   */
+  if (ModeNumber >= mModeCount) {
+    gBS->FreePool(*Info);
+    *Info = NULL;
+    return EFI_INVALID_PARAMETER;
+  }
+
+  (*Info)->HorizontalResolution = mNativeWidth / mModeScale[ModeNumber];
+  (*Info)->VerticalResolution   = mNativeHeight / mModeScale[ModeNumber];
+  (*Info)->PixelsPerScanLine    = (mModeScale[ModeNumber] == 1)
+                                      ? mNativeStridePixels
+                                      : (*Info)->HorizontalResolution;
 
   return EFI_SUCCESS;
 }
@@ -135,6 +367,31 @@ EFI_STATUS
 EFIAPI
 DisplaySetMode(IN EFI_GRAPHICS_OUTPUT_PROTOCOL *This, IN UINT32 ModeNumber)
 {
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Black;
+  UINT32                        Scale;
+
+  if (ModeNumber >= mModeCount)
+    return EFI_UNSUPPORTED;
+
+  Scale = mModeScale[ModeNumber];
+
+  This->Mode->Mode                          = ModeNumber;
+  This->Mode->Info->HorizontalResolution    = mNativeWidth / Scale;
+  This->Mode->Info->VerticalResolution      = mNativeHeight / Scale;
+  This->Mode->Info->PixelsPerScanLine       = (Scale == 1)
+                                                  ? mNativeStridePixels
+                                                  : This->Mode->Info->HorizontalResolution;
+
+  /*
+   * Leaving the previous mode's content on screen after a resolution change
+   * shows it stretched or torn, because the logical grid moved underneath it.
+   * Clear the whole panel -- in native pixels, so the parts of the scanout
+   * that a scaled mode rounds off are cleared too.
+   */
+  ZeroMem(&Black, sizeof(Black));
+  SimpleFbScaledBlt(
+      &Black, EfiBltVideoFill, 0, 0, 0, 0, mNativeWidth, mNativeHeight, 0, 1);
+
   return EFI_SUCCESS;
 }
 
@@ -156,10 +413,18 @@ DisplayBlt(
   // buffer. We would not want a timer based event (Cursor, ...) to come in
   // while we are doing this operation.
   //
-  Tpl    = gBS->RaiseTPL(TPL_NOTIFY);
-  Status = FrameBufferBlt(
-      mFrameBufferBltLibConfigure, BltBuffer, BltOperation, SourceX, SourceY,
-      DestinationX, DestinationY, Width, Height, Delta);
+  Tpl = gBS->RaiseTPL(TPL_NOTIFY);
+
+  if (mModeScale[This->Mode->Mode] == 1) {
+    Status = FrameBufferBlt(
+        mFrameBufferBltLibConfigure, BltBuffer, BltOperation, SourceX, SourceY,
+        DestinationX, DestinationY, Width, Height, Delta);
+  } else {
+    Status = SimpleFbScaledBlt(
+        BltBuffer, BltOperation, SourceX, SourceY, DestinationX, DestinationY,
+        Width, Height, Delta, mModeScale[This->Mode->Mode]);
+  }
+
   gBS->RestoreTPL(Tpl);
 
   return RETURN_ERROR(Status) ? EFI_INVALID_PARAMETER : EFI_SUCCESS;
@@ -318,8 +583,17 @@ SimpleFbDxeInitialize(
     ZeroMem(mDisplay.Mode->Info, sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION));
   }
 
+  /* Remember the real scanout; every scaled mode is derived from it. */
+  mNativeWidth           = FramebufferWidth;
+  mNativeHeight          = FramebufferHeight;
+  mNativeStridePixels    = FramebufferStride / FB_BYTES_PER_PIXEL;
+  mNativeDepth           = FramebufferDepth;
+  mNativeFrameBufferBase = FramebufferAddr;
+
+  SimpleFbBuildModeList();
+
   /* Set information */
-  mDisplay.Mode->MaxMode       = 1;
+  mDisplay.Mode->MaxMode       = mModeCount;
   mDisplay.Mode->Mode          = 0;
   mDisplay.Mode->Info->Version = 0;
 
@@ -366,7 +640,21 @@ SimpleFbDxeInitialize(
   // turns 3024 x 1964 into ~246 DPI for the guest instead of the 96 DPI Windows
   // assumes when no monitor geometry exists at all.
   //
-  SimpleFbBuildEdid(FramebufferWidth, FramebufferHeight, 302, 196);
+  /*
+   * FrameBufferBltLib has now captured the real scanout, which is the only
+   * thing it is ever used for (mode scale 1). Mode 0 itself may be a divided
+   * mode, so publish its geometry from here on -- including to the EDID, so
+   * the timing the OS reads matches the framebuffer the GOP hands it.
+   */
+  mDisplay.Mode->Info->HorizontalResolution = mNativeWidth / mModeScale[0];
+  mDisplay.Mode->Info->VerticalResolution   = mNativeHeight / mModeScale[0];
+  if (mModeScale[0] != 1)
+    mDisplay.Mode->Info->PixelsPerScanLine =
+        mDisplay.Mode->Info->HorizontalResolution;
+
+  SimpleFbBuildEdid(
+      mDisplay.Mode->Info->HorizontalResolution,
+      mDisplay.Mode->Info->VerticalResolution, 302, 196);
   mEdidDiscovered.SizeOfEdid = sizeof(mEdid);
   mEdidDiscovered.Edid       = mEdid;
   mEdidActive.SizeOfEdid     = sizeof(mEdid);

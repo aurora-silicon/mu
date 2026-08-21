@@ -308,10 +308,222 @@ STATIC VOID AppleDartT8020TlbFlush(VOID *DartInformation) {
 STATIC VOID AppleDartT8110TlbFlush(VOID *DartInformation) {
     APPLE_DART_INFO *DartInfoStruct = (APPLE_DART_INFO *)DartInformation;
     __asm__("dsb sy");
-    MmioWrite32(DartInfoStruct->BaseAddress + DART_T8110_TLB_CMD_FLUSH_ALL, DART_T8110_TLB_CMD_FLUSH_ALL);
+    //
+    // OP == FLUSH_ALL is the value 0, so this is a bare write of the OP field.
+    // This previously wrote to BaseAddress + BIT(8) -- the ERROR register --
+    // and then polled the real TLB_CMD, which is never busy because nothing
+    // had been commanded.  It looked like a working flush and was a no-op.
+    //
+    MmioWrite32(DartInfoStruct->BaseAddress + DART_T8110_TLB_CMD,
+                DART_T8110_TLB_CMD_OP_FLUSH_ALL << DART_T8110_TLB_CMD_OP_SHIFT);
     while((MmioRead32(DartInfoStruct->BaseAddress + DART_T8110_TLB_CMD)) & DART_T8110_TLB_CMD_BUSY) {
         continue;
     }
+}
+
+/**
+  Encode a physical address into a DART2-format page table entry.
+
+  The address field holds PhysAddr >> 4 in bits 37:10, which is to say
+  PhysAddr bits 41:14.  A 16KB granule is therefore implicit and the output
+  address is capped at 42 bits -- exactly the PA_WIDTH J813 reports.
+**/
+STATIC UINT64 AppleDartEncodePte(IN UINT64 PhysAddr) {
+    return ((PhysAddr >> APPLE_DART2_PTE_ADDR_SHIFT) & APPLE_DART2_PTE_ADDR_MASK) |
+           APPLE_DART_PTE_VALID_BIT;
+}
+
+//
+// One reserved allocation, carved into 16KB tables by a bump pointer.
+//
+// AllocateAlignedReservedPages() cannot be used here. It over-allocates and
+// then hands the slack back with FreePages(), and under this platform's
+// memory protection policy freeing part of an EfiReservedMemoryType
+// allocation returns EFI_INVALID_PARAMETER -- which the library reports with
+// ASSERT_EFI_ERROR, i.e. a DEBUG-build deadloop in the middle of DXE. Measured
+// on J813: "ASSERT [AppleDartIoMmuDxe] MemoryAllocationLib.c(222)". So align by
+// hand, waste the head, and never call FreePages at all.
+//
+STATIC UINT64 mDartTablePool = 0;
+STATIC UINTN  mDartTablePoolRemaining = 0;
+
+STATIC EFI_STATUS AppleDartReserveTablePool(IN UINT64 DramSize) {
+    EFI_STATUS            Status;
+    EFI_PHYSICAL_ADDRESS  Memory;
+    UINT64                LeafSpan;
+    UINT64                MidSpan;
+    UINT64                Tables;
+    UINTN                 PoolBytes;
+    UINTN                 Pages;
+
+    //
+    // Exactly what a contiguous range needs: one leaf per 32MB, one mid-level
+    // table per 64GB (plus one in case the range straddles a boundary), and
+    // the top table. Sized rather than guessed so that running out is a bug
+    // that fails closed in AppleDartBuildIdentityMap rather than a map with a
+    // silent hole in it.
+    //
+    LeafSpan = (UINT64)DART_PTES_PER_TABLE * DART_PAGE_SIZE;
+    MidSpan  = LeafSpan * DART_PTES_PER_TABLE;
+    Tables   = (DramSize + LeafSpan - 1) / LeafSpan;
+    Tables  += (DramSize + MidSpan - 1) / MidSpan + 1;
+    Tables  += 1;
+
+    PoolBytes = (UINTN)(Tables * DART_TABLE_SIZE);
+    Pages = EFI_SIZE_TO_PAGES(PoolBytes) + EFI_SIZE_TO_PAGES(DART_TABLE_SIZE);
+
+    //
+    // EfiReservedMemoryType, not BootServicesData: these tables stay live for
+    // as long as the DART translates, which is for the whole life of the OS.
+    // Anything the OS is allowed to reclaim would be handed to a driver as
+    // ordinary RAM while the DART was still walking it, and the first symptom
+    // would be device DMA landing at whatever address the recycled page now
+    // encodes.
+    //
+    Status = gBS->AllocatePages(AllocateAnyPages, EfiReservedMemoryType, Pages, &Memory);
+    if (EFI_ERROR(Status)) {
+        DEBUG((DEBUG_ERROR, "%a: could not reserve %lu pages for DART tables: %r\n",
+               __FUNCTION__, (unsigned long)Pages, Status));
+        return Status;
+    }
+
+    mDartTablePool = ALIGN_VALUE((UINT64)Memory, (UINT64)DART_TABLE_SIZE);
+    mDartTablePoolRemaining = PoolBytes;
+
+    DEBUG((DEBUG_INFO, "%a: reserved %lu tables at 0x%llx (%lu pages from 0x%llx)\n",
+           __FUNCTION__, (unsigned long)Tables, mDartTablePool,
+           (unsigned long)Pages, (UINT64)Memory));
+    return EFI_SUCCESS;
+}
+
+STATIC UINT64 *AppleDartAllocTable(VOID) {
+    UINT64 *Table;
+
+    if (mDartTablePoolRemaining < DART_TABLE_SIZE) {
+        return NULL;
+    }
+
+    Table = (UINT64 *)(UINTN)mDartTablePool;
+    mDartTablePool += DART_TABLE_SIZE;
+    mDartTablePoolRemaining -= DART_TABLE_SIZE;
+
+    ZeroMem(Table, DART_TABLE_SIZE);
+    return Table;
+}
+
+/**
+  Build a four-level identity map (DVA == PA) covering [DramBase, DramBase+DramSize).
+
+  This is the fallback for DARTs that cannot bypass.  On T8142 the usb DART's
+  TCR bypass bits are hardwired to zero -- PARAMS2 advertises bypass support and
+  the hardware refuses it -- so the only way to make the controller's DMA
+  transparent to an OS that knows nothing about DARTs is to translate every
+  address to itself.
+
+  Three levels of table plus the page is what Apple calls "four level" (the
+  TTBR counts).  Three levels would reach only 64GB of DVA; DRAM on this part
+  starts at 0x100_0000_0000, so the fourth level is not optional.
+
+  Returns the physical address of the top-level table, or 0 on failure.
+**/
+STATIC UINT64 AppleDartBuildIdentityMap(IN UINT64 DramBase, IN UINT64 DramSize) {
+    UINT64 *TopTable;
+    UINT64 Va;
+    UINT64 VaEnd;
+    UINTN  LeafTables = 0;
+
+    if (DramBase == 0 || DramSize == 0) {
+        DEBUG((DEBUG_ERROR, "%a: refusing to build an empty identity map (0x%llx+0x%llx). "
+                            "Enabling translation against one would block every transfer "
+                            "while looking configured.\n", __FUNCTION__, DramBase, DramSize));
+        return 0;
+    }
+
+    if ((DramBase & (DART_PAGE_SIZE - 1)) != 0 || (DramSize & (DART_PAGE_SIZE - 1)) != 0) {
+        DEBUG((DEBUG_ERROR, "%a: DRAM range 0x%llx+0x%llx is not %d-aligned\n",
+               __FUNCTION__, DramBase, DramSize, DART_PAGE_SIZE));
+        return 0;
+    }
+
+    if (EFI_ERROR(AppleDartReserveTablePool(DramSize))) {
+        return 0;
+    }
+
+    TopTable = AppleDartAllocTable();
+    if (TopTable == NULL) {
+        DEBUG((DEBUG_ERROR, "%a: out of memory for the top-level table\n", __FUNCTION__));
+        return 0;
+    }
+
+    Va = DramBase;
+    VaEnd = DramBase + DramSize;
+
+    while (Va < VaEnd) {
+        UINT64 *Level1;
+        UINT64 *Level2;
+        UINT32 Index0 = (UINT32)((Va >> 36) & DART_LEVEL_INDEX_MASK);
+        UINT32 Index1 = (UINT32)((Va >> 25) & DART_LEVEL_INDEX_MASK);
+        UINT32 Index2 = (UINT32)((Va >> 14) & DART_LEVEL_INDEX_MASK);
+
+        if ((TopTable[Index0] & APPLE_DART_PTE_VALID_BIT) == 0) {
+            Level1 = AppleDartAllocTable();
+            if (Level1 == NULL) {
+                DEBUG((DEBUG_ERROR, "%a: out of memory at level 1\n", __FUNCTION__));
+                return 0;
+            }
+            TopTable[Index0] = AppleDartEncodePte((UINT64)(UINTN)Level1);
+        } else {
+            Level1 = (UINT64 *)(UINTN)((TopTable[Index0] & APPLE_DART2_PTE_ADDR_MASK)
+                                       << APPLE_DART2_PTE_ADDR_SHIFT);
+        }
+
+        if ((Level1[Index1] & APPLE_DART_PTE_VALID_BIT) == 0) {
+            Level2 = AppleDartAllocTable();
+            if (Level2 == NULL) {
+                DEBUG((DEBUG_ERROR, "%a: out of memory at level 2\n", __FUNCTION__));
+                return 0;
+            }
+            Level1[Index1] = AppleDartEncodePte((UINT64)(UINTN)Level2);
+            LeafTables++;
+        } else {
+            Level2 = (UINT64 *)(UINTN)((Level1[Index1] & APPLE_DART2_PTE_ADDR_MASK)
+                                       << APPLE_DART2_PTE_ADDR_SHIFT);
+        }
+
+        //
+        // Fill out the rest of this leaf table before walking again; the walk
+        // is the expensive part and one leaf covers 32MB.
+        //
+        for (; Index2 < DART_PTES_PER_TABLE && Va < VaEnd; Index2++, Va += DART_PAGE_SIZE) {
+            Level2[Index2] = AppleDartEncodePte(Va) | APPLE_DART_PTE_SUBPAGE_ALL;
+        }
+    }
+
+    DEBUG((DEBUG_INFO, "%a: identity mapped 0x%llx..0x%llx using %lu leaf tables\n",
+           __FUNCTION__, DramBase, VaEnd, (unsigned long)LeafTables));
+
+    return (UINT64)(UINTN)TopTable;
+}
+
+/**
+  Probe whether this DART really implements bypass.
+
+  PARAMS2 bit 0 is not trustworthy: J813's usb DARTs set it and then refuse
+  every write to the TCR bypass bits, which read back as zero under every
+  precondition tried (translation off, streams disabled, after UNPROTECT).
+  So ask the register instead of the capability bit, and put the TCR back
+  the way it was found either way.
+**/
+STATIC BOOLEAN AppleDartProbeBypass(IN APPLE_DART_INFO *Dart) {
+    UINT64  TcrAddress = Dart->BaseAddress + DART_TCR(*Dart, 0);
+    UINT32  Original = MmioRead32(TcrAddress);
+    UINT32  ReadBack;
+
+    MmioWrite32(TcrAddress, Dart->TcrBypass);
+    ReadBack = MmioRead32(TcrAddress);
+    MmioWrite32(TcrAddress, Original);
+
+    return (BOOLEAN)(ReadBack == Dart->TcrBypass);
 }
 
 EFI_STATUS EFIAPI 
@@ -332,6 +544,13 @@ AppleDartIoMmuDxeInitialize(
     INT32 sid, i;
     UINT32 Params2;
     CHAR8 DartNodeName[33];
+    UINT64 DramBase;
+    UINT64 DramSize;
+    //
+    // Built lazily and shared by every DART instance that needs it, so the
+    // 8MB of tables is paid for once no matter how many apertures exist.
+    //
+    UINT64 IdentityMapRoot = 0;
     // BOOLEAN DartFound = TRUE; // assume the DART exists to start.
     //UINT32 Params4;
 
@@ -374,6 +593,25 @@ AppleDartIoMmuDxeInitialize(
     // on the USB-A ports on supported devices, that code is disabled for the moment.
     //
 
+    //
+    // The whole of DRAM, from the ADT rather than from PcdSystemMemoryBase:
+    // m1n1 carves itself out below phys_base, so the Pcd describes only the
+    // part handed to UEFI. The identity map wants a superset of every address
+    // a device could be pointed at, and mapping the extra carveout costs
+    // nothing beyond leaf tables that are already being allocated in bulk.
+    //
+    DramBase = dt_get_u64("chosen", "dram-base", 0);
+    DramSize = dt_get_u64("chosen", "dram-size", 0);
+    DEBUG((DEBUG_INFO, "%a: DRAM is 0x%llx + 0x%llx\n", __FUNCTION__, DramBase, DramSize));
+    if(DramBase == 0 || DramSize == 0) {
+        //
+        // Not fatal: a DART that can bypass never needs this. Identity mapping
+        // checks IdentityMapRoot and fails closed if it could not be built.
+        //
+        DEBUG((DEBUG_ERROR, "%a: /chosen has no usable dram-base/dram-size; "
+                            "DARTs that cannot bypass will be left blocked\n", __FUNCTION__));
+    }
+
     for(INT32 DartNodeIndex = 0; DartNodeIndex < FixedPcdGet32(PcdAppleNumDwc3Controllers); DartNodeIndex++) {
         AsciiSPrint(DartNodeName, ARRAY_SIZE(DartNodeName), "dart-usb%d", DartNodeIndex);
         DartNode[DartNodeIndex] = dt_get(DartNodeName);
@@ -401,6 +639,18 @@ AppleDartIoMmuDxeInitialize(
             DEBUG((DEBUG_INFO, "Skipping absent/owned USB DART %d\n", DartIndex));
             continue;
         }
+
+        //
+        // Both register apertures of a usb DART node are real, independent
+        // DART instances and both must be programmed; m1n1 says so explicitly
+        // in usb_phy_handoff_host(), and a controller whose second instance
+        // is unprogrammed cannot DMA.  A T8142-only branch used to skip every
+        // odd DartIndex here on the theory that m1n1 owned the companion
+        // aperture and touching it faulted.  Measured on J813: both apertures
+        // answer identically (PARAMS1..4 byte-for-byte the same), neither
+        // faults, and the blank one only looked special because the zeroing
+        // pass below had just cleared it.
+        //
         //DEBUG((DEBUG_INFO, "Test0\n"));
         DartInfo[DartIndex].BaseAddress = DartReg[DartIndex];
 
@@ -459,7 +709,15 @@ AppleDartIoMmuDxeInitialize(
         DartInfo[DartIndex].TlbFlush((VOID *)&DartInfo[DartIndex]);
 
         Params2 = MmioRead32(DartInfo[DartIndex].BaseAddress + DART_PARAMS2);
-        if((Params2 & DART_PARAMS2_BYPASS_SUPPORT) != 0) {
+        //
+        // Ask the TCR whether bypass works rather than believing PARAMS2.
+        // On T8142 PARAMS2 sets BYPASS_SUPPORT and the TCR bypass bits are
+        // hardwired to zero, so trusting the capability bit leaves the DART
+        // translating nothing with translation disabled -- which blocks all
+        // DMA and reads back as the "TCR=0x0, expected 0x6" that kept DWC3 in
+        // reset.
+        //
+        if((Params2 & DART_PARAMS2_BYPASS_SUPPORT) != 0 && AppleDartProbeBypass(&DartInfo[DartIndex])) {
             DEBUG((DEBUG_INFO, "AppleDartIoMmuDxeInitialize: USB DART%d supports bypass mode\n", DartIndex));
             for(sid = 0; sid < DartInfo[DartIndex].Nsid; sid++) {
                 MmioWrite32(DartInfo[DartIndex].BaseAddress + DART_TCR(DartInfo[DartIndex], sid), DartInfo[DartIndex].TcrBypass);
@@ -468,6 +726,101 @@ AppleDartIoMmuDxeInitialize(
             //
             // Bypass mode means the controllers can just DMA right into physical memory so we skip installing the IOMMU protocol.
             //
+        }
+        else if(AsciiStrCmp(CompatibleStr, "dart,t8110") == 0) {
+            UINT32 Params3 = MmioRead32(DartInfo[DartIndex].BaseAddress + DART_T8110_PARAMS3);
+            UINT32 VaWidth = (Params3 >> DART_T8110_PARAMS3_VA_WIDTH_SHIFT) & DART_T8110_PARAMS3_WIDTH_MASK;
+            UINT32 PaWidth = (Params3 >> DART_T8110_PARAMS3_PA_WIDTH_SHIFT) & DART_T8110_PARAMS3_WIDTH_MASK;
+            UINT64 DramTop = DramBase + DramSize;
+            UINT32 Tcr;
+
+            DEBUG((DEBUG_INFO, "AppleDartIoMmuDxeInitialize: USB DART%d has no usable bypass "
+                               "(PARAMS2=0x%x); building an identity map. VA_WIDTH=%d PA_WIDTH=%d\n",
+                   DartIndex, Params2, VaWidth, PaWidth));
+
+            //
+            // Both widths have to name the top of DRAM or DVA == PA is not
+            // expressible and there is no point continuing: a partial identity
+            // map silently corrupts whatever DMA lands above the cutoff.
+            //
+            if(VaWidth < 64 && (DramTop - 1) >= (1ULL << VaWidth)) {
+                DEBUG((DEBUG_ERROR, "%a: DART%d VA_WIDTH %d cannot address DRAM top 0x%llx\n",
+                       __FUNCTION__, DartIndex, VaWidth, DramTop));
+                continue;
+            }
+            if(PaWidth < 64 && (DramTop - 1) >= (1ULL << PaWidth)) {
+                DEBUG((DEBUG_ERROR, "%a: DART%d PA_WIDTH %d cannot address DRAM top 0x%llx\n",
+                       __FUNCTION__, DartIndex, PaWidth, DramTop));
+                continue;
+            }
+            //
+            // Three levels of table reach only 64GB of DVA. Anything above
+            // that needs the fourth, and DRAM starts at 0x100_0000_0000.
+            //
+            if(VaWidth <= 36) {
+                DEBUG((DEBUG_ERROR, "%a: DART%d VA_WIDTH %d has no four-level walk\n",
+                       __FUNCTION__, DartIndex, VaWidth));
+                continue;
+            }
+
+            if(IdentityMapRoot == 0) {
+                IdentityMapRoot = AppleDartBuildIdentityMap(DramBase, DramSize);
+                if(IdentityMapRoot == 0) {
+                    DEBUG((DEBUG_ERROR, "%a: could not build the identity map; DART%d left blocked\n",
+                           __FUNCTION__, DartIndex));
+                    continue;
+                }
+            }
+
+            //
+            // Every DART instance shares one set of tables: they describe the
+            // same identity, and a second copy would be 8MB spent to be able
+            // to disagree with the first.
+            //
+            for(sid = 0; sid < DartInfo[DartIndex].Nsid; sid++) {
+                MmioWrite32(DartInfo[DartIndex].BaseAddress + DART_TTBR(DartInfo[DartIndex], sid, 0),
+                            (UINT32)(((IdentityMapRoot >> DART_T8110_TTBR_ADDR_SHIFT)
+                                      << DART_T8110_TTBR_ADDR_FIELD_SHIFT) & DART_T8110_TTBR_ADDR_MASK)
+                                | DART_T8110_TTBR_VALID);
+            }
+            //
+            // Streams have to be enabled or the DART never consults the TCR
+            // it was just given. Enable exactly the SIDs that exist; J813
+            // reports 16, so this is a single word of 0xffff.
+            //
+            for(i = 0; i * 32 < DartInfo[DartIndex].Nsid; i++) {
+                INT32 Remaining = DartInfo[DartIndex].Nsid - i * 32;
+                UINT32 StreamMask = (Remaining >= 32) ? ~0u : ((1u << Remaining) - 1u);
+                MmioWrite32(DartInfo[DartIndex].BaseAddress + DART_SID_ENABLE(DartInfo[DartIndex], i), StreamMask);
+            }
+            for(sid = 0; sid < DartInfo[DartIndex].Nsid; sid++) {
+                MmioWrite32(DartInfo[DartIndex].BaseAddress + DART_TCR(DartInfo[DartIndex], sid),
+                            DART_T8110_TCR_TRANSLATE_ENABLE | DART_T8110_TCR_FOUR_LEVEL);
+            }
+            DartInfo[DartIndex].TlbFlush((VOID *)&DartInfo[DartIndex]);
+
+            Tcr = MmioRead32(DartInfo[DartIndex].BaseAddress + DART_TCR(DartInfo[DartIndex], 0));
+            if(Tcr != (DART_T8110_TCR_TRANSLATE_ENABLE | DART_T8110_TCR_FOUR_LEVEL)) {
+                DEBUG((DEBUG_ERROR, "%a: DART%d refused the four-level TCR (read 0x%x)\n",
+                       __FUNCTION__, DartIndex, Tcr));
+                continue;
+            }
+
+            DartInfo[DartIndex].IdentityMapped = TRUE;
+            DartInfo[DartIndex].IdentityMapRoot = IdentityMapRoot;
+            //
+            // DVA == PA, so UEFI's no-IOMMU-protocol assumption of direct DMA
+            // stays true and nothing downstream has to be taught about DARTs.
+            //
+            DEBUG((DEBUG_INFO, "AppleDartIoMmuDxeInitialize: USB DART%d identity-mapped, "
+                               "root 0x%llx, TCR=0x%x, ERROR=0x%x\n",
+                   DartIndex, IdentityMapRoot, Tcr,
+                   MmioRead32(DartInfo[DartIndex].BaseAddress + DART_T8110_ERROR)));
+        }
+        else {
+            DEBUG((DEBUG_ERROR, "AppleDartIoMmuDxeInitialize: USB DART%d can neither bypass nor "
+                                "identity-map (compatible %a); it will block DMA\n",
+                   DartIndex, CompatibleStr));
         }
 
         //

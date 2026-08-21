@@ -38,6 +38,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Library/MsPlatformPowerCheckLib.h>
 #include <Library/MsNetworkDependencyLib.h>
 #include <Library/PcdLib.h>
+#include <Library/UefiBootManagerLib.h>
 #include <Library/PrintLib.h>
 #include <Library/PowerServicesLib.h>
 #include <Library/ThermalServicesLib.h>
@@ -645,7 +646,29 @@ PostReadyToBoot (
   static BOOLEAN  FirstPass = TRUE;
 
   if (BootCurrentIsInternalShell ()) {
-    EfiBootManagerConnectAll ();
+    //
+    // This ConnectAll is what stalls J704 (attempt 30/31). BDS has already
+    // committed to booting the Shell and signalled ReadyToBoot by the time we get
+    // here, so binding every driver to every handle walks into
+    // XhciDxe -> UsbBusDxe -> UsbRootHubInit and never comes back -- the Shell
+    // image is never started, and the log stops mid-ReadyToBoot looking as though
+    // BDS never attempted a boot option at all.
+    //
+    // Skipping it costs the Shell a populated mapping table (it sees only what is
+    // already connected) and buys a live console to debug USB from: `connect -r`
+    // at the Shell prompt reproduces the stall interactively.
+    //
+    if (PcdGetBool (PcdAppleConnectAllForInternalShell)) {
+      EfiBootManagerConnectAll ();
+    } else {
+      DEBUG ((
+        DEBUG_INFO,
+        "%a: skipping ConnectAll for internal Shell "
+        "(PcdAppleConnectAllForInternalShell=FALSE)\n",
+        __FUNCTION__
+        ));
+    }
+
     if (PcdGetBool (PcdLowResolutionInternalShell)) {
       Status = SetGraphicsConsoleMode (GCM_LOW_RES);
       if (EFI_ERROR (Status) != FALSE) {
@@ -712,7 +735,7 @@ DeviceBootManagerConstructor (
                   TPL_CALLBACK,
                   PostReadyToBoot,
                   NULL,
-                  &gEfiEventPostReadyToBootGuid,
+                  &gEfiEventAfterReadyToBootGuid,
                   &mPostReadyToBootEvent
                   );
   if (EFI_ERROR (Status)) {
@@ -754,6 +777,159 @@ DeviceBootManagerBdsEntry (
   UpdateRebootReason ();
 }
 
+//
+// Byte-for-byte copy of MsCorePkg's mUsbClassKeyboardDevicePath
+// (Common/MU/MsCorePkg/Library/PlatformBootManagerLib/BdsPlatform.c:13). Its
+// declaration lives in that library's private BdsPlatform.h, so it cannot be
+// included from here -- the layout is duplicated instead. Keep the two in step:
+// EfiBootManagerUpdateConsoleVariable matches on the device path bytes, so any
+// divergence silently turns the removal below into a no-op.
+//
+#define APPLE_USB_CLASS_HID          3
+#define APPLE_USB_SUBCLASS_BOOT      1
+#define APPLE_USB_PROTOCOL_KEYBOARD  1
+
+typedef struct {
+  USB_CLASS_DEVICE_PATH       UsbClass;
+  EFI_DEVICE_PATH_PROTOCOL    End;
+} APPLE_USB_CLASS_FORMAT_DEVICE_PATH;
+
+STATIC APPLE_USB_CLASS_FORMAT_DEVICE_PATH  mUsbClassKeyboardDevicePath = {
+  {
+    {
+      MESSAGING_DEVICE_PATH,
+      MSG_USB_CLASS_DP,
+      {
+        (UINT8)(sizeof (USB_CLASS_DEVICE_PATH)),
+        (UINT8)((sizeof (USB_CLASS_DEVICE_PATH)) >> 8)
+      }
+    },
+    0xffff,                      // VendorId  (any)
+    0xffff,                      // ProductId (any)
+    APPLE_USB_CLASS_HID,
+    APPLE_USB_SUBCLASS_BOOT,
+    APPLE_USB_PROTOCOL_KEYBOARD
+  },
+  {
+    END_DEVICE_PATH_TYPE,
+    END_ENTIRE_DEVICE_PATH_SUBTYPE,
+    { END_DEVICE_PATH_LENGTH, 0 }
+  }
+};
+
+/**
+  Drop the USB class keyboard short-form path from ConIn.
+
+  PlatformBootManagerBeforeConsole appends it unconditionally, a few lines
+  before it calls DeviceBootManagerBeforeConsole, so this runs late enough to
+  undo it and early enough that nothing has tried to connect ConIn yet.
+
+  On J704 the only keyboard is internal (MTP over dockchannel, no UEFI driver
+  yet), so the path can never resolve. What it does instead is make the console
+  depend on USB: connecting ConIn walks NonDiscoverablePciDeviceStart ->
+  XhciDxe -> UsbBusDxe -> UsbRootHubInit, which currently stalls, and BDS never
+  reaches a boot option. Removing it leaves XhciDxe registered and bindable --
+  USB media can still be connected explicitly from the Shell with `connect -r`.
+**/
+STATIC
+VOID
+RemoveUsbKeyboardFromConIn (
+  VOID
+  )
+{
+  EFI_STATUS  Status;
+
+  Status = EfiBootManagerUpdateConsoleVariable (
+             ConIn,
+             NULL,
+             (EFI_DEVICE_PATH_PROTOCOL *)&mUsbClassKeyboardDevicePath
+             );
+
+  DEBUG ((
+    DEBUG_INFO,
+    "%a: dropped USB keyboard from ConIn - %r\n",
+    __FUNCTION__,
+    Status
+    ));
+}
+
+/**
+  Dump one console variable as text, and report whether each instance in it can
+  actually be connected.
+
+  Added for attempt 33. FW-4 reached the Shell but no keystroke ever arrived, and
+  the VUART never received the Shell's *ConOut* output either, while the raw
+  DEBUG() stream over the same UART kept working perfectly. That combination says
+  the serial console's device path is not resolving to a handle, so neither
+  EfiBootManagerConnectConsoleVariable (ConOut) at BdsEntry.c:957 nor the ConIn
+  equivalent at BdsEntry.c:77 can tag it -- and BmConsole.c *deletes* instances it
+  fails to connect, so the evidence erases itself.
+
+  Printing the variable and the per-instance status is the cheapest way to see
+  which of those it is, rather than inferring it from absence.
+**/
+STATIC
+VOID
+DumpConsoleVariable (
+  IN CONSOLE_TYPE  ConsoleType,
+  IN CHAR16        *VarName
+  )
+{
+  EFI_DEVICE_PATH_PROTOCOL  *DevicePath;
+  EFI_DEVICE_PATH_PROTOCOL  *Walk;
+  EFI_DEVICE_PATH_PROTOCOL  *Instance;
+  EFI_STATUS                Status;
+  CHAR16                    *Text;
+  UINTN                     Size;
+  UINTN                     Index;
+
+  DevicePath = NULL;
+  GetEfiGlobalVariable2 (VarName, (VOID **)&DevicePath, NULL);
+
+  if (DevicePath == NULL) {
+    DEBUG ((DEBUG_ERROR, "CONSOLEDUMP: %s is ABSENT\n", VarName));
+    return;
+  }
+
+  Text = ConvertDevicePathToText (DevicePath, FALSE, FALSE);
+  DEBUG ((DEBUG_ERROR, "CONSOLEDUMP: %s = %s\n", VarName, Text != NULL ? Text : L"<untextable>"));
+  if (Text != NULL) {
+    FreePool (Text);
+  }
+
+  //
+  // Walk the instances and report connectability per instance. This is
+  // read-only: unlike BmConsole.c it never edits the variable on failure.
+  //
+  Walk  = DevicePath;
+  Index = 0;
+  while (Walk != NULL) {
+    Instance = GetNextDevicePathInstance (&Walk, &Size);
+    if (Instance == NULL) {
+      break;
+    }
+
+    Status = EfiBootManagerConnectDevicePath (Instance, NULL);
+    Text   = ConvertDevicePathToText (Instance, FALSE, FALSE);
+    DEBUG ((
+      DEBUG_ERROR,
+      "CONSOLEDUMP:   %s[%d] connect = %r  <- %s\n",
+      VarName,
+      Index,
+      Status,
+      Text != NULL ? Text : L"<untextable>"
+      ));
+    if (Text != NULL) {
+      FreePool (Text);
+    }
+
+    FreePool (Instance);
+    Index++;
+  }
+
+  FreePool (DevicePath);
+}
+
 /**
   Do the device specific action before the console is connected.
 
@@ -772,6 +948,10 @@ DeviceBootManagerBeforeConsole (
   BDS_CONSOLE_CONNECT_ENTRY  **PlatformConsoles
   )
 {
+  if (!PcdGetBool (PcdAppleConnectUsbKeyboardConsole)) {
+    RemoveUsbKeyboardFromConIn ();
+  }
+
   MsBootOptionsLibRegisterDefaultBootOptions ();
   *PlatformConsoles = GetPlatformConsoleList ();
 
@@ -792,6 +972,15 @@ DeviceBootManagerAfterConsole (
   EFI_BOOT_MODE    BootMode;
   TPM_PP_PROTOCOL  *TpmPp = NULL;
   EFI_STATUS       Status;
+
+  //
+  // Attempt 33 diagnostic. Runs after gPlatformConsoles has been merged into the
+  // console variables (BdsPlatform.c:237-256) and after BdsEntry has connected
+  // ConOut/ErrOut, so what it prints is the state that actually decided whether
+  // the VUART became a console.
+  //
+  DumpConsoleVariable (ConIn, L"ConIn");
+  DumpConsoleVariable (ConOut, L"ConOut");
 
   MsPreBootChecks ();
 
@@ -882,6 +1071,22 @@ DeviceBootManagerProcessBootCompletion (
   }
 
   if (MsBootNext) {
+    //
+    // Second RebootToFrontPage() call site, deliberately left as a reset.
+    //
+    // It has the same underlying problem as the one in
+    // DeviceBootManagerUnableToBoot() -- the emulated variable store loses
+    // OsIndications across the reset, so this does not actually land in
+    // FrontPage. It is not an infinite loop though: MsBootNext is cleared just
+    // above, so the following boot falls through to UnableToBoot, which now
+    // enters the menu directly. The cost is one wasted reset.
+    //
+    // Not converted to an in-place EfiBootManagerBoot() because this runs from
+    // ProcessBootCompletion, i.e. while unwinding a boot attempt that has just
+    // returned; re-entering the boot manager from there is a re-entrancy risk
+    // that the UnableToBoot path does not have. Revisit together with real
+    // variable persistence.
+    //
     SetRebootReason (RestartStatus);
     RebootToFrontPage ();    // Reboot to front page
   }
@@ -965,7 +1170,47 @@ DeviceBootManagerUnableToBoot (
   VOID
   )
 {
-  // Have to reboot to font page as seetings are locked at ReadyToBoot.  This allows
-  // settings to be available if ReadyToBoot has been called.
-  RebootToFrontPage ();
+  EFI_STATUS                    Status;
+  EFI_BOOT_MANAGER_LOAD_OPTION  BootManagerMenu;
+
+  //
+  // Boot the Boot Manager Menu in place rather than calling RebootToFrontPage().
+  //
+  // The original comment read "Have to reboot to front page as settings are
+  // locked at ReadyToBoot", and the mechanism was: set OsIndications =
+  // EFI_OS_INDICATIONS_BOOT_TO_FW_UI, warm reset, and let the next boot notice
+  // the variable and enter FrontPage early -- before ReadyToBoot locks settings.
+  //
+  // That mechanism cannot work here. AppleSiliconPkg.dsc.inc sets
+  // PcdEmuVariableNvModeEnable|TRUE, so the variable store is emulated and lives
+  // in RAM only; nothing survives a reset. (This is the same missing persistence
+  // that made PcdResetOnMemoryTypeInformationChange|FALSE necessary.) So
+  // OsIndications is gone by the time the next boot reads it, BDS again finds
+  // nothing bootable, calls UnableToBoot, and resets again -- an unconditional
+  // reboot loop in which FrontPage is never reached. m1n1 sees each one as PSCI
+  // SYSTEM_RESET.
+  //
+  // Booting the menu directly costs the "settings unlocked" property that the
+  // reboot was buying, so settings pages may be read-only this late in BDS. That
+  // is a fair trade for a boot menu that appears at all, and it is the only
+  // option until the variable store is actually backed by something persistent.
+  // Revisit if/when that lands.
+  //
+  Status = MsBootOptionsLibGetBootManagerMenu (&BootManagerMenu, NULL);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "%a: no Boot Manager Menu option (%r), falling back to reset\n", __FUNCTION__, Status));
+    RebootToFrontPage ();
+    return;
+  }
+
+  DEBUG ((DEBUG_INFO, "%a: nothing bootable, entering Boot Manager Menu\n", __FUNCTION__));
+  EfiBootManagerBoot (&BootManagerMenu);
+  EfiBootManagerFreeLoadOption (&BootManagerMenu);
+
+  //
+  // Returning hands control back to BDS, which loops and calls this again. That
+  // is the correct behaviour for a menu the user exited -- it re-displays --
+  // and unlike the old path it does not reset the machine to do it.
+  //
+  DEBUG ((DEBUG_INFO, "%a: returned from Boot Manager Menu\n", __FUNCTION__));
 }

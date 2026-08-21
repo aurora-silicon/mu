@@ -22,6 +22,12 @@ enum ntasi_ans_controller_result {
 struct ntasi_ans_controller_ops {
     uint32_t (*read32)(void *opaque, uint32_t offset);
     void (*write32)(void *opaque, uint32_t offset, uint32_t value);
+    /*
+     * Queue-base registers are architecturally 64-bit.  Real ARM64 targets
+     * should provide one native MMIO transaction; host models may leave this
+     * NULL and retain the legacy low/high 32-bit fallback.
+     */
+    void (*write64)(void *opaque, uint32_t offset, uint64_t value);
     void (*dma_read_barrier)(void *opaque);
     void (*dma_write_barrier)(void *opaque);
     /* Services ASC/RTKit traffic while the controller is polled. */
@@ -86,7 +92,10 @@ int ntasi_ans_controller_start_variant(
     const struct ntasi_ans_queue_memory *admin,
     const struct ntasi_ans_queue_memory *io);
 
-/* Serialized tag-0 command path used by m1n1 and the first firmware driver. */
+/*
+ * Serialized command path. Admin uses tag 0; linear I/O starts after the
+ * reserved two-entry admin tag range, matching m1n1 and Linux.
+ */
 int ntasi_ans_controller_execute(
     struct ntasi_ans_controller *controller,
     struct ntasi_ans_controller_queue *queue,

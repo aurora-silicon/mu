@@ -41,6 +41,7 @@
 [FixedPcd]
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferWidth
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferHeight
+  gAppleSiliconPkgTokenSpaceGuid.PcdConsoleScaleDivisor
 
 [Guids]
   gEfiMdeModulePkgTokenSpaceGuid

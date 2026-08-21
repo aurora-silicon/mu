@@ -18,6 +18,7 @@
 #include <Library/AppleSysRegs.h>
 #include <Library/ArmGenericTimerCounterLib.h>
 #include <Library/AppleDTLib.h>
+#include <Library/PcdLib.h>
 
 #define APPLE_FAST_IPI_STATUS_PENDING BIT(0)
 #define AIC_TIMER_REFLECT_CALL_MAGIC 0x4e54414943ULL /* "NTAIC" */
@@ -29,6 +30,32 @@ STATIC UINT64 mAicV2SoftwareClearRegOffset, mAicV2IrqMaskSetOffset;
 STATIC UINT64 mAicV2IrqMaskClearOffset, mAicV2HwStateOffset;
 STATIC UINT64 mAicV2EventReg;
 STATIC APPLE_AIC_VERSION mAicVersion;
+
+typedef struct {
+    CHAR8           Magic[8];
+    volatile UINT64 Stage;
+    volatile UINT64 Value0;
+    volatile UINT64 Value1;
+    volatile UINT64 Status;
+} AURORA_AIC_TRACE;
+
+// Host-readable bring-up breadcrumbs.  Keep the magic initialized so the
+// block can be found in the relocated DXE image after an EL2 watchdog break.
+STATIC volatile AURORA_AIC_TRACE mAuroraAicTrace = {
+    { 'A', 'U', 'R', 'A', 'I', 'C', '0', '1' },
+    0,
+    0,
+    0,
+    0
+};
+
+#define AURORA_AIC_STAGE(StageValue, FirstValue, SecondValue, StatusValue) \
+    do {                                                                  \
+        mAuroraAicTrace.Value0 = (UINT64)(FirstValue);                    \
+        mAuroraAicTrace.Value1 = (UINT64)(SecondValue);                   \
+        mAuroraAicTrace.Status = (UINT64)(StatusValue);                   \
+        mAuroraAicTrace.Stage  = (UINT64)(StageValue);                    \
+    } while (0)
 
 STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID);
 
@@ -219,7 +246,9 @@ STATIC EFI_STATUS EFIAPI AppleAicV2EndOfInterrupt(
  */
 STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
 {
+    AURORA_AIC_STAGE (0x10, mAicVersion, 0, 0);
     dt_node_t *InterruptControllerNode = dt_get("aic");
+    AURORA_AIC_STAGE (0x11, InterruptControllerNode, 0, 0);
     if (!InterruptControllerNode) {
         DEBUG((EFI_D_INFO | EFI_D_LOAD | EFI_D_ERROR, "no ADT supplied, exiting\n"));
         ASSERT(FALSE);
@@ -257,7 +286,9 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     }
 
     AicInfoStruct->NumIrqs = AppleAicGetNumInterrupts(AicV2Base);
+    AURORA_AIC_STAGE (0x13, AicV2Base, AicInfoStruct->NumIrqs, 0);
     AicInfoStruct->MaxIrqs = AppleAicGetMaxInterrupts(AicV2Base);
+    AURORA_AIC_STAGE (0x14, AicInfoStruct->NumIrqs, AicInfoStruct->MaxIrqs, 0);
 
     if(mAicVersion == APPLE_AIC_VERSION_1){
         AicInfoStruct->MaxCpuDies = 1;
@@ -304,6 +335,40 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     }
     else if(mAicVersion == APPLE_AIC_VERSION_2){
         mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
+        AURORA_AIC_STAGE (0x16, mAicV2EventReg, 0, 0);
+
+        /**
+         * The external interrupt config block is RELOCATABLE on AICv3.
+         *
+         * AppleArmGetAicVersion() maps "aic,3" onto APPLE_AIC_VERSION_2, so this
+         * path also runs on AICv3 hardware -- but there the config base is not
+         * the AICv2 constant. On T8142 (Apple M5) the ADT reports
+         * extint-baseaddress = 0x10000, whereas AIC_V2_IRQ_CFG_REG is 0x2000.
+         *
+         * This matters a great deal, because SW_SET, SW_CLEAR, MASK_SET,
+         * MASK_CLEAR and HW_STATE are all derived from StartOffset below. Left
+         * hardcoded, every mask and unmask would land 0xE000 low, in the middle
+         * of unrelated AIC registers, and no interrupt would ever be delivered.
+         *
+         * m1n1 treats this property as mandatory on AICv3 and optional on AICv2
+         * (see its aic23_init()). Mirror that: prefer the ADT value, fall back to
+         * the AICv2 constant so genuine AICv2 parts that omit the property keep
+         * their existing behaviour.
+         *
+         * NOTE: dt_node_u32() takes an INDEX, not a default, and asserts when the
+         * property is absent -- so the presence check has to go through
+         * dt_node_prop().
+         */
+        size_t ExtIntBaseSize = 0;
+        UINT32 *ExtIntBase = dt_node_prop(InterruptControllerNode, "extint-baseaddress", &ExtIntBaseSize);
+
+        if ((ExtIntBase != NULL) && (ExtIntBaseSize >= sizeof(UINT32))) {
+            StartOffset = mAicV2IrqCfgOffset = *ExtIntBase;
+            DEBUG((DEBUG_INFO, "AIC: external interrupt config base from ADT: 0x%lx\n", StartOffset));
+        } else {
+            DEBUG((DEBUG_INFO, "AIC: no extint-baseaddress, using AICv2 default 0x%lx\n", StartOffset));
+        }
+        AURORA_AIC_STAGE (0x17, StartOffset, ExtIntBaseSize, 0);
     }
     else if(mAicVersion == APPLE_AIC_VERSION_3){
         // AICv3 moves the IRQ_CFG block to 0x10000 (ADT-relocatable via
@@ -331,6 +396,24 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     CurrentOffset += sizeof(UINT32) * (AicInfoStruct->MaxIrqs >> 5);
     //HW_STATE (TODO: what is this reg meant for?)
     mAicV2HwStateOffset = CurrentOffset;
+
+    /**
+     * Per-die register stride.
+     *
+     * AICv3 publishes the strides in the ADT rather than implying them from the
+     * register layout. T8142 reports extintrcfg-stride / intmaskset-stride /
+     * intmaskclear-stride, all 0x4a00, which is not what the computation below
+     * produces.
+     *
+     * m1n1 tracks all three separately; this driver has only one DieStride, so
+     * take extintrcfg-stride when present. That is correct as long as the three
+     * agree -- they do on T8142. If a future part reports differing strides this
+     * needs splitting up the way m1n1 does.
+     *
+     * This is currently LATENT rather than active: DieStride is only ever
+     * multiplied by (Source / MaxIrqs), which is 0 on a single-die part, and the
+     * base M5 is single-die. It would bite on a multi-die chip.
+     */
     AicInfoStruct->DieStride = CurrentOffset - StartOffset;
     // AICv1's register banks occupy a fixed 0x8000 window and its event register
     // (base+0x2004) sits BELOW them, so the v2 "event page" size formula would
@@ -342,6 +425,17 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         AicInfoStruct->RegSize = (mAicV2EventReg - AicV2Base) + 4;
     }
 
+
+    size_t ExtIntrCfgStrideSize = 0;
+    UINT32 *ExtIntrCfgStride = dt_node_prop(InterruptControllerNode, "extintrcfg-stride", &ExtIntrCfgStrideSize);
+
+    if ((ExtIntrCfgStride != NULL) && (ExtIntrCfgStrideSize >= sizeof(UINT32))) {
+        AicInfoStruct->DieStride = *ExtIntrCfgStride;
+        DEBUG((DEBUG_INFO, "AIC: die stride from ADT: 0x%lx\n", AicInfoStruct->DieStride));
+    }
+    AicInfoStruct->RegSize = (mAicV2EventReg - AicV2Base) + 4;
+    AURORA_AIC_STAGE (0x19, AicInfoStruct->DieStride, AicInfoStruct->RegSize, 0);
+    
     return EFI_SUCCESS;
 
 }
@@ -372,12 +466,18 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
     UINT64 PmcStatus;
     UINT64 UncorePmcStatus;
 
+    // Keep the last interrupt-path operation in guest RAM.  DEBUG output is
+    // not dependable before the serial stack is up on J813, while the EL2
+    // watchdog can still recover this trace from a halted guest.
+    AURORA_AIC_STAGE (0x40, InterruptType, SystemContext.SystemContextAArch64, 0);
     AicEvent = AppleAicAcknowledgeInterrupt(mAicV2EventReg);
+    AURORA_AIC_STAGE (0x41, InterruptType, AicEvent, 0);
     // The event register is not a bare interrupt number: bits 31:24 are the
     // die and bits 23:16 are the event type. Indexing the handler table with
     // the raw word walks far beyond the allocation for every ordinary IRQ.
     AicEventType = FIELD_GET (AIC_EVENT_INTERRUPT_TYPE, AicEvent);
     AicInterrupt = FIELD_GET (AIC_EVENT_IRQ_NUM, AicEvent);
+    AURORA_AIC_STAGE (0x42, AicEventType, AicInterrupt, 0);
     HwInterruptHandler = NULL;
     if (AicInterrupt < AicInfoStruct->MaxIrqs) {
         HwInterruptHandler = AicRegisteredInterruptHandlers[AicInterrupt];
@@ -391,6 +491,7 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
     // CPU exception-type split below failed to classify it as an ordinary IRQ.
     if (AicEventType == 1) {
         if ((AicInterrupt >= TimerPhysBase) && (AicInterrupt < TimerVirtBase)) {
+            AURORA_AIC_STAGE (0x43, AicInterrupt, TimerPhysBase, 0);
             AppleAicV2ClearSoftwareInterrupt (AicInterrupt);
             TimerInterruptHandlerPhys = AicRegisteredInterruptHandlers[17];
             if (TimerInterruptHandlerPhys != NULL) {
@@ -410,6 +511,7 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
         }
 
         if ((AicInterrupt >= TimerVirtBase) && (AicInterrupt < AicInfoStruct->NumIrqs)) {
+            AURORA_AIC_STAGE (0x44, AicInterrupt, TimerVirtBase, 0);
             AppleAicV2ClearSoftwareInterrupt (AicInterrupt);
             TimerInterruptHandlerVirt = AicRegisteredInterruptHandlers[18];
             if (TimerInterruptHandlerVirt != NULL) {
@@ -434,6 +536,7 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
      * 
      */
     if (InterruptType == EXCEPT_AARCH64_FIQ) {
+        AURORA_AIC_STAGE (0x45, AicEvent, AicInterrupt, 0);
         /**
          * 
          * Fast IPIs are not implemented yet, acknowledge but do not act upon them.
@@ -444,6 +547,7 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
             DEBUG((DEBUG_INFO, "Fast IPIs not supported yet, acking\n"));
             AppleAicV2WriteIpiStatusRegister(APPLE_FAST_IPI_STATUS_PENDING);
         }
+        AURORA_AIC_STAGE (0x46, ArmReadCntpCtl(), ArmReadCntvCtl(), 0);
 
         /**
          * Timers
@@ -468,9 +572,16 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
             }
             else
             {
-                //not having a timer interrupt assigned is very bad.
-                DEBUG((DEBUG_ERROR, "Physical timer interrupt not assigned!\n"));
-                ASSERT(FALSE);
+                // A stale architectural timer can already be enabled and
+                // expired when CpuDxe restores the pre-DXE interrupt state.
+                // TimerDxe has not necessarily registered source 17 yet, so
+                // asserting here deadlocks the entire dispatcher.  Mask the
+                // unowned timer until TimerDxe programs its compare value and
+                // writes a clean ENABLE control value after registration.
+                UINTN TimerCtrlReg = ArmReadCntpCtl ();
+                AURORA_AIC_STAGE (0x4B, TimerCtrlReg, 17, 0);
+                ArmWriteCntpCtl (TimerCtrlReg | ARM_ARCH_TIMER_IMASK);
+                return;
             }
 
         }
@@ -484,9 +595,13 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
             }
             else
             {
-                //not having a timer interrupt assigned is very bad.
-                DEBUG((DEBUG_ERROR, "Virtual timer interrupt not assigned!\n"));
-                ASSERT(FALSE);
+                // Apply the same deferral to an early virtual timer.  The
+                // selected TimerDxe library clears IMASK when it publishes the
+                // timer protocol, so this does not suppress the real clock.
+                UINTN TimerCtrlReg = ArmReadCntvCtl ();
+                AURORA_AIC_STAGE (0x4C, TimerCtrlReg, 18, 0);
+                ArmWriteCntvCtl (TimerCtrlReg | ARM_ARCH_TIMER_IMASK);
+                return;
             }
         }
 
@@ -496,20 +611,29 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
          * As with those, ack the interrupts if they come but don't act on them.
          * 
          */
-        PmcStatus = AppleAicV2ReadPmcControlRegister();
-        UncorePmcStatus = AppleAicV2ReadUncorePmcControlRegister();
-        if (PmcStatus & BIT11) {
-            DEBUG((DEBUG_INFO, "PMCR0 FIQ asserted, unsupported, acking\n"));
-            PmcStatus = PmcStatus & ~(BIT18 | BIT17 | BIT16);
-            PmcStatus |= (BIT18 | BIT17 | BIT16 | BIT0);
-            AppleAicV2WritePmcControlRegister(PmcStatus);   
-        }
-        else if (FIELD_GET(APPLE_UPMCR0_IMODE, UncorePmcStatus) == APPLE_UPMCR_FIQ_IMODE && (AppleAicV2ReadUncorePmcStatusRegister() & APPLE_UPMSR_IACT))
-        {
-            DEBUG((DEBUG_INFO, "Uncore PMC FIQ asserted, unsupported, acking\n"));
-            UncorePmcStatus = UncorePmcStatus & ~(APPLE_UPMCR0_IMODE);
-            UncorePmcStatus |= APPLE_UPMCR_OFF_IMODE;
-            AppleAicV2WriteUncorePmcControlRegister(UncorePmcStatus);
+        if (PcdGet32 (PcdAppleSocIdentifier) != 0x8142) {
+            PmcStatus = AppleAicV2ReadPmcControlRegister();
+            AURORA_AIC_STAGE (0x47, PmcStatus, 0, 0);
+            UncorePmcStatus = AppleAicV2ReadUncorePmcControlRegister();
+            AURORA_AIC_STAGE (0x48, PmcStatus, UncorePmcStatus, 0);
+            if (PmcStatus & BIT11) {
+                DEBUG((DEBUG_INFO, "PMCR0 FIQ asserted, unsupported, acking\n"));
+                PmcStatus = PmcStatus & ~(BIT18 | BIT17 | BIT16);
+                PmcStatus |= (BIT18 | BIT17 | BIT16 | BIT0);
+                AppleAicV2WritePmcControlRegister(PmcStatus);
+            }
+            else if (FIELD_GET(APPLE_UPMCR0_IMODE, UncorePmcStatus) == APPLE_UPMCR_FIQ_IMODE && (AppleAicV2ReadUncorePmcStatusRegister() & APPLE_UPMSR_IACT))
+            {
+                DEBUG((DEBUG_INFO, "Uncore PMC FIQ asserted, unsupported, acking\n"));
+                UncorePmcStatus = UncorePmcStatus & ~(APPLE_UPMCR0_IMODE);
+                UncorePmcStatus |= APPLE_UPMCR_OFF_IMODE;
+                AppleAicV2WriteUncorePmcControlRegister(UncorePmcStatus);
+            }
+        } else {
+            // T8142 does not expose these Apple implementation-defined PMC
+            // registers safely to EL1.  This driver has no PMC consumer yet,
+            // so probing them only traps the DXE interrupt dispatcher.
+            AURORA_AIC_STAGE (0x4D, 0x8142, 0, 0);
         }
     }
 
@@ -523,8 +647,10 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
      * 
      */
     else if (InterruptType == EXCEPT_AARCH64_IRQ) {
+        AURORA_AIC_STAGE (0x49, AicInterrupt, HwInterruptHandler, 0);
         if(HwInterruptHandler != NULL) {
             HwInterruptHandler(AicInterrupt, SystemContext);
+            AURORA_AIC_STAGE (0x4A, AicInterrupt, HwInterruptHandler, 0);
         }
         else
         {
@@ -669,6 +795,7 @@ VOID EFIAPI AppleAicV2ExitBootServicesEvent(
 EFI_STATUS AppleAicV2DxeInit(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable, APPLE_AIC_VERSION aicVersion)
 {
 
+    AURORA_AIC_STAGE (1, ImageHandle, aicVersion, 0);
     mAicVersion = aicVersion;
 
     UINTN InterruptIndex;
@@ -678,13 +805,17 @@ EFI_STATUS AppleAicV2DxeInit(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Sys
 
     //DEBUG((DEBUG_INFO, "%a: AIC driver start\n", __FUNCTION__));
     AicInfoStruct = AllocatePool(sizeof(AIC_INFO_STRUCT));
+    AURORA_AIC_STAGE (2, AicInfoStruct, sizeof(AIC_INFO_STRUCT), 0);
     //multi-core support not added yet
     //UINT32 CoreID;
     //Assert that the Hardware Interrupt protocol is not installed already.
     ASSERT_PROTOCOL_ALREADY_INSTALLED (NULL, &gHardwareInterruptProtocolGuid);
+    AURORA_AIC_STAGE (3, 0, 0, 0);
 
     //set up and collect variables in global variables that will get passed to functions that need them.
+    AURORA_AIC_STAGE (4, 0, 0, 0);
     Status = AppleAicV2CalculateRegisterOffsets();
+    AURORA_AIC_STAGE (5, AicV2Base, AicInfoStruct->MaxIrqs, Status);
     AicV2NumInterrupts = AicInfoStruct->NumIrqs;
     AicV2MaxInterrupts = AicInfoStruct->MaxIrqs;
     
@@ -720,8 +851,10 @@ EFI_STATUS AppleAicV2DxeInit(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Sys
     //start from a clean state by disabling all interrupts
     for(InterruptIndex = 0; InterruptIndex < AicV2NumInterrupts; InterruptIndex++)
     {
+        AURORA_AIC_STAGE (8, InterruptIndex, AicV2NumInterrupts, 0);
         AppleAicV2MaskInterrupt(&gHardwareInterruptAicV2Protocol, InterruptIndex);
     }
+    AURORA_AIC_STAGE (9, AicV2NumInterrupts, AicV2MaxInterrupts, 0);
 
     //AICv1 has a real per-IRQ TARGET_CPU register (one u32 per IRQ, value is a
     //one-hot CPU bitmask). Default every line to CPU0 during firmware, matching
@@ -756,11 +889,13 @@ EFI_STATUS AppleAicV2DxeInit(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Sys
 
     //register the interrupt controller now that setup is done.
 
+    AURORA_AIC_STAGE (10, 0, 0, 0);
     Status = InstallAndRegisterInterruptService(
         &gHardwareInterruptAicV2Protocol,
         &gHardwareInterrupt2AicV2Protocol,
         AppleAicV2InterruptHandler,
         AppleAicV2ExitBootServicesEvent
     );
+    AURORA_AIC_STAGE (11, 0, 0, Status);
     return Status;
 }

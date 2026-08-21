@@ -16,6 +16,10 @@
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/BaseLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Guid/AppleFdInfoHob.h>
+#include <Library/DxeServicesTableLib.h>
+#include <Library/HobLib.h>
 #include <Library/UefiLib.h>
 #include <Library/DevicePathLib.h>
 #include <Library/DebugLib.h>

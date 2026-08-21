@@ -32,9 +32,14 @@ static void write32(struct ntasi_ans_controller *controller, uint32_t offset,
     controller->ops.write32(controller->opaque, offset, value);
 }
 
-static void write64_lo_hi(struct ntasi_ans_controller *controller,
-                          uint32_t offset, uint64_t value)
+static void write64(struct ntasi_ans_controller *controller,
+                    uint32_t offset, uint64_t value)
 {
+    if (controller->ops.write64 != NULL) {
+        controller->ops.write64(controller->opaque, offset, value);
+        return;
+    }
+
     write32(controller, offset, (uint32_t)value);
     write32(controller, offset + 4u, (uint32_t)(value >> 32));
 }
@@ -94,7 +99,7 @@ int ntasi_ans_controller_execute(
     uint8_t *command_base;
     uint32_t attempt;
     uint32_t tcb_status;
-    uint8_t tag = 0;
+    uint8_t tag;
 
     if (controller == NULL || queue == NULL || command == NULL ||
         controller->ops.read32 == NULL || controller->ops.write32 == NULL ||
@@ -104,6 +109,13 @@ int ntasi_ans_controller_execute(
         return NTASI_ANS_CONTROLLER_ERR_ARGUMENT;
     if (!controller->enabled)
         return NTASI_ANS_CONTROLLER_ERR_NOT_STARTED;
+
+    /* Admin and I/O queues share the NVMMU tag space on linear ANS. */
+    tag = (!queue->admin && controller->hw->submission_mode ==
+            NTASI_ANS_SUBMISSION_LINEAR_NVMMU) ?
+              (uint8_t)controller->hw->admin_queue_depth : 0;
+    if (tag >= queue->depth)
+        return NTASI_ANS_CONTROLLER_ERR_ARGUMENT;
 
     command_base = queue->memory.commands;
     if (controller->hw->submission_mode ==
@@ -228,20 +240,63 @@ int ntasi_ans_controller_start_variant(
         return NTASI_ANS_CONTROLLER_ERR_BOOT_TIMEOUT;
 
     if (linear) {
-        value = read32(controller, NTASI_ANS_REG_LINEAR_SQ_CTRL);
-        write32(controller, NTASI_ANS_REG_LINEAR_SQ_CTRL,
-                value | NTASI_ANS_LINEAR_SQ_EN);
-        value = read32(controller, NTASI_ANS_REG_UNKNOWN_CTRL);
-        write32(controller, NTASI_ANS_REG_UNKNOWN_CTRL,
-                value & ~NTASI_ANS_UNKCTRL_PRP_NULL_CHECK);
-        write32(controller, NTASI_ANS_REG_MAX_PEND_CMDS,
-                ntasi_ans_max_pend_cmds(slots));
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
+        /*
+         * J813 is compiled against the T8142 ANS contract.  Do not leave the
+         * legacy +0x24908 access reachable through a bad or stale runtime
+         * descriptor: the M5 fabric reports an asynchronous external abort
+         * for either direction at that address.
+         */
+        (void)hw;
+#else
+        if (hw->linear_sq_ctrl_present) {
+            value = read32(controller, NTASI_ANS_REG_LINEAR_SQ_CTRL);
+            write32(controller, NTASI_ANS_REG_LINEAR_SQ_CTRL,
+                    value | NTASI_ANS_LINEAR_SQ_EN);
+        }
+#endif
+#if !defined (SILICON_PLATFORM) || (SILICON_PLATFORM != 8142)
+        if (hw->prp_null_check_ctrl_present) {
+            value = read32(controller, NTASI_ANS_REG_UNKNOWN_CTRL);
+            write32(controller, NTASI_ANS_REG_UNKNOWN_CTRL,
+                    value & ~NTASI_ANS_UNKCTRL_PRP_NULL_CHECK);
+        }
+#endif
+#if !defined (SILICON_PLATFORM) || (SILICON_PLATFORM != 8142)
+        if (hw->max_pend_cmds_ctrl_present) {
+            write32(controller, NTASI_ANS_REG_MAX_PEND_CMDS,
+                    ntasi_ans_max_pend_cmds(slots));
+        }
+#endif
         write32(controller, NTASI_ANS_REG_NVMMU_NUM,
                 ntasi_ans_nvmmu_num(slots));
-        write64_lo_hi(controller, NTASI_ANS_REG_NVMMU_ASQ_BASE,
-                      admin->tcbs_dma);
-        write64_lo_hi(controller, NTASI_ANS_REG_NVMMU_IOSQ_BASE,
-                      io->tcbs_dma);
+        write64(controller, NTASI_ANS_REG_NVMMU_ASQ_BASE, admin->tcbs_dma);
+        write64(controller, NTASI_ANS_REG_NVMMU_IOSQ_BASE, io->tcbs_dma);
+
+        if (hw->secure_io_queue_registers) {
+            /*
+             * T8142's CoastGuard/SPTM contract requires the queue geometry,
+             * completion queue, then submission queue in this exact order.
+             * Use low-dword, barrier, high-dword writes as the working m1n1
+             * implementation does; a generic 64-bit MMIO store is not
+             * equivalent at this secure aperture.
+             */
+            write32(controller, NTASI_ANS_REG_T8142_IOQA,
+                    ntasi_ans_aqa(slots));
+            dma_write_barrier(controller);
+            write32(controller, NTASI_ANS_REG_T8142_IOCQ_ADDR,
+                    (uint32_t)io->completions_dma);
+            dma_write_barrier(controller);
+            write32(controller, NTASI_ANS_REG_T8142_IOCQ_ADDR + 4u,
+                    (uint32_t)(io->completions_dma >> 32));
+            dma_write_barrier(controller);
+            write32(controller, NTASI_ANS_REG_T8142_IOSQ_ADDR,
+                    (uint32_t)io->commands_dma);
+            dma_write_barrier(controller);
+            write32(controller, NTASI_ANS_REG_T8142_IOSQ_ADDR + 4u,
+                    (uint32_t)(io->commands_dma >> 32));
+            dma_write_barrier(controller);
+        }
     }
 
     value = read32(controller, NTASI_ANS_REG_CC);
@@ -249,8 +304,8 @@ int ntasi_ans_controller_start_variant(
     if (!poll_mask(controller, NTASI_ANS_REG_CSTS, NTASI_ANS_CSTS_RDY, 0))
         return NTASI_ANS_CONTROLLER_ERR_DISABLE_TIMEOUT;
 
-    write64_lo_hi(controller, NTASI_ANS_REG_ASQ, admin->commands_dma);
-    write64_lo_hi(controller, NTASI_ANS_REG_ACQ, admin->completions_dma);
+    write64(controller, NTASI_ANS_REG_ASQ, admin->commands_dma);
+    write64(controller, NTASI_ANS_REG_ACQ, admin->completions_dma);
     write32(controller, NTASI_ANS_REG_AQA,
             ntasi_ans_aqa(hw->admin_queue_depth));
 

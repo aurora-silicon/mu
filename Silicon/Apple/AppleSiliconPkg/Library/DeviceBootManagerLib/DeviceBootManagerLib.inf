@@ -41,6 +41,7 @@
   MsPlatformDevicesLib
   MsNetworkDependencyLib
   MsBootOptionsLib
+  UefiBootManagerLib
   ConsoleMsgLib
   MsBootPolicyLib
   MsBootManagerSettingsLib
@@ -60,7 +61,7 @@
   gDfciStartOfBdsNotifyGuid
   gMsBootMenuFormsetGuid
   gEfiEventPreReadyToBootGuid
-  gEfiEventPostReadyToBootGuid
+  gEfiEventAfterReadyToBootGuid
   gDfciSettingsManagerVarNamespace
 
 [Protocols]
@@ -78,6 +79,8 @@
   gPcBdsPkgTokenSpaceGuid.PcdEnableMemMapTypes
   gPcBdsPkgTokenSpaceGuid.PcdEnableMemMapDumpOutput
   gPcBdsPkgTokenSpaceGuid.PcdLowResolutionInternalShell
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectUsbKeyboardConsole
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectAllForInternalShell
 
 [Depex]
   TRUE

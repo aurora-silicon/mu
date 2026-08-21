@@ -75,10 +75,17 @@
 // Upper bound on the number of "reg" tuples the "/arm-io/pmgr" node itself
 // may carry that this code will resolve. Every psreg_idx seen on T602X
 // indexes 0..2 (main pmgr, pmgr_west-ish, pmgr_east) plus one high index for
-// the NUB/AOP-side block; 16 is comfortable headroom and keeps the array on
-// the stack.
+// the NUB/AOP-side block.
 //
-#define APPLE_ANS_PMGR_MAX_REG_TUPLES  16u
+// 16 was comfortable headroom for T602X and far too small for T8142: J813's
+// pmgr node carries 54 reg tuples, and its third ps-group indexes reg 48. The
+// ANS domains themselves all live in group 0 -> reg 0, so the old cap did not
+// change the storage outcome, but a table that silently stops at 16 cannot
+// resolve two thirds of this SoC's power domains and would misreport any
+// future caller that asked about one. Sized to cover J813 with headroom; still
+// a stack array of UINT64, so 64 entries is 512 bytes.
+//
+#define APPLE_ANS_PMGR_MAX_REG_TUPLES  64u
 
 //
 // Reset timing. m1n1 holds RESET for a flat 10 us (src/pmgr.c
@@ -121,9 +128,10 @@
 STATIC
 inline
 EFI_STATUS
-AppleAnsPmgrResolveDomain (
+AppleAnsPmgrResolveDomainEx (
   IN  CONST CHAR8  *Tag,
   IN  CONST CHAR8  *DomainName,
+  IN  BOOLEAN      Quiet,
   OUT UINT64       *Address
   )
 {
@@ -132,26 +140,50 @@ AppleAnsPmgrResolveDomain (
   UINTN         DevicesLength;
   CONST UINT32  *PsRegs;
   UINTN         PsRegsLength;
+  CONST UINT32  *PsGroups;
+  UINTN         PsGroupsLength;
   UINT64        RegTupleBases[APPLE_ANS_PMGR_MAX_REG_TUPLES];
   UINT32        RegTupleCount;
   UINT32        TupleIndex;
 
   PmgrNode = dt_get ("/arm-io/pmgr");
   if (PmgrNode == NULL) {
-    DEBUG ((DEBUG_ERROR, "%a: \"/arm-io/pmgr\" ADT node not found; cannot resolve %a\n", Tag, DomainName));
+    DEBUG ((Quiet ? DEBUG_VERBOSE : DEBUG_ERROR, "%a: \"/arm-io/pmgr\" ADT node not found; cannot resolve %a\n", Tag, DomainName));
     return EFI_NOT_FOUND;
   }
 
   Devices = dt_node_prop (PmgrNode, "devices", &DevicesLength);
   if ((Devices == NULL) || (DevicesLength < NTASI_PMGR_DEVICE_SIZE)) {
-    DEBUG ((DEBUG_ERROR, "%a: \"/arm-io/pmgr\" has no usable \"devices\" property\n", Tag));
+    DEBUG ((Quiet ? DEBUG_VERBOSE : DEBUG_ERROR, "%a: \"/arm-io/pmgr\" has no usable \"devices\" property\n", Tag));
     return EFI_NOT_FOUND;
   }
 
+  //
+  // "ps-regs" up to T8132 (M4), "ps-groups" from T8142 (M5). Take whichever
+  // this ADT actually carries, the same way m1n1's pmgr_init() does -- and
+  // fail only when NEITHER is present, because that is the only case this
+  // code genuinely cannot resolve. Requiring ps-regs unconditionally is what
+  // withheld NTAS2003 on J813 while the SSD itself was working perfectly:
+  // every domain lookup failed before it ever compared a device name.
+  //
+  PsRegsLength   = 0;
+  PsGroupsLength = 0;
+  PsGroups       = NULL;
+
   PsRegs = (CONST UINT32 *)dt_node_prop (PmgrNode, "ps-regs", &PsRegsLength);
   if ((PsRegs == NULL) || (PsRegsLength < (NTASI_PMGR_PSREG_STRIDE * sizeof (UINT32)))) {
-    DEBUG ((DEBUG_ERROR, "%a: \"/arm-io/pmgr\" has no usable \"ps-regs\" property\n", Tag));
-    return EFI_NOT_FOUND;
+    PsRegs       = NULL;
+    PsRegsLength = 0;
+
+    PsGroups = (CONST UINT32 *)dt_node_prop (PmgrNode, "ps-groups", &PsGroupsLength);
+    if ((PsGroups == NULL) || (PsGroupsLength < (NTASI_PMGR_PSGROUP_STRIDE * sizeof (UINT32)))) {
+      DEBUG ((
+        Quiet ? DEBUG_VERBOSE : DEBUG_ERROR,
+        "%a: \"/arm-io/pmgr\" has neither a usable \"ps-regs\" nor \"ps-groups\" property\n",
+        Tag
+        ));
+      return EFI_NOT_FOUND;
+    }
   }
 
   //
@@ -174,31 +206,108 @@ AppleAnsPmgrResolveDomain (
   }
 
   if (RegTupleCount == 0) {
-    DEBUG ((DEBUG_ERROR, "%a: \"/arm-io/pmgr\" has no readable \"reg\" tuples\n", Tag));
+    DEBUG ((Quiet ? DEBUG_VERBOSE : DEBUG_ERROR, "%a: \"/arm-io/pmgr\" has no readable \"reg\" tuples\n", Tag));
     return EFI_NOT_FOUND;
   }
 
-  if (NtasiPmgrFindDomainAddress (
+  if (NtasiPmgrFindDomainAddressEx (
         Devices,
         (UINT32)(DevicesLength / NTASI_PMGR_DEVICE_SIZE),
         RegTupleBases,
         RegTupleCount,
         PsRegs,
         (UINT32)(PsRegsLength / sizeof (UINT32)),
+        PsGroups,
+        (UINT32)(PsGroupsLength / sizeof (UINT32)),
         DomainName,
         Address
         ) != NTASI_PMGR_TRUE)
   {
     DEBUG ((
-      DEBUG_ERROR,
-      "%a: could not uniquely resolve PMGR domain \"%a\" from the live ADT\n",
+      Quiet ? DEBUG_VERBOSE : DEBUG_ERROR,
+      "%a: could not uniquely resolve PMGR domain \"%a\" from the live ADT (%a layout)\n",
       Tag,
-      DomainName
+      DomainName,
+      (PsRegs != NULL) ? "ps-regs" : "ps-groups"
       ));
     return EFI_NOT_FOUND;
   }
 
   return EFI_SUCCESS;
+}
+
+/**
+  Resolve a PMGR domain, reporting a failure to resolve as an error.
+
+  The spelling every caller outside AppleAnsPmgrSelectDomain() should use: if
+  you asked for one specific name and it is not there, that is a real problem
+  and belongs in the log at DEBUG_ERROR.
+**/
+STATIC
+inline
+EFI_STATUS
+AppleAnsPmgrResolveDomain (
+  IN  CONST CHAR8  *Tag,
+  IN  CONST CHAR8  *DomainName,
+  OUT UINT64       *Address
+  )
+{
+  return AppleAnsPmgrResolveDomainEx (Tag, DomainName, FALSE, Address);
+}
+
+/**
+  Resolve a PMGR domain whose exact Apple name changed between SoC families.
+
+  T602x calls the ANS controller domain "ANS2" and its system-storage parent
+  "APCIE_ST_SYS". T8142 calls the same roles "ANS" and "APCIE_SYS_ST".
+  This helper preserves the important safety property above: both candidates
+  are exact names read from the live ADT, and no numeric address is ever used
+  as a fallback.
+**/
+STATIC
+inline
+EFI_STATUS
+AppleAnsPmgrSelectDomain (
+  IN  CONST CHAR8   *Tag,
+  IN  CONST CHAR8   *PrimaryName,
+  IN  CONST CHAR8   *AlternateName OPTIONAL,
+  OUT CONST CHAR8  **SelectedName,
+  OUT UINT64        *Address
+  )
+{
+  EFI_STATUS  Status;
+
+  if ((SelectedName == NULL) || (Address == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  *SelectedName = NULL;
+  *Address      = 0;
+
+  //
+  // Probing the primary name is not a failure when an alternate exists -- on
+  // T8142 the T602x spelling is SUPPOSED to be absent. Logging that miss at
+  // DEBUG_ERROR made every healthy J813 boot print two "could not uniquely
+  // resolve" lines, which is exactly the noise that makes a real resolution
+  // failure easy to miss. Quiet for the speculative attempt, loud for the last
+  // one, so the log only shouts when no spelling worked.
+  //
+  Status = AppleAnsPmgrResolveDomainEx (Tag, PrimaryName, (BOOLEAN)(AlternateName != NULL), Address);
+  if (!EFI_ERROR (Status)) {
+    *SelectedName = PrimaryName;
+    return EFI_SUCCESS;
+  }
+
+  if (AlternateName == NULL) {
+    return Status;
+  }
+
+  Status = AppleAnsPmgrResolveDomain (Tag, AlternateName, Address);
+  if (!EFI_ERROR (Status)) {
+    *SelectedName = AlternateName;
+  }
+
+  return Status;
 }
 
 /**

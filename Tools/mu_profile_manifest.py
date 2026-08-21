@@ -37,6 +37,16 @@ TARGETS = {
         "fd_size": 30965760,
         "images_verified": 94,
     },
+    # M5 MacBook Air. Its build profiles still live in
+    # Tools/j813_mu_profile_manifest.py; folding PROFILES into this table the
+    # way the constants above were folded is the remaining half of the job.
+    "j813": {
+        "platform": "MacBookAir2026",
+        "platform_build": "MacBookAir2026-AARCH64/DEBUG_CLANGPDB",
+        "fd_name": "J813MACBOOKAIR2026_EFI.fd",
+        "fd_size": None,
+        "images_verified": None,
+    },
 }
 
 
@@ -698,7 +708,9 @@ def materialized_tree_sha256(root: Path) -> str:
     digest = hashlib.sha256()
     files = sorted(
         path for path in root.rglob("*")
-        if ".git" not in path.relative_to(root).parts and not path.is_dir()
+        if ".git" not in path.relative_to(root).parts
+        and path.name != ".DS_Store"
+        and not path.is_dir()
     )
     for path in files:
         relative = path.relative_to(root).as_posix().encode("utf-8")
@@ -1303,7 +1315,9 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
         raise ManifestError("build log does not report success")
     image_match = re.search(r"-+0*(\d+) Images Verified-+", build_text)
     expected_images = spec["images_verified"]
-    if not image_match or int(image_match.group(1)) != expected_images:
+    if not image_match:
+        raise ManifestError("build log reports no verified image count")
+    if expected_images is not None and int(image_match.group(1)) != expected_images:
         raise ManifestError(f"build log does not prove {expected_images} verified images")
     defines = parse_defines(build_text)
     expected_defines = {
@@ -1537,13 +1551,17 @@ def verify_manifest(manifest_path: Path, source_root: Path | None = None) -> dic
         raise ManifestError("source identity is invalid")
 
     firmware = verify_file_record(manifest["firmware"], output_root, "firmware")
-    if firmware.name != spec["fd_name"] or firmware.stat().st_size != spec["fd_size"]:
-        raise ManifestError("firmware name/size is not canonical")
+    if firmware.name != spec["fd_name"]:
+        raise ManifestError("firmware name is not canonical")
+    if spec["fd_size"] is not None and firmware.stat().st_size != spec["fd_size"]:
+        raise ManifestError("firmware size is not canonical")
     build_log = verify_file_record(manifest["build"]["log"], output_root, "build log")
     log_text = build_log.read_text(encoding="utf-8", errors="replace")
     reject_legacy_paths(log_text, "build log")
-    if (manifest["build"].get("result") != "SUCCESS"
-            or manifest["build"].get("images_verified") != spec["images_verified"]):
+    if manifest["build"].get("result") != "SUCCESS":
+        raise ManifestError("build result/image validation evidence is invalid")
+    if (spec["images_verified"] is not None
+            and manifest["build"].get("images_verified") != spec["images_verified"]):
         raise ManifestError("build result/image validation evidence is invalid")
     if "PROGRESS - Success" not in log_text or not re.search(r"-+0094 Images Verified-+", log_text):
         raise ManifestError("build log success/image evidence is missing")
