@@ -67,6 +67,45 @@ iBoot versions. A static table that disagrees with the machine is a bug you can
 find by reading. A dynamic lookup that returns nothing is a bug you find by
 bisecting boots.
 
+## Where the windows should actually come from
+
+Not the live ADT. Asahi's device trees.
+
+`aurora-silicon/linux` on the `asahi` branch carries 110 per-machine `.dts`
+files over 112 SoC `.dtsi` files. Filtering to Macs, that is 41 machines across
+seven SoC families: T8103, T8112, T600X, T602X, T603X, T8122, T8132. We support
+two.
+
+They are already layered the way this tree wants to be. `t6020-j414s.dts` is 47
+lines and does nothing but include `t6020.dtsi` for the SoC and
+`t602x-j414-j416.dtsi` for the chassis.
+
+And they carry the exact numbers we hardcoded. Six of the seven MCA windows in
+`Include/Platform/NtasiMediaJ414s.h` resolve to a named node in
+`t602x-die0.dtsi`:
+
+| our literal | node |
+| --- | --- |
+| `0x39B600000` | `mca@39b600000` |
+| `0x39B500000` | `audio-controller@39b500000` |
+| `0x39B400000` | `dma-controller@39b400000` |
+| `0x28E03C000` | `clock-controller@28e03c000` |
+| `0x39B044000` | `i2c@39b044000` |
+| `0x39B04C000` | `i2c@39b04c000` |
+| `0x39B028000` | not in that file |
+
+That is better than the live ADT for our purposes, and it removes my main
+objection above. A device tree is read at **build** time, so a missing node is
+a build error rather than a device that silently does not appear on a machine
+nobody has in front of them. It has also been reviewed against real hardware by
+people who boot Linux on it, and its node names are stable across machines in a
+way Apple's ADT property names are not.
+
+So the shape is: generate the window tables from the `.dts` at build time, emit
+them as a checked-in generated header, and keep the current literals as the pin
+for J414s. The generator is the next piece of work, and 41 machines is what it
+buys.
+
 ## The rule for the windows we do move
 
 The literal does not go away. It becomes the pin.
