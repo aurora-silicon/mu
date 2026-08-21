@@ -1,4 +1,13 @@
 /*
+ * glibc only declares posix_memalign when a POSIX feature-test macro asks for
+ * it; macOS declares it unconditionally, so this built here and not on the
+ * Linux CI runner. Must precede every #include.
+ */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200112L
+#endif
+
+/*
  * Host-side, hardware-free regression test for the m1n1 -> Mu wireless DART
  * handoff validator in
  * Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/WirelessHandoff.h.
