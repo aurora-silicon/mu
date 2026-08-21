@@ -114,13 +114,22 @@ class J813InternalStorageContractTests(unittest.TestCase):
         )
 
     def test_fdf_embeds_real_ans_driver_only_for_the_storage_profile(self) -> None:
-        guarded = (
+        # The guarded INF moved into AppleSiliconFvMain.fdf.inc, so check the
+        # machine still selects the guarded slot rather than the unconditional
+        # one. test_fdf_fvmain_expansion.py proves the include still resolves to
+        # the same module list this platform had before the hoist.
+        self.assertIn("DEFINE PLATFORM_NAND_SLOT = LATE", self.fdf)
+        include = (
+            Path(__file__).resolve().parents[1]
+            / "Silicon/Apple/AppleSiliconPkg/AppleSiliconFvMain.fdf.inc"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
             "!if $(NTASI_ENABLE_ANS) == TRUE\n"
             "  INF AppleSiliconPkg/Drivers/AppleNANDStorageDxe/"
             "AppleNANDStorageDxe.inf\n"
-            "!endif"
+            "!endif",
+            include,
         )
-        self.assertIn(guarded, self.fdf)
         self.assertNotIn("AppleANS2Dxe", self.fdf)
 
     def test_j813_pmgr_expectations_match_the_official_adt(self) -> None:
@@ -246,7 +255,9 @@ class J813InternalStorageContractTests(unittest.TestCase):
         self.assertIn(
             '"BLD_*_MTP_HID_BUILD=$mtp_hid_build"', self.build
         )
-        self.assertIn("!if $(MTP_HID_BUILD) == TRUE", self.fdf)
+        # The guard itself now lives in AppleSiliconFvMain.fdf.inc; the machine
+        # opts into it by selecting BUILD_FLAG rather than an unconditional TRUE.
+        self.assertIn("DEFINE PLATFORM_ENABLE_MTP_HID = BUILD_FLAG", self.fdf)
 
     def test_successful_storage_probe_pins_the_internal_partition_map(self) -> None:
         success = self.storage_probe.index("if (!EFI_ERROR (Status))")
