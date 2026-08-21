@@ -59,6 +59,11 @@
   gEfiAcpiTableProtocolGuid                     ## CONSUMES
   gEfiFirmwareVolume2ProtocolGuid               ## CONSUMES
 
+[FixedPcd]
+  # Read by Include/Platform/NtasiMediaJ414s.h to refuse a build that would
+  # publish one machine's media addresses on another.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleSocIdentifier              ## CONSUMES
+
 [Pcd]
   gAppleSiliconPkgTokenSpaceGuid.PcdDeviceAcpiTableStorageFile    ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdDeviceFamilyAcpiTableStorageFile    ## CONSUMES
