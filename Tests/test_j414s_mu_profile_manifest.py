@@ -9,6 +9,7 @@ import json
 import os
 import stat
 import tempfile
+import subprocess
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -272,7 +273,15 @@ class EvidenceParserTests(unittest.TestCase):
         self.assertNotIn("j414s-wireless-handoff-manifest.py", wrapper)
         self.assertNotIn("wireless-handoff.json", wrapper)
         self.assertNotIn("wireless_manifest", wrapper)
-        self.assertIn("if sys.argv[2] not in profiles", wrapper)
+        # The profile check moved from an inline AST parse of this module's
+        # PROFILES literal to Platform/Profiles.py, which both the build script
+        # and this module now read. Assert the behaviour, not the source line.
+        self.assertIn("import Profiles", wrapper)
+        done = subprocess.run(
+            ["sh", str(REPO / "Tools/build-windows-native.sh"), "j414s", "nonesuch"],
+            capture_output=True, text=True, cwd=REPO)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("NTASI_MU_PROFILE must be one of", done.stdout + done.stderr)
 
     def test_build_evidence_parsers_fail_closed(self):
         log = "Edk2 build parameters are -D NTASI_ENABLE_ANS=FALSE -D NTASI_ENABLE_WIRELESS_DART_HANDOFF=0\n"
