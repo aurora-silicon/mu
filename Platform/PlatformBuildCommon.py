@@ -177,7 +177,10 @@ class ApplePlatformBuilder:
         return (self.PLATFORM, "gcc_aarch64_linux", "edk2-build", "cibuild")
 
     def GetName(self):
-        return f"{self.PLATFORM}Pkg"
+        # Not "<PLATFORM>Pkg". stuart names the build log after this, and the
+        # sealing step looks for BUILDLOG_<PLATFORM>.txt, so the two have to
+        # agree. Every platform returned the bare name before this file existed.
+        return self.PLATFORM
 
     def GetLoggingLevel(self, loggerType):
         return logging.DEBUG

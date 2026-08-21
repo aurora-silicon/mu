@@ -236,7 +236,11 @@ J414S = {
 J414S_MANIFEST = {'baseline': {'profile_abi': 'ntasi.j414s.windows.baseline.v1', 'expected_ffs_count': 87},
  'ans': {'profile_abi': 'ntasi.j414s.windows.ans-readonly.v1', 'expected_ffs_count': 88},
  'internal-storage': {'profile_abi': 'ntasi.j414s.windows.internal-storage-warm-handoff.v6',
-                      'expected_ffs_count': 88},
+                      'expected_ffs_count': 88,
+                      # Measured 2026-08-21 on the first clean native build.
+                      # Per-profile because a profile that enables ANS builds
+                      # one more image than one that does not.
+                      'images_verified': 95},
  'internal-storage-dcpirq': {'profile_abi': 'ntasi.j414s.windows.internal-storage-dcpirq.v1',
                              'expected_ffs_count': 88},
  'internal-storage-aop-mic': {'profile_abi': 'ntasi.j414s.windows.internal-storage-aop-mic.v1',

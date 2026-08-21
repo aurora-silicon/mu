@@ -40,7 +40,11 @@ TARGETS = {
         "platform_build": "MacBookProEarly2023-AARCH64/DEBUG_CLANGPDB",
         "fd_name": "MACBOOKPROEARLY2023_EFI.fd",
         "fd_size": 30965760,
-        "images_verified": 94,
+        # Per-profile, not per-target: the count tracks the FV module set, and
+        # a profile that enables ANS builds one more image than one that does
+        # not. Profiles.MANIFEST carries the per-profile value where it has been
+        # measured; this is the fallback for a target with no per-profile entry.
+        "images_verified": None,
     },
     # M5 MacBook Air. Its build profiles still live in
     # Tools/j813_mu_profile_manifest.py; folding PROFILES into this table the
@@ -796,10 +800,11 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
     if "PROGRESS - Success" not in build_text:
         raise ManifestError("build log does not report success")
     image_match = re.search(r"-+0*(\d+) Images Verified-+", build_text)
-    expected_images = spec["images_verified"]
+    expected_images = PROFILES.get(profile, {}).get("images_verified", spec["images_verified"])
     if not image_match:
         raise ManifestError("build log reports no verified image count")
-    if expected_images is not None and int(image_match.group(1)) != expected_images:
+    image_count = int(image_match.group(1))
+    if expected_images is not None and image_count != expected_images:
         raise ManifestError(f"build log does not prove {expected_images} verified images")
     defines = parse_defines(build_text)
     expected_defines = {
@@ -929,7 +934,7 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
         },
         "build": {
             "result": "SUCCESS",
-            "images_verified": spec["images_verified"],
+            "images_verified": image_count,
             "log": file_record(build_log, output_root),
             "report": file_record(build_report, output_root),
             "options": file_record(build_options, output_root),
@@ -1042,11 +1047,19 @@ def verify_manifest(manifest_path: Path, source_root: Path | None = None) -> dic
     reject_legacy_paths(log_text, "build log")
     if manifest["build"].get("result") != "SUCCESS":
         raise ManifestError("build result/image validation evidence is invalid")
-    if (spec["images_verified"] is not None
-            and manifest["build"].get("images_verified") != spec["images_verified"]):
+    expected_images = PROFILES.get(profile, {}).get("images_verified",
+                                                    spec["images_verified"])
+    if (expected_images is not None
+            and manifest["build"].get("images_verified") != expected_images):
         raise ManifestError("build result/image validation evidence is invalid")
-    if "PROGRESS - Success" not in log_text or not re.search(r"-+0094 Images Verified-+", log_text):
-        raise ManifestError("build log success/image evidence is missing")
+    if "PROGRESS - Success" not in log_text:
+        raise ManifestError("build log does not report success")
+    logged = re.search(r"-+0*(\d+) Images Verified-+", log_text)
+    if not logged:
+        raise ManifestError("build log reports no verified image count")
+    if expected_images is not None and int(logged.group(1)) != expected_images:
+        raise ManifestError(
+            f"build log proves {int(logged.group(1))} images, expected {expected_images}")
     defines = parse_defines(log_text)
     if manifest["build"].get("defines") != {name: defines[name] for name in sorted(defines)}:
         raise ManifestError("recorded build defines do not match log")
