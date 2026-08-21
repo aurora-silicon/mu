@@ -40,13 +40,29 @@ WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARCH_SUPPORTED = ("AARCH64",)
 TARGETS_SUPPORTED = ("DEBUG", "RELEASE", "NOOPT")
 
+#
+# Order matters: the first entry containing a package name wins.
+#
+# Silicon/ARM/TIANO comes before MU_BASECORE because ArmPkg, ArmPlatformPkg and
+# DynamicTablesPkg now exist in both. They did not when this list was written --
+# the MU_BASECORE that main pins has no ArmPkg at all, so those three always
+# resolved to TIANO. The M5-Dev bump added them, which silently moved ArmPkg to
+# a copy that does not declare gArmMmuReplaceLiveTranslationEntryFuncGuid, and
+# AppleSiliconPkg.dsc.inc points ArmMmuLib at
+# ArmPkg/Library/ArmMmuLib/ArmMmuPeiLib.inf, which needs it:
+#
+#   ArmMmuPeiLib.inf(51): error 4000: Value of Guid
+#   [gArmMmuReplaceLiveTranslationEntryFuncGuid] is not found under [Guids]
+#
+# Tests/test_package_path.py pins the three.
+#
 PACKAGES_PATH = (
     "Platform",
+    "Silicon/ARM/TIANO",
     "MU_BASECORE",
     "Common/MU",
     "Common/TIANO",
     "Common/MU_OEM_SAMPLE",
-    "Silicon/ARM/TIANO",
     "Silicon/Apple",
     "Common/MU_DFCI",
     "mu_feature_debugger",
