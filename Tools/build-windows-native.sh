@@ -11,14 +11,6 @@ usage() {
 test "$#" -eq 2 || usage
 target=$1
 profile=$2
-# Output directory name per target. The rest of what a target means -- platform
-# build directory, FD name, profiles -- comes from Platform/Profiles.py and
-# TARGETS in Tools/mu_profile_manifest.py.
-case "$target" in
-    j414s) output_target=m2-pro ;;
-    j813)  output_target=m5 ;;
-    *) echo "error: unsupported Mu target: $target" >&2; exit 2 ;;
-esac
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 profile_tool=$source_root/Tools/mu_profile_manifest.py
 mu_python=${AURORADBG_MU_PYTHON:-$(command -v python3.12 || command -v python3)}
@@ -31,18 +23,29 @@ test -x "$mu_python" || {
     exit 1
 }
 
-# Platform/Profiles.py is the profile authority for the build script, the
-# manifest tool and this. It used to be AST-parsed out of the manifest tool,
-# which was a fourth reader of a table that then existed twice.
-"$mu_python" - "$source_root" "$target" "$profile" <<'PY'
+# Platform/Profiles.py is the authority for both the profile list and what a
+# target builds. The profile check used to AST-parse PROFILES out of the
+# manifest tool -- a fourth reader of a table that then existed twice -- and the
+# package, platform name, output directory and FD file name were a case
+# statement here plus three hardcoded J414s paths further down, which is why
+# adding a machine meant editing this script.
+platform_spec=$("$mu_python" - "$source_root" "$target" "$profile" <<'PY'
 import sys
 sys.path.insert(0, f"{sys.argv[1]}/Platform")
 import Profiles
 try:
     Profiles.profile(sys.argv[2], sys.argv[3])
+    spec = Profiles.platform(sys.argv[2])
 except (KeyError, ValueError) as error:
     raise SystemExit(str(error))
+print(" ".join(spec[k] for k in ("pkg", "platform", "output", "fd_name")))
 PY
+) || { echo "$platform_spec" >&2; exit 2; }
+set -- $platform_spec
+platform_pkg=$1
+platform_name=$2
+output_target=$3
+platform_fd=$4
 
 test "$(uname -s)" = Darwin || {
     echo "error: native Mu build currently supports macOS only" >&2
@@ -204,7 +207,7 @@ export CONF_PATH="$conf_dir"
 export NTASI_MU_PROFILE="$profile"
 export NTASI_DEPLOY_EVIDENCE_ECHO="${NTASI_DEPLOY_EVIDENCE_ECHO:-0}"
 
-platform_build=Platform/MacBookProEarly2023Pkg/PlatformBuild.py
+platform_build=Platform/$platform_pkg/PlatformBuild.py
 stamp=$build_dir/.auroradbg-native-setup-v1
 cd "$source_root"
 if test ! -f "$stamp" || test "${NTASI_MU_NATIVE_REFRESH:-auto}" = always; then
@@ -217,9 +220,9 @@ if test ! -f "$stamp" || test "${NTASI_MU_NATIVE_REFRESH:-auto}" = always; then
 fi
 run_logged "Building $profile with native CLANGPDB" stuart_build -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG
 
-fd=$build_dir/MacBookProEarly2023-AARCH64/DEBUG_CLANGPDB/FV/MACBOOKPROEARLY2023_EFI.fd
+fd=$build_dir/$platform_name-AARCH64/DEBUG_CLANGPDB/FV/$platform_fd
 test -f "$fd"
-cp "$fd" "$artifact_dir/MACBOOKPROEARLY2023_EFI.fd"
+cp "$fd" "$artifact_dir/$platform_fd"
 # The build-time links are implementation details, not source changes. Remove
 # them before the manifest samples Git state so a clean native build is sealed
 # as clean instead of recording the two temporary paths as provenance drift.
@@ -243,7 +246,7 @@ llvm_identity=$(
     --builder-platform "darwin/arm64" \
     --evidence-echo "$NTASI_DEPLOY_EVIDENCE_ECHO"
 
-artifact=$artifact_dir/MACBOOKPROEARLY2023_EFI.fd
+artifact=$artifact_dir/$platform_fd
 manifest=$artifact_dir/manifest.json
 echo "READY_TO_TEST $profile"
 echo "target=$target"

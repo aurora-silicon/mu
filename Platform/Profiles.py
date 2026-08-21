@@ -295,6 +295,25 @@ J414S_MANIFEST = {'baseline': {'profile_abi': 'ntasi.j414s.windows.baseline.v1',
              'expected_ffs_count': 87}}
 
 
+#
+# What a target builds. mu_profile_manifest.py keeps the sealing view of this
+# (fd_size, images_verified); this is the half the build script needs.
+#
+PLATFORMS = {
+    "j414s": {
+        "pkg": "MacBookProEarly2023Pkg",
+        "platform": "MacBookProEarly2023",
+        "output": "m2-pro",
+        "fd_name": "MACBOOKPROEARLY2023_EFI.fd",
+    },
+    "j813": {
+        "pkg": "MacBookAir2026Pkg",
+        "platform": "MacBookAir2026",
+        "output": "m5",
+        "fd_name": "J813MACBOOKAIR2026_EFI.fd",
+    },
+}
+
 PROFILES = {
     "j414s": J414S,
 }
@@ -410,6 +429,15 @@ def resolve(target, manifest=False):
 
 
 def profile(target, name, manifest=False):
+    # A machine can exist in PLATFORMS without build profiles -- j813 builds one
+    # way and never reads NTASI_MU_PROFILE. Only "baseline" is meaningful there.
+    if target not in PLATFORMS:
+        raise KeyError(
+            f"unknown target {target!r}; known: {', '.join(sorted(PLATFORMS))}")
+    if target not in PROFILES:
+        if name not in ("", "baseline"):
+            raise ValueError(f"{target} has no build profiles; use 'baseline'")
+        return {}
     profiles = resolve(target, manifest=manifest)
     if name not in profiles:
         raise ValueError(
@@ -471,3 +499,13 @@ def manifest_view(target):
         view["media"] = any(view.get(device) for device in ("mca", "aop", "isp"))
         out[name] = view
     return out
+
+
+def platform(target):
+    """Where a target's build lives. Used by Tools/build-windows-native.sh."""
+    try:
+        return PLATFORMS[target]
+    except KeyError:
+        raise KeyError(
+            f"unknown target {target!r}; known: {', '.join(sorted(PLATFORMS))}"
+        ) from None

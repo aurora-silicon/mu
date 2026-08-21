@@ -26,6 +26,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Generated device-tree windows are current
+        # Cheap and first: if someone bumped DeviceTree/ without regenerating,
+        # every window in the ACPI tables is quietly stale and this says so in
+        # two seconds rather than after a firmware build.
+        run: python3 Tools/dtwindows.py check
+
       - name: Run the host tests
         working-directory: Tests
         run: |
