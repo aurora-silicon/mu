@@ -46,13 +46,46 @@ ASM_FUNC(_ModuleEntryPoint)
 
 _ModuleEntrySetupStack:
 
-  // Compute Top of System Memory
+  // Load the platform DRAM aperture as a fallback and as the validation bound
+  // for the loader-provided boot_args window.
   ldr   x1, =PcdGet64 (PcdSystemMemoryBase)
   ldr   x1, [x1]
   ldr   x2, =PcdGet64 (PcdSystemMemorySize)
   ldr   x2, [x2]
-  sub   x2, x2, #1
-  add   x1, x1, x2      // x1 = SystemMemoryTop = PcdSystemMemoryBase + PcdSystemMemorySize
+  adds  x6, x1, x2      // exclusive platform DRAM end
+  b.cs  _NeverReturn
+
+  // SEC needs the RAM top before a C stack exists. Read it from the same
+  // boot_args that EarlySetup and PEI consume, after checking its header,
+  // alignment, overflow, and containment in the platform aperture.
+  cbz   x25, _UsePlatformMemoryTop
+  ldrh  w7, [x25]
+  cmp   w7, #1
+  b.lo  _UsePlatformMemoryTop
+  cmp   w7, #3
+  b.hi  _UsePlatformMemoryTop
+  ldrh  w8, [x25, #2]
+  cmp   w7, w8
+  b.ne  _UsePlatformMemoryTop
+  ldr   x7, [x25, #0x10] // phys_base
+  ldr   x8, [x25, #0x18] // mem_size
+  cbz   x8, _UsePlatformMemoryTop
+  orr   x9, x7, x8
+  tst   x9, #0x3fff
+  b.ne  _UsePlatformMemoryTop
+  adds  x9, x7, x8      // exclusive boot memory end
+  b.cs  _UsePlatformMemoryTop
+  cmp   x7, x1
+  b.lo  _UsePlatformMemoryTop
+  cmp   x9, x6
+  b.hi  _UsePlatformMemoryTop
+  sub   x1, x9, #1
+  b     _HaveSystemMemoryTop
+
+_UsePlatformMemoryTop:
+  sub   x1, x6, #1
+
+_HaveSystemMemoryTop:
 
   //calculate top of FD image
   ldr   x2, =PcdGet64 (PcdFdBaseAddress)

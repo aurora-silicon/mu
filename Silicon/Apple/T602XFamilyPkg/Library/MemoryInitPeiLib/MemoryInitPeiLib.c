@@ -261,7 +261,53 @@ STATIC CONST EFI_GUID  mNtasiWirelessDartReservationHobGuid =
 
 VOID BuildMemoryTypeInformationHob(VOID);
 
-VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap);
+VOID BuildVirtualMemoryMap(
+  IN  EFI_PHYSICAL_ADDRESS          SystemMemoryBase,
+  IN  UINT64                        SystemMemorySize,
+  OUT ARM_MEMORY_REGION_DESCRIPTOR  **VirtualMemoryMap
+  );
+
+STATIC
+BOOLEAN
+GetBootMemoryWindow (
+  OUT EFI_PHYSICAL_ADDRESS  *SystemMemoryBase,
+  OUT UINT64                *SystemMemorySize
+  )
+{
+  CONST struct boot_args  *BootArgs;
+  EFI_PHYSICAL_ADDRESS    BootMemoryTop;
+  EFI_PHYSICAL_ADDRESS    PlatformMemoryBase;
+  EFI_PHYSICAL_ADDRESS    PlatformMemoryTop;
+
+  BootArgs = (CONST struct boot_args *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
+  PlatformMemoryBase = PcdGet64 (PcdSystemMemoryBase);
+  if (PcdGet64 (PcdSystemMemorySize) > MAX_UINT64 - PlatformMemoryBase) {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: invalid platform DRAM aperture\n"));
+    return FALSE;
+  }
+  PlatformMemoryTop = PlatformMemoryBase + PcdGet64 (PcdSystemMemorySize);
+
+  if ((BootArgs == NULL) || (BootArgs->mem_size == 0) ||
+      ((BootArgs->phys_base & (SIZE_16KB - 1)) != 0) ||
+      ((BootArgs->mem_size & (SIZE_16KB - 1)) != 0) ||
+      (BootArgs->phys_base > MAX_UINT64 - BootArgs->mem_size))
+  {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: invalid boot_args memory window\n"));
+    return FALSE;
+  }
+
+  BootMemoryTop = BootArgs->phys_base + BootArgs->mem_size;
+  if ((BootArgs->phys_base < PlatformMemoryBase) ||
+      (BootMemoryTop > PlatformMemoryTop))
+  {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: boot_args RAM is outside DRAM\n"));
+    return FALSE;
+  }
+
+  *SystemMemoryBase = BootArgs->phys_base;
+  *SystemMemorySize = BootArgs->mem_size;
+  return TRUE;
+}
 
 STATIC VOID InitMmu(IN ARM_MEMORY_REGION_DESCRIPTOR *MemoryTable)
 {
@@ -401,16 +447,25 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   UINT64                        ResourceLength;
   EFI_PEI_HOB_POINTERS          NextHob;
   EFI_PHYSICAL_ADDRESS          FdTop;
+  EFI_PHYSICAL_ADDRESS          SystemMemoryBase;
+  UINT64                        SystemMemorySize;
   EFI_PHYSICAL_ADDRESS          SystemMemoryTop;
   EFI_PHYSICAL_ADDRESS          ResourceTop;
   BOOLEAN                       Found;
+
+  if (!GetBootMemoryWindow (&SystemMemoryBase, &SystemMemorySize)) {
+    return EFI_COMPROMISED_DATA;
+  }
+  SystemMemoryTop = SystemMemoryBase + SystemMemorySize;
+  DEBUG ((DEBUG_INFO, "MemoryInitPeiLib: boot_args RAM 0x%lx/+0x%lx\n",
+          SystemMemoryBase, SystemMemorySize));
 
   // Validate and copy the 128-byte header while the pre-MMU physical identity
   // view is still available. The 1 GiB data extent is intentionally not added
   // to the generic virtual-memory map.
   NtasiValidateEarlyGpuBackingPool (
-    PcdGet64 (PcdSystemMemoryBase),
-    PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize)
+    SystemMemoryBase,
+    SystemMemoryTop
     );
 
 #if NTASI_ENABLE_WIRELESS_DART_HANDOFF
@@ -430,10 +485,9 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
     EFI_PHYSICAL_ADDRESS  EarlyWirelessDartBase;
     UINT32                EarlyWirelessDartSize;
 
-    EarlySystemMemoryTop = (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdSystemMemoryBase) +
-                           (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdSystemMemorySize);
+    EarlySystemMemoryTop = SystemMemoryTop;
     if (NtasiDeriveWirelessReservation (
-          PcdGet64 (PcdSystemMemoryBase),
+          SystemMemoryBase,
           EarlySystemMemoryTop,
           &EarlyWirelessDartBase,
           &EarlyWirelessDartSize
@@ -447,10 +501,7 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
 
   DEBUG((DEBUG_INFO, "%a: Building VirtualMemoryMap\n", __FUNCTION__));
   // build up virtual memory map
-  BuildVirtualMemoryMap(&MemoryTable);
-
-  // Ensure PcdSystemMemorySize has been set
-  ASSERT (PcdGet64 (PcdSystemMemorySize) != 0);
+  BuildVirtualMemoryMap (SystemMemoryBase, SystemMemorySize, &MemoryTable);
 
   //
   // Now, the permanent memory has been installed, we can call AllocatePages()
@@ -474,8 +525,8 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   NextHob.Raw = GetHobList ();
   while ((NextHob.Raw = GetNextHob (EFI_HOB_TYPE_RESOURCE_DESCRIPTOR, NextHob.Raw)) != NULL) {
     if ((NextHob.ResourceDescriptor->ResourceType == EFI_RESOURCE_SYSTEM_MEMORY) &&
-        (PcdGet64 (PcdSystemMemoryBase) >= NextHob.ResourceDescriptor->PhysicalStart) &&
-        (NextHob.ResourceDescriptor->PhysicalStart + NextHob.ResourceDescriptor->ResourceLength <= PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize)))
+        (SystemMemoryBase >= NextHob.ResourceDescriptor->PhysicalStart) &&
+        (NextHob.ResourceDescriptor->PhysicalStart + NextHob.ResourceDescriptor->ResourceLength <= SystemMemoryTop))
     {
       Found = TRUE;
       break;
@@ -489,8 +540,8 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
     BuildResourceDescriptorHob (
       EFI_RESOURCE_SYSTEM_MEMORY,
       ResourceAttributes,
-      PcdGet64 (PcdSystemMemoryBase),
-      PcdGet64 (PcdSystemMemorySize)
+      SystemMemoryBase,
+      SystemMemorySize
       );
   }
 
@@ -521,13 +572,12 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   // Reserved the memory space occupied by the firmware volume
   //
 
-  SystemMemoryTop = (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdSystemMemoryBase) + (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdSystemMemorySize);
   FdTop           = (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdFdBaseAddress) + (EFI_PHYSICAL_ADDRESS)PcdGet32 (PcdFdSize);
 
   // EDK2 does not have the concept of boot firmware copied into DRAM. To avoid the DXE
   // core to overwrite this area we must create a memory allocation HOB for the region,
   // but this only works if we split off the underlying resource descriptor as well.
-  if ((PcdGet64 (PcdFdBaseAddress) >= PcdGet64 (PcdSystemMemoryBase)) && (FdTop <= SystemMemoryTop)) {
+  if ((PcdGet64 (PcdFdBaseAddress) >= SystemMemoryBase) && (FdTop <= SystemMemoryTop)) {
     Found = FALSE;
 
     // Search for System Memory Hob that contains the firmware
@@ -619,7 +669,7 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
     NTASI_APPENDED_RAMDISK_LOCATION  Location;
 
     AppendedTop = FdTop + mAppendedRamdiskReservationSize;
-    ReserveBase = MAX (FdTop, PcdGet64 (PcdSystemMemoryBase));
+    ReserveBase = MAX (FdTop, SystemMemoryBase);
     ReserveTop  = MIN (AppendedTop, SystemMemoryTop);
     if (ReserveTop > ReserveBase) {
       if (!ReserveAllocatedSystemMemoryRegion (
@@ -819,7 +869,12 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
  * does not return anything as the value will be stored in a pointer accessible by MemoryPeim.
  * 
  */
-VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
+VOID
+BuildVirtualMemoryMap (
+  IN  EFI_PHYSICAL_ADDRESS          SystemMemoryBase,
+  IN  UINT64                        SystemMemorySize,
+  OUT ARM_MEMORY_REGION_DESCRIPTOR  **VirtualMemoryMap
+  )
 {
   ARM_MEMORY_REGION_ATTRIBUTES CacheAttributes;
   UINTN Index = 0;
@@ -1079,13 +1134,12 @@ VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
           mAppendedRamdiskCorrupt = TRUE;
         } else {
           AppendedTop = AppendedFdTop + mAppendedRamdiskReservationSize;
-          MapSystemTop = PcdGet64 (PcdSystemMemoryBase) +
-                         PcdGet64 (PcdSystemMemorySize);
+          MapSystemTop = SystemMemoryBase + SystemMemorySize;
           if ((AppendedTop < AppendedFdTop) ||
-              (MapSystemTop < PcdGet64 (PcdSystemMemoryBase)))
+              (MapSystemTop < SystemMemoryBase))
           {
             mAppendedRamdiskCorrupt = TRUE;
-          } else if ((AppendedFdTop < PcdGet64 (PcdSystemMemoryBase)) ||
+          } else if ((AppendedFdTop < SystemMemoryBase) ||
                      (AppendedTop > MapSystemTop))
           {
             ASSERT ((Index + 4) <= MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS);
@@ -1107,9 +1161,9 @@ VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
 
     WirelessDartBase = PcdGet64 (PcdAppleWirelessDartPageTableBase);
     WirelessDartSize = PcdGet32 (PcdAppleWirelessDartPageTableSize);
-    MapSystemTop = PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize);
+    MapSystemTop = SystemMemoryBase + SystemMemorySize;
     if ((WirelessDartBase != 0) && (WirelessDartSize != 0) &&
-        ((WirelessDartBase < PcdGet64 (PcdSystemMemoryBase)) ||
+        ((WirelessDartBase < SystemMemoryBase) ||
          (WirelessDartBase + WirelessDartSize > MapSystemTop)))
     {
       ASSERT ((Index + 3) <= MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS);
@@ -1120,9 +1174,9 @@ VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
     }
   }
 
-  VirtualMemoryTable[++Index].PhysicalBase = PcdGet64(PcdSystemMemoryBase);
-  VirtualMemoryTable[Index].VirtualBase    = PcdGet64(PcdSystemMemoryBase);
-  VirtualMemoryTable[Index].Length         = PcdGet64(PcdSystemMemorySize);
+  VirtualMemoryTable[++Index].PhysicalBase = SystemMemoryBase;
+  VirtualMemoryTable[Index].VirtualBase    = SystemMemoryBase;
+  VirtualMemoryTable[Index].Length         = SystemMemorySize;
   VirtualMemoryTable[Index].Attributes     = CacheAttributes;
 
 
