@@ -28,8 +28,24 @@ AuroraSilicon repository:
 ```
 
 Override it with `AURORADBG_MU_OUTPUT_ROOT`. Required host tools are Python
-3.11 or 3.12, Homebrew LLVM/lld, `iasl`, `nasm`, and `make`. Submodules must be
-initialized recursively.
+3.11 or 3.12, Homebrew LLVM/lld, `iasl`, `nasm`, and `make`.
+
+First time in a fresh checkout:
+
+```sh
+Tools/setup-build.sh [reference-checkout]
+```
+
+That pins every submodule, including nested ones, to the commit this tree
+records, and seeds the BaseTools external dependency. Both matter and both fail
+obscurely if skipped: `--reference` alone leaves submodules on the reference's
+HEAD, which surfaces as BaseTools failing to find
+`brotli/c/common/constants.h`, and a fresh tree with no extdep makes stuart
+refuse the host with `Verify support for detected host: Host(os='MacOs',
+arch='ARM', bit='64')`.
+
+With a sibling mu checkout to seed from it needs no network and copies
+clone-on-write, so it costs almost no disk.
 
 Verify an artifact without rebuilding:
 

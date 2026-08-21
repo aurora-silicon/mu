@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 #
-# Check out every submodule at the commit this tree pins.
+# Get this tree to the point where it can build firmware.
 #
 # WHY THIS EXISTS
 #
@@ -17,7 +17,7 @@
 # So this initialises with --reference where one is available, then walks every
 # submodule -- including nested ones -- and forces it to the pinned SHA.
 #
-#   Tools/setup-submodules.sh [reference-checkout]
+#   Tools/setup-build.sh [reference-checkout]
 #
 # With no argument it looks for a sibling mu checkout, then falls back to a
 # plain network clone.
@@ -76,6 +76,28 @@ while [ $pass -le 4 ]; do
     fi
     pass=$((pass + 1))
 done
+
+# Mu publishes BaseTools binaries for Linux and Windows only, and stuart's
+# dependency resolver refuses a host it has no entry for:
+#
+#   ERROR - Verify support for detected host: Host(os='MacOs', arch='ARM', bit='64')
+#
+# build-windows-native.sh answers that by symlinking a MacOs-ARM-64 directory at
+# the C tools it builds from pinned source -- but stuart still has to resolve
+# the extdep first, and on a fresh tree there is nothing there to resolve. The
+# payload is a download, not source, so seed it from the reference checkout when
+# there is one. Clone-on-write, so it costs no disk on APFS.
+extdep=MU_BASECORE/BaseTools/Bin/Mu-Basetools_extdep
+if [ -n "$reference" ] && [ ! -f "$extdep/extdep_state.yaml" ] &&
+   [ -f "$reference/$extdep/extdep_state.yaml" ]; then
+    echo "seeding BaseTools extdep from $reference"
+    mkdir -p "$extdep"
+    for host in Linux-ARM-64 Linux-x86 Windows-ARM-64 Windows-x86; do
+        [ -d "$reference/$extdep/$host" ] || continue
+        cp -cR "$reference/$extdep/$host" "$extdep/" 2>/dev/null || true
+    done
+    cp "$reference/$extdep/extdep_state.yaml" "$extdep/"
+fi
 
 echo "verifying"
 off=$(git submodule status --recursive 2>/dev/null | grep '^[-+]' || true)
