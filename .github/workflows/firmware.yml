@@ -1,0 +1,49 @@
+name: firmware
+
+# Building firmware needs the submodules, which are large, so this is manual
+# and on release tags rather than on every push.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Target from TARGETS in Tools/mu_profile_manifest.py
+        default: j414s
+      profile:
+        description: Build profile
+        default: internal-storage
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.target || 'j414s' }} firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu iasl uuid-dev nasm acpica-tools
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r pip-requirements.txt
+
+      - name: Build and seal
+        env:
+          TARGET: ${{ github.event.inputs.target || 'j414s' }}
+          PROFILE: ${{ github.event.inputs.profile || 'internal-storage' }}
+        run: sh Tools/build-windows-native.sh "$TARGET" "$PROFILE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mu-firmware-${{ github.event.inputs.target || 'j414s' }}
+          path: |
+            Build/**/FV/*.fd
+            **/artifacts/manifest.json
+          if-no-files-found: error

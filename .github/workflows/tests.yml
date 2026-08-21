@@ -1,0 +1,41 @@
+name: tests
+
+# Every branch the fork works on, and every PR whatever its base.
+on:
+  push:
+    branches: [ main, staging, M5-Dev, refactor ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    name: Host tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-14 ]
+
+    steps:
+      - uses: actions/checkout@v5
+        # No submodules. Every test under Tests/ compiles a standalone C file
+        # against Tests/edk2stub and runs it; none of them needs MU_BASECORE,
+        # which is 1.8 GB of checkout for nothing.
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the host tests
+        working-directory: Tests
+        run: |
+          set -eu
+          status=0
+          for test in test_*.py; do
+            # test_j414s_mu_profile_manifest.py authenticates submodule gitlinks
+            # against the working tree, so it cannot pass without them.
+            case "$test" in test_j414s_mu_profile_manifest.py) continue ;; esac
+            echo "== $test"
+            python3 -m unittest "${test%.py}" || status=1
+          done
+          exit $status
