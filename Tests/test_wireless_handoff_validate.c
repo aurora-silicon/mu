@@ -67,7 +67,20 @@ static int gFailures = 0;
  * offset, size and fixed field below is the live contract.
  */
 #define GUEST_MEMORY_TOP  0x103db29c000ULL
-#define PHYSICAL_TOP      0x10400000000ULL
+
+/*
+ * The live figure is 0x10400000000, and it cannot be used here. The validator
+ * checks PhysicalMemoryTop >= Base + Size, and Base is this process's heap
+ * pointer -- so a hardcoded top only works where the heap happens to sit below
+ * it. macOS puts it around 0x1xxxxxxxxx and passed; glibc mmaps near 0x7f...
+ * and the "fully valid handoff is accepted" case failed on the Linux runner.
+ *
+ * What the field means is "the reservation fits under physical memory", so
+ * derive it from the base the test actually got. The relationship is the
+ * contract; the literal was a coincidence.
+ */
+#define PHYSICAL_TOP_FOR(base) \
+  ((base) + (UINT64)NTASI_WIRELESS_HANDOFF_V2_RESERVATION_SIZE)
 
 static void *
 alloc_reservation (void)
@@ -116,7 +129,7 @@ build_valid (UINT64 Base)
   d->ReservationBase    = Base;
   d->ReservationSize    = NTASI_WIRELESS_HANDOFF_V2_RESERVATION_SIZE;
   d->GuestMemoryTop     = GUEST_MEMORY_TOP;
-  d->PhysicalMemoryTop  = PHYSICAL_TOP;
+  d->PhysicalMemoryTop  = PHYSICAL_TOP_FOR (Base);
   d->DartBase           = NTASI_WIRELESS_HANDOFF_V2_DART_BASE;
   d->L1Physical         = Base + NTASI_WIRELESS_HANDOFF_V2_L1_OFFSET;
   d->MsiL2Physical      = Base + NTASI_WIRELESS_HANDOFF_V2_MSI_L2_OFFSET;
