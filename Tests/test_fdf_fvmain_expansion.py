@@ -39,6 +39,11 @@ def expand(text: str, defines: dict[str, str]) -> list[str]:
     keep = [True]
     for raw in text.splitlines():
         line = raw.strip()
+        if line.startswith("!ifdef ") or line.startswith("!ifndef "):
+            name = line.split(None, 1)[1].strip().strip("$()")
+            have = name in defines
+            keep.append(keep[-1] and (have if line.startswith("!ifdef") else not have))
+            continue
         if line.startswith("!if "):
             cond = line[4:]
             m = re.match(r'\$\((\w+)\)\s*(==|!=)\s*(\S+)', cond)

@@ -122,7 +122,9 @@
 !endif
 !endif
   INF ShellPkg/Application/Shell/Shell.inf
+!ifdef $(INCLUDE_TFTP_COMMAND)
   INF ShellPkg/DynamicCommand/TftpDynamicCommand/TftpDynamicCommand.inf
+!endif
 !if $(PLATFORM_ENABLE_COLORBARS) == TRUE
   INF AppleSiliconPkg/Drivers/ColorbarsDxe/ColorbarsDxe.inf
 !endif
