@@ -210,6 +210,16 @@ script out of target config, and three of its tests name the `j414s_`-prefixed
 shims. Removing them without the matching auroradbg change breaks the daily
 workflow. Land them together.
 
+## Done on this branch
+
+- 3141 lines of source-substring tests removed. Four of the sixteen tests in
+  `Tests/` were already failing on `main` and nobody had noticed.
+- The four stock `PlatformBuild.py` files collapsed from 251 lines each to 38,
+  over a 213-line shared module. That found three drift bugs, including two
+  platforms whose `ArchSupported = ("AARCH64")` was a string rather than a
+  tuple, so `SetArchitectures(["AARCH64"])` raised on the only architecture
+  they support.
+
 ## Next
 
 1. Land this branch.
@@ -217,6 +227,5 @@ workflow. Land them together.
 3. Tier-1 ADT work in `AcpiPlatformDxe`: replace the `mNtasi*` literal tables
    with ADT lookups, one subsystem at a time, each verified against a live ADT
    capture from the machine it describes.
-4. Shared `PlatformBuild` base; delete four copies.
-5. Move the sealing tools to auroradbg, in one commit spanning both repos.
+4. Move the sealing tools to auroradbg, in one commit spanning both repos.
 6. Then add SoC families, cheaply.
