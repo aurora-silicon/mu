@@ -171,10 +171,11 @@ Unlike m1n1's, this one merges. 19 commits ahead, 3 behind, on a shared base.
 - 2 submodule pointer bumps (`Common/MU`, `Silicon/ARM/TIANO`) -- take theirs;
 - `.gitmodules`, 5 lines;
 - `AppleAicV2Dxe.c`, 4 hunks and 73 lines, AIC2 against AIC3;
-- `Tools/j414s_mu_profile_manifest.py`, a whole-file conflict that exists only
+- `Tools/j414s_mu_profile_manifest.py`, a whole-file conflict that existed only
   because `M5-Dev` renamed `mu_profile_manifest.py` to be machine-specific and
-  then added a `j813` copy beside it. Keep one machine-agnostic tool with the
-  `--target` flag it already has, and this conflict does not exist.
+  then added a `j813` copy beside it. That shim is now deleted and the tool
+  carries a `TARGETS` table, so `j813` is a five-line entry rather than a
+  second copy, and the conflict is gone.
 
 `AcpiPlatform.c`, `MemoryInitPeiLib.c`, `PlatformBuild.py` and
 `FrontpageDsc.inc` all auto-merge.
@@ -197,18 +198,8 @@ Recommendation: merge it, as its own PR, after this one lands.
 
 ## Cross-repo, not done here
 
-`Tools/mu_profile_manifest.py` (1688 lines) seals build artifacts and pins
-`BRANCH = "main"`. It has four shim wrappers: `j414s_mu_profile_manifest.py`,
-`verify-windows-profile.py`, `verify-j414s-windows-profile.py`, and
-`build-j414s-windows-native.sh`. `NTASI-AIC2-OVERLAY.json` at the repo root is
-150 lines of JSON that nothing reads for content; it exists to be hashed.
-
-This is the same pattern as m1n1's `build-windows-unified.py`, which has been
-removed, and it belongs in auroradbg for the same reason. It is not removed here
-because `auroradbg/src/auroradbg/target.py` reads both the tool and the build
-script out of target config, and three of its tests name the `j414s_`-prefixed
-shims. Removing them without the matching auroradbg change breaks the daily
-workflow. Land them together.
+`NTASI-AIC2-OVERLAY.json` at the repo root is 150 lines of JSON that nothing
+reads for content; it exists to be hashed into a manifest. It should go.
 
 ## Done on this branch
 

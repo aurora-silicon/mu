@@ -19,10 +19,33 @@ from typing import Any
 
 SCHEMA = "ntasi.mu-profile.v3"
 LEGACY_SCHEMA_TARGETS = {"ntasi.j414s.mu-profile.v2": "j414s"}
-TARGETS = ("j414s",)
-BRANCH = "main"
-PLATFORM_BUILD = "MacBookProEarly2023-AARCH64/DEBUG_CLANGPDB"
-FD_NAME = "MACBOOKPROEARLY2023_EFI.fd"
+
+#
+# Everything that differs between machines. A new Mac is an entry here, not a
+# copy of this file: the j813 line on M5-Dev exists only because these were
+# module constants.
+#
+# No branch is pinned. A branch NAME never established what a firmware image
+# is; the commit, the tree hash and the FD SHA-256 recorded in the manifest do
+# that, and they keep doing it whatever the branch is called.
+#
+TARGETS = {
+    "j414s": {
+        "platform": "MacBookProEarly2023",
+        "platform_build": "MacBookProEarly2023-AARCH64/DEBUG_CLANGPDB",
+        "fd_name": "MACBOOKPROEARLY2023_EFI.fd",
+        "fd_size": 30965760,
+        "images_verified": 94,
+    },
+}
+
+
+def target_spec(target: str) -> dict[str, Any]:
+    try:
+        return TARGETS[target]
+    except KeyError:
+        known = ", ".join(sorted(TARGETS))
+        raise ManifestError(f"unknown target {target!r}; known targets: {known}") from None
 PROFILES = {
     "baseline": {
         "profile_abi": "ntasi.j414s.windows.baseline.v1",
@@ -601,7 +624,7 @@ ACPI_CONTAINERS = {
 }
 BASE_ACPI = ("DSDT.aml", "MCFG.acpi", "KBL.aml", "MTP.aml", "SMCG.aml", "CPUF.aml",
              "PBTN.aml", "LIDA.aml", "CSRT.acpi")
-NESTED_LOCK = Path("Tools/J414S_NESTED_GITLINK_LOCK.json")
+NESTED_LOCK = Path("Tools/NESTED_GITLINK_LOCK.json")
 LEGACY_PATH_PATTERNS = (
     re.compile(r"/Users/[^\s\"']+/Developer/mu-j414s-(?!windows-unified)"),
     re.compile(r"/Users/[^\s\"']+/Developer/m1n1-j414s-"),
@@ -1241,8 +1264,7 @@ def validate_shape(manifest: dict[str, Any]) -> None:
 def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
     source_root = args.source_root.resolve()
     output_root = args.output_root.resolve()
-    if args.target not in TARGETS:
-        raise ManifestError(f"unsupported target: {args.target}")
+    spec = target_spec(args.target)
     profile = args.profile
     if profile not in PROFILES:
         raise ManifestError(f"unsupported profile: {profile}")
@@ -1252,7 +1274,7 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
     branch = run("git", "branch", "--show-current", cwd=source_root)
     commit = run("git", "rev-parse", "HEAD", cwd=source_root)
     tree = run("git", "rev-parse", "HEAD^{tree}", cwd=source_root)
-    if branch != BRANCH or output_root.parent.name != profile or output_root.name != commit:
+    if output_root.parent.name != profile or output_root.name != commit:
         raise ManifestError("source/profile/output directory binding mismatch")
     dirty = run(
         "git", "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none",
@@ -1272,16 +1294,17 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
     nested_lock = verify_nested_lock(source_root, nested_gitlinks)
 
     build_root = output_root / "Build"
-    platform_root = build_root / PLATFORM_BUILD
+    platform_root = build_root / spec["platform_build"]
     fv_dir = platform_root / "FV"
-    build_log = build_root / "BUILDLOG_MacBookProEarly2023.txt"
+    build_log = build_root / f"BUILDLOG_{spec['platform']}.txt"
     build_text = build_log.read_text(encoding="utf-8", errors="replace")
     reject_legacy_paths(build_text, "build log")
     if "PROGRESS - Success" not in build_text:
         raise ManifestError("build log does not report success")
     image_match = re.search(r"-+0*(\d+) Images Verified-+", build_text)
-    if not image_match or int(image_match.group(1)) != 94:
-        raise ManifestError("build log does not prove 94 verified images")
+    expected_images = spec["images_verified"]
+    if not image_match or int(image_match.group(1)) != expected_images:
+        raise ManifestError(f"build log does not prove {expected_images} verified images")
     defines = parse_defines(build_text)
     expected_defines = {
         "NTASI_ENABLE_ANS": "TRUE" if PROFILES[profile]["ans"] else "FALSE",
@@ -1410,14 +1433,14 @@ def generate_manifest(args: argparse.Namespace) -> dict[str, Any]:
         },
         "build": {
             "result": "SUCCESS",
-            "images_verified": 94,
+            "images_verified": spec["images_verified"],
             "log": file_record(build_log, output_root),
             "report": file_record(build_report, output_root),
             "options": file_record(build_options, output_root),
             "defines": {name: defines[name] for name in sorted(defines)},
             "pcds": pcd_values,
         },
-        "firmware": file_record(output_root / "artifacts" / FD_NAME, output_root),
+        "firmware": file_record(output_root / "artifacts" / spec["fd_name"], output_root),
         "firmware_volume": {
             "image": file_record(fv_dir / "FVMAIN.Fv", output_root),
             "map": file_record(fv_map, output_root),
@@ -1495,8 +1518,9 @@ def verify_manifest(manifest_path: Path, source_root: Path | None = None) -> dic
         target = manifest.get("target")
     else:
         target = LEGACY_SCHEMA_TARGETS.get(schema)
-    if target not in TARGETS:
+    if target is None:
         raise ManifestError("unsupported Mu profile manifest schema")
+    spec = target_spec(target)
     validate_shape(manifest)
     if manifest.get("artifact_status") != "READY_FOR_SUPERVISED_HARDWARE_TEST" or manifest.get("hardware_touched") is not False:
         raise ManifestError("artifact status/hardware policy mismatch")
@@ -1509,16 +1533,17 @@ def verify_manifest(manifest_path: Path, source_root: Path | None = None) -> dic
         raise ManifestError("manifest is not inside an artifacts directory")
     if output_root.name != source["commit"] or output_root.parent.name != profile:
         raise ManifestError("manifest path does not match source commit/profile")
-    if source["branch"] != BRANCH or len(source["commit"]) != 40:
+    if len(source["commit"]) != 40:
         raise ManifestError("source identity is invalid")
 
     firmware = verify_file_record(manifest["firmware"], output_root, "firmware")
-    if firmware.name != FD_NAME or firmware.stat().st_size != 30965760:
+    if firmware.name != spec["fd_name"] or firmware.stat().st_size != spec["fd_size"]:
         raise ManifestError("firmware name/size is not canonical")
     build_log = verify_file_record(manifest["build"]["log"], output_root, "build log")
     log_text = build_log.read_text(encoding="utf-8", errors="replace")
     reject_legacy_paths(log_text, "build log")
-    if manifest["build"].get("result") != "SUCCESS" or manifest["build"].get("images_verified") != 94:
+    if (manifest["build"].get("result") != "SUCCESS"
+            or manifest["build"].get("images_verified") != spec["images_verified"]):
         raise ManifestError("build result/image validation evidence is invalid")
     if "PROGRESS - Success" not in log_text or not re.search(r"-+0094 Images Verified-+", log_text):
         raise ManifestError("build log success/image evidence is missing")

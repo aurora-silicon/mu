@@ -16,10 +16,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO / "Tools" / "mu_profile_manifest.py"
-SPEC = importlib.util.spec_from_file_location("j414s_mu_profile_manifest", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location("mu_profile_manifest", MODULE_PATH)
 M = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(M)
+
+SPEC_J414S = M.TARGETS["j414s"]
 
 
 def record(path: str = "artifacts/file") -> dict[str, object]:
@@ -43,13 +45,13 @@ def valid_shape(profile: str = "baseline") -> dict[str, object]:
         "profile": M.profile_policy(profile),
         "source": {
             "checkout": str(REPO),
-            "branch": M.BRANCH,
+            "branch": "main",
             "commit": "2" * 40,
             "tree": "3" * 40,
             "clean": True,
             "top_level_gitlinks": [],
             "nested_gitlinks": [],
-            "nested_gitlink_lock": record("Tools/J414S_NESTED_GITLINK_LOCK.json"),
+            "nested_gitlink_lock": record("Tools/NESTED_GITLINK_LOCK.json"),
         },
         "builder": {
             "image_ref": "builder:tag",
@@ -61,14 +63,14 @@ def valid_shape(profile: str = "baseline") -> dict[str, object]:
         },
         "build": {
             "result": "SUCCESS",
-            "images_verified": 94,
+            "images_verified": SPEC_J414S["images_verified"],
             "log": record("Build/log"),
             "report": record("Build/report"),
             "options": record("Build/options"),
             "defines": {},
             "pcds": {},
         },
-        "firmware": record(f"artifacts/{M.FD_NAME}"),
+        "firmware": record(f"artifacts/{SPEC_J414S['fd_name']}"),
         "firmware_volume": {
             "image": record("Build/FVMAIN.Fv"),
             "map": record("Build/FVMAIN.Fv.txt"),

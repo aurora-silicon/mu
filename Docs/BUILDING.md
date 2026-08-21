@@ -39,6 +39,7 @@ Verify an artifact without rebuilding:
   --source-root .
 ```
 
-Only DEBUG/CLANGPDB firmware is currently supported by the J414s native
-target profile. `Tools/build-j414s-windows-native.sh` remains as a compatibility
-entry point and supplies `j414s` to the generic builder.
+Only DEBUG/CLANGPDB firmware is currently supported. Machines are entries in
+`TARGETS` at the top of `Tools/mu_profile_manifest.py`, which is where the
+platform build directory, the FD name and its expected size live; adding a Mac
+is a line there, not a copy of the tool.
