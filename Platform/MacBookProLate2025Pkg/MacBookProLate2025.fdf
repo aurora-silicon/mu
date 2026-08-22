@@ -327,34 +327,12 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   #SECTION UI = "Embedded RAMDisk"
 #}
 
-  #
-  # Embedded RAMDisk -- 16 MiB FAT16 TEST image. Attempt 39.
-  #
-  # This is NOT WinPE. It is a deliberately tiny image whose only job is to prove
-  # the whole chain works before anyone wrestles with a 300 MB+ one:
-  #
-  #   FV RAW section -> BootRamdiskHelperDxe (GetSectionFromAnyFv on
-  #   gAppleSiliconPkgEmbeddedRamdiskGuid) -> EFI_RAM_DISK_PROTOCOL -> DiskIoDxe
-  #   -> PartitionDxe -> FatDxe -> a mountable FS1: in the Shell's mapping table
-  #
-  # Success looks like `map -r` listing an FS1: alongside FS0: (the FV), and
-  # `dir FS1:` showing RAMDISK.TXT and EFI\BOOT\. Attempt 38 established that FS0
-  # is currently the *only* filesystem on this machine, so any FS1 at all is new.
-  #
-  # Contents: RAMDISK.TXT (marker) and an empty EFI\BOOT\ ready for BOOTAA64.EFI.
-  # Regenerate with tools/make_ramdisk_img.sh.
-  #
-  # SIZE NOTE: FVMAIN_COMPACT is 0x1D80000 and was only 3% used before this, so
-  # there is ~28 MB of compressed headroom. A FAT image of mostly zeros compresses
-  # to almost nothing, so this costs very little. A real WinPE will NOT fit --
-  # BootRamdiskHelperDxe also does AllocateCopyPool() of the whole image, so it
-  # needs 2x the size in RAM on top. Growing the FD or loading the image from
-  # m1n1 instead is a separate piece of work; see docs/NEXT-STEPS.md attempt 39.
-  #
-  FILE FREEFORM = 650B7CD0-94F8-46CC-88DE-8C199D41EDA3 {
-    SECTION RAW = AppleSiliconPkg/RAMDisk/ramtest.img
-    SECTION UI = "Embedded RAMDisk"
-  }
+  # No embedded RAM disk. AppleSiliconPkg/RAMDisk/ramtest.img was a 16 MiB
+  # FAT test image checked into git to prove the FV -> BootRamdiskHelperDxe
+  # -> EFI_RAM_DISK_PROTOCOL chain worked. It is build scaffolding, and a
+  # real WinPE will not fit here anyway: BootRamdiskHelperDxe does an
+  # AllocateCopyPool of the whole image, so it needs twice the size in RAM
+  # on top. Load it from m1n1 instead.
 
   # Embedded USB firmware blob (for testing only!)
   #FILE FREEFORM = d730ab59-670e-4a92-8475-b31939d05bb4 {

@@ -176,6 +176,13 @@ run_logged() {
         exit 1
     fi
 }
+# Same, but returns instead of exiting, for a step with a known repair.
+try_logged() {
+    label=$1
+    shift
+    echo "$label"
+    "$@" >> "$native_log" 2>&1
+}
 # EDK2's CLANGPDB definition accepts one prefix for clang, llvm-lib, llvm-rc,
 # and lld-link. Homebrew deliberately ships lld as a separate formula, so
 # assemble a build-local prefix instead of changing global Homebrew links.
@@ -243,7 +250,38 @@ if test ! -f "$stamp" || test "${NTASI_MU_NATIVE_REFRESH:-auto}" = always; then
         "$llvm_bin/clang" --version | head -1
     } > "$stamp"
 fi
-run_logged "Building $config_slug with native CLANGPDB" stuart_build -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG
+#
+# Homebrew's llvm-rc reads an absolute POSIX path as an option, so any module
+# carrying an HII resource fails its .rc step with "Exactly one input file
+# should be provided". EDK2 passes absolute paths, so this hits whenever a build
+# includes such a module -- MdeModulePkg's HelloWorld is the usual one, which is
+# why j414s never saw it and j813 always did.
+#
+# Complete the resource step by hand from its own output directory, where the
+# path is relative, then let the incremental build carry on. Deterministic: the
+# .rc is already generated and this produces the same .lib EDK2 would.
+#
+repair_hii_resources() {
+    found=0
+    for rc in $(find "$build_dir" -name '*hii.rc' 2>/dev/null); do
+        lib=$(dirname "$rc")/$(basename "$rc" .rc).lib
+        test -f "$lib" && continue
+        ( cd "$(dirname "$rc")" && "$toolchain_dir/llvm-rc" \
+            "/Fo$(basename "$lib")" "$(basename "$rc")" ) || return 1
+        found=1
+    done
+    return $((1 - found))
+}
+
+if ! try_logged "Building $config_slug with native CLANGPDB" stuart_build -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG; then
+    if grep -q 'Exactly one input file' "$native_log" && repair_hii_resources; then
+        run_logged "Rebuilding after completing the HII resource step" stuart_build -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG
+    else
+        echo "error: build failed; tail of $native_log:" >&2
+        tail -80 "$native_log" >&2
+        exit 1
+    fi
+fi
 
 fd=$build_dir/$platform_name-AARCH64/DEBUG_CLANGPDB/FV/$platform_fd
 test -f "$fd"
