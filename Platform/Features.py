@@ -74,9 +74,86 @@ DERIVED = {
 DEVICES = {
     "j414s": {
         "platform": "MacBookProEarly2023",
-        "description": "MacBook Pro (14/16-inch, M2 Pro, 2023)",
+        "description": "MacBook Pro (14-inch, M2 Pro, 2023)",
         "fd": "MACBOOKPROEARLY2023_EFI.fd",
         "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2", "battery"),
+    },
+    "j416s": {
+        "platform": "MacBookPro16Early2023",
+        "description": "MacBook Pro (16-inch, M2 Pro, 2023)",
+        "fd": "MACBOOKPRO16EARLY2023_EFI.fd",
+        # Same T6020 as j414s, same devices. Asahi's t6020-j414s.dts and
+        # t6020-j416s.dts differ in seven lines: the model strings, the Wi-Fi
+        # board type, the panel size, the chassis name, the audio model, and
+        # the MTP firmware blob. None of those changes which features exist.
+        "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2", "battery"),
+    },
+    # M1-era machines. Packages inherited from upstream NT-for-ASi; none of the
+    # Windows feature work applies to them yet, so everything is off. They build,
+    # which is the floor, not the goal.
+    "j313": {
+        "platform": "MacBookAirMid2020",
+        "description": "MacBook Air (M1, 2020)",
+        "fd": "J313MacBookAirMid2020_EFI.fd",
+        "on": (),
+    },
+    "j274": {
+        "platform": "MacMini2020",
+        "description": "Mac mini (M1, 2020)",
+        "fd": "J274MacMini2020_EFI.fd",
+        "on": (),
+    },
+    "j375c": {
+        "platform": "MacStudio2022",
+        "description": "Mac Studio (M1 Max, 2022)",
+        "fd": "J375MacStudio2022_EFI.fd",
+        "on": (),
+    },
+    "j293": {
+        "platform": "MacBookProLate2020",
+        "description": "MacBook Pro (13-inch, M1, 2020)",
+        "fd": "J293MACBOOKPROLATE2020_EFI.fd",
+        "on": (),
+    },
+    "j414c": {
+        "platform": "MacBookPro14Max2023",
+        "description": "MacBook Pro (14-inch, M2 Max, 2023)",
+        "fd": "MACBOOKPRO14MAX2023_EFI.fd",
+        "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2", "battery"),
+    },
+    "j416c": {
+        "platform": "MacBookPro16Max2023",
+        "description": "MacBook Pro (16-inch, M2 Max, 2023)",
+        "fd": "MACBOOKPRO16MAX2023_EFI.fd",
+        "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2", "battery"),
+    },
+    "j474s": {
+        "platform": "MacMini2023",
+        "description": "Mac mini (M2 Pro, 2023)",
+        "fd": "MACMINI2023_EFI.fd",
+        # No battery: this machine runs on mains.
+        "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2"),
+    },
+    "j475c": {
+        "platform": "MacStudioMax2023",
+        "description": "Mac Studio (M2 Max, 2023)",
+        "fd": "MACSTUDIOMAX2023_EFI.fd",
+        # No battery: this machine runs on mains.
+        "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2"),
+    },
+    "j475d": {
+        "platform": "MacStudioUltra2023",
+        "description": "Mac Studio (M2 Ultra, 2023)",
+        "fd": "MACSTUDIOULTRA2023_EFI.fd",
+        # No battery: this machine runs on mains.
+        "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2"),
+    },
+    "j180d": {
+        "platform": "MacPro2023",
+        "description": "Mac Pro (M2 Ultra, 2023)",
+        "fd": "MACPRO2023_EFI.fd",
+        # No battery: this machine runs on mains.
+        "on": ("storage", "gpu", "gpu-acpi", "wireless", "xhc2"),
     },
     "j813": {
         "platform": "MacBookAir2026",
