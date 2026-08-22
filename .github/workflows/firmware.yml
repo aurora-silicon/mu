@@ -7,16 +7,16 @@ on:
     tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
-      target:
-        description: Target from TARGETS in Tools/mu_profile_manifest.py
+      device:
+        description: Device from DEVICES in Platform/Features.py
         default: j414s
-      profile:
-        description: Build profile
-        default: internal-storage
+      without:
+        description: Space-separated features to turn off
+        default: ''
 
 jobs:
   build:
-    name: Build ${{ github.event.inputs.target || 'j414s' }} firmware
+    name: Build ${{ github.event.inputs.device || 'j414s' }} firmware
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -35,13 +35,17 @@ jobs:
 
       - name: Build and seal
         env:
-          TARGET: ${{ github.event.inputs.target || 'j414s' }}
-          PROFILE: ${{ github.event.inputs.profile || 'internal-storage' }}
-        run: sh Tools/build-windows-native.sh "$TARGET" "$PROFILE"
+          DEVICE: ${{ github.event.inputs.device || 'j414s' }}
+          WITHOUT: ${{ github.event.inputs.without }}
+        run: |
+          set -eu
+          args=""
+          for feature in $WITHOUT; do args="$args --without $feature"; done
+          sh Tools/mu-build "$DEVICE" $args
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mu-firmware-${{ github.event.inputs.target || 'j414s' }}
+          name: mu-firmware-${{ github.event.inputs.device || 'j414s' }}
           path: |
             Build/**/FV/*.fd
             **/artifacts/manifest.json

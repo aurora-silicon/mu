@@ -20,9 +20,9 @@
 
   MUTUAL EXCLUSION: NTAS0081 (AOP audio) and NTAS0082 (this device) drive the
   SAME AOP mailbox, so at most one may be published in a given firmware build.
-  The internal-storage / gpu-noacpi profiles this ships in do NOT publish AOP
+  The feature sets this ships in do NOT publish AOP
   audio, so LIDA owns the AOP here; it must NEVER be combined with the
-  aop-mic profile (which publishes NTAS0081).
+  aop feature (which publishes NTAS0081).
 
   Provenance:
     Asahi linux-asahi 030248d39b401c94695c9f7df2fed630d35120cd:

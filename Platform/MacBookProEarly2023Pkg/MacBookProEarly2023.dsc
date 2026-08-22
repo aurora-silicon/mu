@@ -19,9 +19,9 @@
   PLATFORM_NAME                  = MacBookProEarly2023
   DEFINE NTASI_ENABLE_WIRELESS_DART_HANDOFF = 0
   DEFINE NTASI_ENABLE_XHC2 = 1
-  # The PIPE switch is a firmware capability, selected per sealed profile.
-  # Right-enabled profiles finish port 2; phase-1 no-XHC2 profiles finish only
-  # the left boot-volume port 1. PlatformBuild.py supplies the profile value.
+  # The PIPE switch is a firmware capability, selected per build.
+  # With xhc2 on the switch finishes port 2; with it off, phase 1 finishes only
+  # the left boot-volume port 1. PlatformBuild.py supplies the value.
   DEFINE NTASI_USB3_PIPE_SWITCH_PORT_MASK = 0x4
   DEFINE NTASI_GPU_RESOURCE_PROFILE = 0
   # Publish NTAS0023 (AppleAgxGpu) from AcpiPlatformDxe. Strictly narrower than
@@ -30,21 +30,21 @@
   # _CRS resources and its GSIV-46 interrupt. Kept separate so "reserve the
   # carveouts" and "publish the ACPI device" stay independently selectable --
   # the same split ans/ans_acpi already has, and the reason the ans-noacpi
-  # control could isolate the 0x144. Setting this without the resource profile
+  # control could isolate the 0x144. Setting this without the gpu feature
   # does nothing: the whole block is nested inside it.
   DEFINE NTASI_ENABLE_GPU_ACPI_PUBLICATION = 0
   # Closed selector for the driver-facing GPU ACPI identity. 23 binds the
   # Vulkan KMD (NTAS0023); 24 binds the WDDM KMD (NTAS0024). PlatformBuild.py
-  # supplies the sealed profile value and AcpiPlatform.c rejects anything else
+  # supplies the value and AcpiPlatform.c rejects anything else
   # at compile time.
   DEFINE NTASI_GPU_ACPI_HID = 23
   DEFINE NTASI_ANS_DXE_BRINGUP = FALSE
   DEFINE NTASI_ANS_PUBLISH_BLOCK_IO = FALSE
   DEFINE NTASI_ANS_PRESERVE_FOR_OS = FALSE
   DEFINE NTASI_ANS_PUBLISH_ACPI = FALSE
-  # Media profile: publish MCA0 (NTAS0080), AOPA (NTAS0081) and ISP0
+  # Media features: publish MCA0 (NTAS0080), AOPA (NTAS0081) and ISP0
   # (NTAS0090) from AcpiPlatformDxe. OFF by default, and off means
-  # preprocessor-excluded, so a profile without it produces byte-identical
+  # preprocessor-excluded, so a build without it produces byte-identical
   # firmware rather than merely equivalent firmware. Adds no FFS module and no
   # ACPI table to the FV (the SSDTs are generated at DXE runtime, like ANS0 and
   # DRT0), so expected_ffs_count and the 94-image count are unchanged. Publishes
@@ -69,10 +69,10 @@
   DEFINE NTASI_ENABLE_ISP_PUBLICATION = 0
   # Battery: publish BAT0 (NTAS0053) from AcpiPlatformDxe, the devnode the
   # AppleSmcBattery battc miniport binds to so Windows shows a real battery.
-  # Unconditional: every profile publishes BAT0. The generator is no longer
+  # Unconditional: every build publishes BAT0. The generator is no longer
   # #if-gated in AcpiPlatform.c, so this define is informational only (it no
   # longer controls compilation); it stays 1 so build manifests report battery
-  # publication as enabled in every profile, matching the firmware. Adds no FFS
+  # publication as enabled in every build, matching the firmware. Adds no FFS
   # module and no ACPI table to the FV (the SSDT is generated at DXE runtime,
   # like ANS0, DRT0 and the media tables), so expected_ffs_count and the
   # 94-image count are unchanged. Publishes ZERO interrupts and ZERO memory
@@ -83,7 +83,7 @@
   DEFINE NTASI_ENABLE_BATTERY_PUBLICATION = 1
   # Display interrupts: add the five AIC lines the DCP path needs -- the ASC
   # mailbox quad 932-935 and the shared DART fault line 911 -- to the dynamic
-  # NTAS0070 _CRS. OFF by default, and off means preprocessor-excluded, so a profile
+  # NTAS0070 _CRS. OFF by default, and off means preprocessor-excluded, so a build
   # without it produces byte-identical firmware. The device itself (NTAS0070,
   # its six MMIO windows and its _DSD) is published unconditionally and is
   # unaffected by this switch.
@@ -104,7 +104,7 @@
   # volume microseconds before the OS loader starts, on a machine whose boot disk
   # is USB and whose DEBUG build deadloops on any ASSERT. Turn it on for a
   # deploy-verification boot with
-  #   NTASI_DEPLOY_EVIDENCE_ECHO=1 ./Tools/build-windows-native.sh j414s <profile>
+  #   NTASI_DEPLOY_EVIDENCE_ECHO=1 ./Tools/build-windows-native.sh j414s <build>
   # and leave it off for every boot whose result is meant to be attributable.
   DEFINE NTASI_DEPLOY_EVIDENCE_ECHO = 0
   PLATFORM_GUID                  = d70b31ca-2cbc-433b-885f-b8bbda409959
@@ -150,9 +150,9 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"MacBook Pro (Early 2023) (Mac14,5/Mac14,6/Mac14,9/Mac14,10)"
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Controllers|3 # M2 Pro case is hardcoded for now.
   #
-  # Finish exactly the deferred USB3 PIPE selected by the sealed profile:
+  # Finish exactly the deferred USB3 PIPE selected by the sealed build:
   # 0x2 = left boot-volume port for phase-1 no-XHC2 isolation;
-  # 0x4 = right port for right-enabled profiles. Never select both implicitly.
+  # 0x4 = right port for right-enabled builds. Never select both implicitly.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleUsb3PipeSwitchPortMask|$(NTASI_USB3_PIPE_SWITCH_PORT_MASK)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleUsb4RoutedPipeSwitchPortMask|$(NTASI_USB4_ROUTED_PIPE_SWITCH_PORT_MASK)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Darts|6 # M2 Pro case is hardcoded for now.
@@ -160,14 +160,14 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|38
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt|1832
   # ANS publication is the only storage-firmware experiment.  The unified
-  # baseline leaves this FALSE; the ans build profile overrides it to TRUE.
+  # baseline leaves this FALSE; the ans build build overrides it to TRUE.
   # DECOUPLED 2026-07-30 from NTASI_ENABLE_ANS (which gates the driver FFS) so
   # "the ANS driver is in the FV" and "NTAS2003 is published to Windows" can be
-  # varied independently. The `ans-noacpi` profile is exactly that experiment:
+  # varied independently. The `ans-noacpi` build is exactly that experiment:
   # identical FFS set to `ans`, no NTAS2003.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishAcpiDevice|$(NTASI_ANS_PUBLISH_ACPI)
   # Mu-side ANS bring-up. FALSE leaves the coprocessor exactly as iBoot left it
-  # (running), which is the state every booting profile has. Flip
+  # (running), which is the state every booting build has. Flip
   # NTASI_ANS_DXE_BRINGUP to TRUE and rebuild to restore the full bring-up.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|$(NTASI_ANS_DXE_BRINGUP)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|$(NTASI_ANS_PUBLISH_BLOCK_IO)

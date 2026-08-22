@@ -8,7 +8,7 @@
   raised when the host bus rejects the controller's DMA, so the boot disk did
   not "go away" -- its controller took a DMA/fabric fault.
 
-  The failure correlated with firmware profiles, and firmware's most
+  The failure correlated with firmware builds, and firmware's most
   plausible route to a DMA fault is the memory map it hands the OS: a region
   the OS believes is usable but the fabric (or the m1n1 hypervisor's stage-2
   mapping) treats otherwise produces exactly that signature. Reasoning about
@@ -136,7 +136,7 @@ NtasiDumpReservedMemoryMap (
     // BYPASS_DAPF to all 16 SIDs and installs no IOMMU protocol), XHC DMA is
     // raw physical -- so "what is the highest physical address firmware told
     // the OS exists?" is the single number most likely to differ between a
-    // profile that boots and one that dies on USBSTS.HSE. It would be
+    // build that boots and one that dies on USBSTS.HSE. It would be
     // invisible if only non-conventional regions were printed.
     //
     End = Entry->PhysicalStart + LShiftU64 (Entry->NumberOfPages, EFI_PAGE_SHIFT);

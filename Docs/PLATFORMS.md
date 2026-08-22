@@ -129,9 +129,9 @@ identical, and turns a silent transcription error into a message.
 | `PlatformBuild.py` | 38 | boilerplate over `PlatformBuildCommon` |
 | `.dsc` / `.fdf` / `.dec` | ~700 | mostly FV layout, still copied |
 | `DSDT.asl` + tables | 240–680 | authored, and rightly so |
-| Build profiles | 0 | `Platform/Profiles.py`, if it needs any |
+| Feature set | 1 line | an entry in `Platform/Features.py` |
 | SoC family package | ~1,300 | once per SoC, not per machine |
 
-The build script is solved. The profiles are solved. The `.dsc`/`.fdf` pair is
+The build script is solved. The feature set is one entry. The `.dsc`/`.fdf` pair is
 the next copy-paste to attack, and the ACPI tables are the part that should
 stay hand-written, because that is the part that is a decision.

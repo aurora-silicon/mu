@@ -2,8 +2,8 @@
 # stuart settings for the MacBookAir2026 platform.
 #
 # Everything except the platform name lives in Platform/PlatformBuildCommon.py.
-# This machine has no build profiles yet; when it gains them, add a table to
-# Platform/Profiles.py and set TARGET here.
+# When this machine gains a feature set, add it to Platform/Features.py and
+# set DEVICE here.
 #
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -22,6 +22,7 @@ from edk2toolext.invocables.edk2_setup import SetupSettingsManager
 from edk2toolext.invocables.edk2_update import UpdateSettingsManager
 
 PLATFORM = "MacBookAir2026"
+DEVICE = "j813"
 
 
 class SettingsManager(ApplePlatformSettings, UpdateSettingsManager, SetupSettingsManager,
@@ -31,6 +32,7 @@ class SettingsManager(ApplePlatformSettings, UpdateSettingsManager, SetupSetting
 
 class PlatformBuilder(ApplePlatformBuilder, UefiBuilder, BuildSettingsManager):
     PLATFORM = PLATFORM
+    DEVICE = DEVICE
 
     def __init__(self):
         UefiBuilder.__init__(self)

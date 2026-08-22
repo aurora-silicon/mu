@@ -18,7 +18,7 @@
 
 /**
   Return TRUE only when [Base, Base + Size) is representable by UINTN and
-  contains every register required by the selected hardware profile.
+  contains every register required by the selected hardware build.
 **/
 STATIC inline
 BOOLEAN

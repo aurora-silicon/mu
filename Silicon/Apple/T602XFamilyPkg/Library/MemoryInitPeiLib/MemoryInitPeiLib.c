@@ -118,7 +118,7 @@ NtasiValidateEarlyGpuBackingPool (
 //
 // Derive the wireless SID-1 reservation live at boot, the way SystemMemoryTop
 // itself is already derived -- never from a hand-picked constant. Baking a
-// chosen carveout address into a profile is exactly the mistake that
+// chosen carveout address into a build is exactly the mistake that
 // produced the GPU PEI crash earlier tonight (a hardcoded reservation that
 // went stale and landed on Mu's own live stack).
 //

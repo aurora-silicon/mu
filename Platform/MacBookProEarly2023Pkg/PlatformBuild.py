@@ -1,10 +1,8 @@
 # @file
 # stuart settings for the MacBookProEarly2023 (J414s) platform.
 #
-# The thirty build profiles this machine carries live in
-# Platform/Profiles.py, because Tools/mu_profile_manifest.py needs the same
-# answer when it seals an image. Everything else is in
-# Platform/PlatformBuildCommon.py.
+# What this machine builds is a feature set in Platform/Features.py.
+# Everything else is in Platform/PlatformBuildCommon.py.
 #
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -24,7 +22,7 @@ from edk2toolext.invocables.edk2_setup import SetupSettingsManager
 from edk2toolext.invocables.edk2_update import UpdateSettingsManager
 
 PLATFORM = "MacBookProEarly2023"
-TARGET = "j414s"
+DEVICE = "j414s"
 
 
 class SettingsManager(ApplePlatformSettings, UpdateSettingsManager, SetupSettingsManager,
@@ -34,7 +32,7 @@ class SettingsManager(ApplePlatformSettings, UpdateSettingsManager, SetupSetting
 
 class PlatformBuilder(ApplePlatformBuilder, UefiBuilder, BuildSettingsManager):
     PLATFORM = PLATFORM
-    TARGET = TARGET
+    DEVICE = DEVICE
 
     def __init__(self):
         UefiBuilder.__init__(self)

@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from edk2toolext.environment import shell_environment
 
-import Profiles
+import Features
 from edk2toolext.invocables.edk2_setup import RequiredSubmodule
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -139,13 +139,13 @@ class ApplePlatformSettings:
 class ApplePlatformBuilder:
     """Mixin for a platform's PlatformBuilder.
 
-    Set PLATFORM to the package name. Set TARGET as well if the machine has
-    build profiles in Platform/Profiles.py; leaving it None means the platform
-    builds one way and NTASI_MU_PROFILE is not consulted.
+    Set PLATFORM to the package name. Set DEVICE as well if the machine has a
+    feature set in Platform/Features.py; leaving it None means the platform
+    builds one way and no feature defines are emitted.
     """
 
     PLATFORM = None
-    TARGET = None
+    DEVICE = None
 
     @property
     def _dsc(self):
@@ -198,22 +198,25 @@ class ApplePlatformBuilder:
             "Setting build report types")
         # The MFCI test cert is the default; pass BLD_*_SHIP_MODE=TRUE for retail.
         self.env.SetValue("BLD_*_SHIP_MODE", "FALSE", "Default")
-        self._set_profile_defines()
+        self._set_feature_defines()
         return 0
 
-    def _set_profile_defines(self):
-        """Turn NTASI_MU_PROFILE into -D NTASI_* defines.
+    def _set_feature_defines(self):
+        """Turn the requested feature set into -D NTASI_* defines.
 
-        The profile table lives in Platform/Profiles.py because
-        Tools/mu_profile_manifest.py needs the same answer when it seals and
-        re-checks an image. It used to be written out twice.
+        NTASI_MU_DEVICE / NTASI_MU_WITH / NTASI_MU_WITHOUT are what Tools/mu-build
+        exports, and re-resolving them here rather than passing the defines
+        through means a manual stuart_build with the same three variables
+        produces the same image.
         """
-        if self.TARGET is None:
+        if self.DEVICE is None:
             return
-        name = os.environ.get("NTASI_MU_PROFILE", "baseline").strip().lower()
-        logging.info("Building the %s Windows Mu profile: %s", self.TARGET, name)
-        for define, value in Profiles.build_defines(self.TARGET, name):
-            self.env.SetValue(define, value, "Selected by NTASI_MU_PROFILE")
+        device = os.environ.get("NTASI_MU_DEVICE", self.DEVICE)
+        with_ = os.environ.get("NTASI_MU_WITH", "").split()
+        without = os.environ.get("NTASI_MU_WITHOUT", "").split()
+        logging.info("%s", Features.summary(device, with_, without))
+        for define, value in Features.defines(device, with_, without):
+            self.env.SetValue(define, value, "Selected by feature set")
 
     def PlatformPreBuild(self):
         return 0

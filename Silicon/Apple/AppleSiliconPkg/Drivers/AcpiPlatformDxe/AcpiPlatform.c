@@ -459,7 +459,7 @@ Exit:
 
 //
 // The Vulkan and WDDM front ends deliberately bind different IDs so Windows
-// can never start both on one physical adapter.  The profile chooses one of
+// can never start both on one physical adapter.  The build chooses one of
 // these exact compile-time values; accepting a free-form HID here would make
 // the sealed manifest incapable of proving what AML the firmware emits.
 //
@@ -571,7 +571,7 @@ STATIC_ASSERT (
 // CSRT.aslc carries that entry under this same NTASI_GPU_RESOURCE_PROFILE
 // flag, so the two cannot get out of step.
 //
-// 46, NOT 40: 40 is the media profile's admac-sio. See the CSRT.aslc header.
+// 46, NOT 40: 40 is the media features's admac-sio. See the CSRT.aslc header.
 //
 #define NTASI_GPU_PUBLISHED_GSIV  46
 #define NTASI_GPU_PHYSICAL_AIC    1146
@@ -983,7 +983,7 @@ NtasiReserveGpuAdtCarveout (
 // ending exactly at SystemMemoryTop, and containing the exact SP_EL1
 // (0x103db29ba10) that crashed PEI. That table was ALSO never installed: its
 // FFS GUID was not one of the four Pcd*AcpiTableStorageFile GUIDs
-// AcpiPlatformDxe reads, so it was compiled into every gpu-profile FV and
+// AcpiPlatformDxe reads, so it was compiled into every gpu-build FV and
 // silently ignored. Both facts were accidents.
 //
 // They are now decisions. GPU.asl and GpuAcpiTables.inf are deleted, so no
@@ -1067,7 +1067,7 @@ NtasiReportGpuPublicationDecision (
   DEBUG ((
     DEBUG_ERROR,
     "AppleAgxGpu: %a NOT PUBLISHED -- this build has NTASI_ENABLE_GPU_ACPI_PUBLICATION "
-    "off, so the GPU profile reserves carveouts only. GPU unavailable; boot unaffected.\n",
+    "off, so the GPU build reserves carveouts only. GPU unavailable; boot unaffected.\n",
     NTASI_GPU_ACPI_HID_STRING
     ));
 #endif
@@ -1574,7 +1574,7 @@ NtasiGpuAllocatePlaceholderHandoff (
 
   Generated with AmlLib at DXE rather than compiled from a static .asl, for the
   same reason ANS0 and DRT0 are: a static .aml lands in the firmware volume of
-  EVERY profile, so a default-off feature could not be default-off on disk. It
+  EVERY build, so a default-off feature could not be default-off on disk. It
   is also what lets the addresses come from this boot's own ADT instead of from
   a constant captured on some other boot -- which is the bug that deleted
   GPU.asl.
@@ -2456,10 +2456,10 @@ Exit:
 // by their own flag, so a build that selects one device carries the bytes of
 // that device only.
 //
-// A profile with none of the flags therefore compiles byte-identical firmware
+// A build with none of the flags therefore compiles byte-identical firmware
 // -- not merely "behaviourally identical" -- and this is why the tables are
 // generated at runtime with AmlLib instead of being static ASL sources: a
-// static .aml would land in the firmware volume of EVERY profile, including the
+// static .aml would land in the firmware volume of EVERY build, including the
 // baseline that boots today.  ANS0 and DRT0 use the same technique for the same
 // reason.
 //
@@ -2485,7 +2485,7 @@ Exit:
 // alias.  A build with AOP and/or ISP on and MCA off carries the ordinary
 // 3-alias table, byte-for-byte as baseline.
 //
-// Every non-MCA profile's CSRT is byte-for-byte unchanged; the MCA table
+// Every non-MCA build's CSRT is byte-for-byte unchanged; the MCA table
 // is a strict SUPERSET, so the boot USB controller's 37 -> 1274 alias is
 // bit-identical in both.
 //
@@ -2536,7 +2536,7 @@ Exit:
 // every later window and breaks the contract above.  Expect
 // CM_PROB_NORMAL_CONFLICT (Code 12) on one of KBL0 / MCA0 / ISP0 whenever
 // NTASI_ENABLE_MCA_PUBLICATION or NTASI_ENABLE_ISP_PUBLICATION is on -- both
-// devices claim that page, and KBL0 claims it in every profile.  AOPA does not:
+// devices claim that page, and KBL0 claims it in every build.  AOPA does not:
 // none of its four windows touches pmgr_east, so an AOP-only build has no
 // overlap at all.  With a flag off its device does not exist.
 //
@@ -2878,7 +2878,7 @@ Exit:
   withhold the others, and none is fatal to the boot.  A machine that reaches
   Windows with two of three media devices is strictly better than one that does
   not reach Windows at all, and this whole feature is an experiment behind a
-  default-off profile flag.
+  default-off build flag.
 
   @param[in] AcpiTable  The ACPI table protocol.
 **/
@@ -2930,7 +2930,7 @@ NtasiInstallMediaTables (
 //   2. This AmlLib cannot generate a method with a body -- only
 //      AmlCodeGenMethodRetInteger/RetNameString.  _BIF/_BIX/_BST must return
 //      Packages, so a control-method battery could only ever be a STATIC .asl,
-//      which lands in EVERY profile's firmware volume including the baseline
+//      which lands in EVERY build's firmware volume including the baseline
 //      that boots.  Default off would stop meaning byte-identical firmware.
 //   3. The SMC mailbox has exactly one owner and it is taken.  \_SB.SMCG
 //      (NTAS0052) is published unconditionally and AppleSmcGpio.sys drives the
@@ -3193,7 +3193,7 @@ Exit:
 
 /**
   Publish the native Apple ANS controller to Windows.  Addresses and the
-  hardware profile are derived from the live Apple Device Tree so one firmware
+  hardware build are derived from the live Apple Device Tree so one firmware
   binary does not bake in a board-specific MMIO map.
 
   The three memory resources have a stable ABI with the Windows miniport:
@@ -3263,7 +3263,7 @@ AcpiPlatformInstallAppleAnsTable (
   // Do not publish the ANS controller in a build whose FV has no
   // AppleNANDStorageDxe: an NTAS200x device would enumerate with no driver
   // behind it.  This was an unconditional return while ANS was quarantined out
-  // of the input profile, which silently survived re-enabling the DXE and left
+  // of the input build, which silently survived re-enabling the DXE and left
   // the ANS build carrying a driver that nothing in ACPI ever pointed at.
   //
   if (!FixedPcdGetBool (PcdAppleAnsPublishAcpiDevice)) {
@@ -3570,7 +3570,7 @@ AcpiPlatformInstallAppleAnsTable (
   } else {
     DEBUG ((
       DEBUG_ERROR,
-      "AppleANS ACPI: unsupported legacy=%d SART v%d profile\n",
+      "AppleANS ACPI: unsupported legacy=%d SART v%d build\n",
       Legacy,
       SartVersion
       ));
@@ -4665,7 +4665,7 @@ AcpiPlatformEntryPoint (
   // resource away from a devnode that boots -- see the block comment on
   // NtasiInstallBatteryTable for why the SMC windows stay with SMCG.
   //
-  // Unconditional: every profile publishes BAT0. The publication is empty-_CRS
+  // Unconditional: every build publishes BAT0. The publication is empty-_CRS
   // and read-only, so it cannot take a resource from a devnode that boots or
   // touch power hardware; see the block comment on NtasiInstallBatteryTable.
   //
@@ -4675,19 +4675,19 @@ AcpiPlatformEntryPoint (
   }
 
   //
-  // Dump every non-conventional memory region, in EVERY profile.
+  // Dump every non-conventional memory region, in EVERY build.
   //
   // Added 2026-07-30 for the BUGCODE_USB3_DRIVER 0x144 investigation. XHC1 was
   // captured halted on USBSTS.HSE (Host System Error -- the host bus rejected
   // its DMA) with DWC3 buserr_valid=1, and the failure correlated with
-  // firmware profiles. Firmware's most plausible route to another master's DMA
-  // fault is the memory map it hands the OS, so every profile now states
+  // firmware builds. Firmware's most plausible route to another master's DMA
+  // fault is the memory map it hands the OS, so every build now states
   // exactly what it asked the OS to treat specially. AcpiPlatformDxe is the
-  // right home because it is in EVERY profile -- including baseline (which
+  // right home because it is in EVERY build -- including baseline (which
   // boots) and wireless (which does not, and carries no ANS driver at all) --
   // so the maps can be diffed directly against each other.
   //
-  // Purely observational. The ans profiles dump again from
+  // Purely observational. The ans builds dump again from
   // AppleNANDStorageDxe after its own reserved buffers exist.
   //
   NtasiDumpReservedMemoryMap ("AcpiPlatform");

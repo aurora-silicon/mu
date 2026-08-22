@@ -51,19 +51,19 @@
   # iBoot handed them over; AppleNANDStorageDxe still runs discovery, the
   # read-only PMGR report and the SART/memory-map diagnostics, then returns.
   #
-  # Set FALSE on 2026-07-30: the `ans` profile reproduced BUGCODE_USB3_DRIVER
+  # Set FALSE on 2026-07-30: the `ans` build reproduced BUGCODE_USB3_DRIVER
   # 0x144 with the Windows ANS driver DISABLED (Start=4), while `gpu` on the
-  # same commit and cable booted -- 6 boots / 0 failures for non-ANS profiles
-  # versus 0 / 3 for ANS profiles. With no OS driver loading, hardware state
+  # same commit and cable booted -- 6 boots / 0 failures for non-ANS builds
+  # versus 0 / 3 for ANS builds. With no OS driver loading, hardware state
   # left behind by this bring-up was the only remaining variable. That older
   # implementation hard-stopped a live un-quiesced coprocessor; the default
-  # stays off for existing profiles. PcdAppleAnsPublishBlockIo is FALSE and the OS
-  # driver brings ANS up itself. The dedicated internal-storage profile opts
+  # stays off for existing builds. PcdAppleAnsPublishBlockIo is FALSE and the OS
+  # driver brings ANS up itself. The dedicated internal-storage build opts
   # into the ownership-aware WAKE/COLD implementation and live OS handoff.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|FALSE|BOOLEAN|0x00004721
   # Keep a successfully booted Mu controller live across ExitBootServices so
   # AppleNvme can take its explicit warm-adoption path. Only internal-storage
-  # boot profiles may enable this together with DXE bring-up and Block I/O.
+  # boot builds may enable this together with DXE bring-up and Block I/O.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|FALSE|BOOLEAN|0x00004722
   # Exact four-byte PMGR power-state registers, exported to NTAS2003's ACPI
   # _CRS. RETRACTED 2026-07-30: earlier comments here and on Mu's own ANS
@@ -188,7 +188,7 @@
   # m1n1-owned wireless DART SID-1 page-table reservation. CORRECTED
   # 2026-07-30: this used to be a FixedAtBuild PCD populated from a
   # hand-picked, pre-sealed manifest file at build time -- baking a chosen
-  # base into a profile is exactly the mistake that produced the GPU PEI
+  # base into a build is exactly the mistake that produced the GPU PEI
   # crash earlier tonight (a hardcoded carveout address that went stale
   # and landed on Mu's own live stack). PatchableInModule instead, like
   # PcdFrameBufferAddress above: MemoryInitPeiLib.c derives both values at

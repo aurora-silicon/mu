@@ -6,7 +6,7 @@
   These are twenty-one MMIO windows read off one live MacBook Pro. They used to
   sit in AcpiPlatformDxe/AcpiPlatform.c, which is in AppleSiliconPkg -- the
   package every machine compiles. The three flags that select them
-  (NTASI_ENABLE_MCA/AOP/ISP_PUBLICATION) are build profile flags, not machine
+  (NTASI_ENABLE_MCA/AOP/ISP_PUBLICATION) are build build flags, not machine
   flags, so a different Mac enabling media publication would have published
   J414s addresses for its own audio hardware.
 

@@ -881,7 +881,7 @@ UefiMain (
   }
 
   //
-  // In the internal-storage profile, prove that the same Apple ANS namespace
+  // In the storage features, prove that the same Apple ANS namespace
   // reached the standard Block I/O database, and inventory the child handles
   // PartitionDxe/FatDxe created from it.  Only after that proof do we read the
   // GPT through the standard protocol pointer and render the final dashboard.

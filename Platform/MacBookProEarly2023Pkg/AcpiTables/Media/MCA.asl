@@ -43,7 +43,7 @@
   defect class as the NTAS2003/KBL0 collision fixed on 2026-07-30, the fix is
   driver-side (_DSD instead of _CRS index 4), and it cannot be made here
   without breaking the positional _CRS contract.  Expect Code 12 on one of
-  KBL0 / MCA0 / ISP0 in the media profile.
+  KBL0 / MCA0 / ISP0 in the media features.
 
   AppleMcaAudio drives the speaker/headphone-jack half of the machine's audio:
   the MCA I2S/TDM SERDES complex, its ADMAC DMA controller, the NCO that clocks
@@ -235,7 +235,7 @@ DefinitionBlock ("MCA.aml", "SSDT", 0x02, "Apple", "J414MCA", 0x00000001)
                 // windows.  These are NOT the physical AIC lines: every line
                 // in this subsystem is above the GIC carrier's 1019 limit and
                 // is illegal as a GSIV, so the CSRT's ALI2 tail translates
-                // them.  The media profile therefore selects the
+                // them.  The media features therefore selects the
                 // "m2-pro-media" CSRT (8 aliases, 296 bytes) instead of the
                 // ordinary "m2-pro" (3 aliases, 256 bytes); see CSRT.aslc.
                 //
@@ -303,7 +303,7 @@ DefinitionBlock ("MCA.aml", "SSDT", 0x02, "Apple", "J414MCA", 0x00000001)
                     Package () { "ntasp,clk-mux-window-published", One },
                     Package () { "ntasp,clk-mux-register-count", 6 },
                     // Five published GSIVs (40/41/42/43/45), all requiring
-                    // CSRT ALI2 translation -- which is why the media profile
+                    // CSRT ALI2 translation -- which is why the media features
                     // selects the m2-pro-media CSRT.
                     Package () { "ntasp,mca-interrupts-published", 5 },
                     Package () { "ntasp,mca-csrt-ali2-required", One },

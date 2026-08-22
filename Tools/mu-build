@@ -1,18 +1,36 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Native Apple Silicon host build for target-specific Windows firmware profiles.
+#
+# Build and seal Apple silicon Windows firmware, natively on macOS.
+#
+#     Tools/mu-build j414s
+#     Tools/mu-build j414s --without wireless
+#     Tools/mu-build j414s --with media --without gpu-acpi
+#     Tools/mu-build --list
+#
+# With no flags you get the configuration known to boot on that machine. Each
+# flag moves exactly one variable.
+#
+# This replaced thirty named profiles. Adding a variable used to mean adding a
+# name, and the names had to agree across the build script, the sealing tool and
+# auroradbg.
+#
+# Builds are native and incremental: no Docker, clang/lld from Homebrew, and the
+# object tree is seeded from the previous build of the same configuration, so a
+# rebuild after a source change is seconds rather than minutes.
 set -eu
 
 usage() {
-    echo "usage: $0 <target> <profile>" >&2
+    cat >&2 <<'USAGE'
+usage: mu-build <device> [--with FEATURE]... [--without FEATURE]...
+       mu-build --list
+
+Devices and features come from Platform/Features.py.
+USAGE
     exit 2
 }
 
-test "$#" -eq 2 || usage
-target=$1
-profile=$2
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-profile_tool=$source_root/Tools/mu_profile_manifest.py
 mu_python=${AURORADBG_MU_PYTHON:-$(command -v python3.12 || command -v python3)}
 test -x "$mu_python" || {
     echo "error: Python 3.11 or 3.12 is required for the pinned Mu tools" >&2
@@ -23,29 +41,32 @@ test -x "$mu_python" || {
     exit 1
 }
 
-# Platform/Profiles.py is the authority for both the profile list and what a
-# target builds. The profile check used to AST-parse PROFILES out of the
-# manifest tool -- a fourth reader of a table that then existed twice -- and the
-# package, platform name, output directory and FD file name were a case
-# statement here plus three hardcoded J414s paths further down, which is why
-# adding a machine meant editing this script.
-platform_spec=$("$mu_python" - "$source_root" "$target" "$profile" <<'PY'
-import sys
-sys.path.insert(0, f"{sys.argv[1]}/Platform")
-import Profiles
-try:
-    Profiles.profile(sys.argv[2], sys.argv[3])
-    spec = Profiles.platform(sys.argv[2])
-except (KeyError, ValueError) as error:
-    raise SystemExit(str(error))
-print(" ".join(spec[k] for k in ("pkg", "platform", "output", "fd_name")))
-PY
-) || { echo "$platform_spec" >&2; exit 2; }
-set -- $platform_spec
-platform_pkg=$1
-platform_name=$2
-output_target=$3
-platform_fd=$4
+if test "${1:-}" = "--list"; then
+    exec "$mu_python" "$source_root/Tools/features.py" --list
+fi
+
+test "$#" -ge 1 || usage
+case $1 in -*) usage ;; esac
+device=$1
+shift
+with_list=""
+without_list=""
+while test "$#" -gt 0; do
+    case $1 in
+        --with)    test "$#" -ge 2 || usage; with_list="$with_list $2"; shift 2 ;;
+        --without) test "$#" -ge 2 || usage; without_list="$without_list $2"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+
+# One call resolves the device, validates every feature name, and returns what
+# the rest of this script needs.
+spec=$("$mu_python" "$source_root/Tools/features.py" --resolve \
+    "$device" "$with_list" "$without_list") || { echo "$spec" >&2; exit 2; }
+platform_pkg=$(printf '%s\n' "$spec" | sed -n 1p)
+platform_name=$(printf '%s\n' "$spec" | sed -n 2p)
+config_slug=$(printf '%s\n' "$spec" | sed -n 3p)
+platform_fd=$(printf '%s\n' "$spec" | sed -n 4p)
 
 test "$(uname -s)" = Darwin || {
     echo "error: native Mu build currently supports macOS only" >&2
@@ -100,8 +121,8 @@ if test -n "$(git -C "$source_root" status --porcelain=v1 --untracked-files=all 
 fi
 # Keep direct native builds inside the AuroraSilicon main repository.  The
 # legacy variable remains a compatibility fallback for existing automation.
-output_root=${AURORADBG_MU_OUTPUT_ROOT:-${NTASI_MU_OUTPUT_ROOT:-$(dirname "$source_root")/AuroraSilicon/build/$output_target}}
-output_dir=$output_root/$profile/$commit
+output_root=${AURORADBG_MU_OUTPUT_ROOT:-${NTASI_MU_OUTPUT_ROOT:-$(dirname "$source_root")/AuroraSilicon/build/mu}}
+output_dir=$output_root/$config_slug/$commit
 build_dir=$output_dir/Build
 conf_dir=$output_dir/Conf
 artifact_dir=$output_dir/artifacts
@@ -110,12 +131,12 @@ lock_dir=$output_dir/.build-lock
 source_link_lock_dir=$output_root/.native-source-link-lock
 mkdir -p "$output_dir"
 if ! mkdir "$source_link_lock_dir" 2>/dev/null; then
-    echo "error: another native Mu profile build owns $source_root/Build and Conf" >&2
+    echo "error: another native Mu build owns $source_root/Build and Conf" >&2
     exit 1
 fi
 if ! mkdir "$lock_dir" 2>/dev/null; then
     rmdir "$source_link_lock_dir" 2>/dev/null || true
-    echo "error: profile build is already running: $output_dir" >&2
+    echo "error: a build is already running: $output_dir" >&2
     exit 1
 fi
 
@@ -127,7 +148,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 if test ! -d "$build_dir"; then
-    previous_build=$(find "$output_root/$profile" -mindepth 2 -maxdepth 2 -type d -name Build \
+    previous_build=$(find "$output_root/$config_slug" -mindepth 2 -maxdepth 2 -type d -name Build \
         ! -path "$build_dir" -print 2>/dev/null | while IFS= read -r candidate; do
             printf '%s %s\n' "$(stat -f %m "$candidate")" "$candidate"
         done | sort -nr | sed -n '1s/^[0-9][0-9]* //p')
@@ -157,7 +178,7 @@ run_logged() {
 }
 # EDK2's CLANGPDB definition accepts one prefix for clang, llvm-lib, llvm-rc,
 # and lld-link. Homebrew deliberately ships lld as a separate formula, so
-# assemble a profile-local prefix instead of changing global Homebrew links.
+# assemble a build-local prefix instead of changing global Homebrew links.
 ln -sfn "$llvm_bin/clang" "$toolchain_dir/clang"
 ln -sfn "$llvm_bin/llvm-lib" "$toolchain_dir/llvm-lib"
 ln -sfn "$llvm_bin/llvm-rc" "$toolchain_dir/llvm-rc"
@@ -204,7 +225,11 @@ export CLANG_BIN="$toolchain_dir/"
 export CLANG_HOST_BIN="/usr/bin/"
 export UNIX_IASL_BIN="$(command -v iasl)"
 export CONF_PATH="$conf_dir"
-export NTASI_MU_PROFILE="$profile"
+# PlatformBuildCommon re-resolves these through Platform/Features.py, so a
+# manual stuart_build with the same three variables produces the same image.
+export NTASI_MU_DEVICE="$device"
+export NTASI_MU_WITH="$with_list"
+export NTASI_MU_WITHOUT="$without_list"
 export NTASI_DEPLOY_EVIDENCE_ECHO="${NTASI_DEPLOY_EVIDENCE_ECHO:-0}"
 
 platform_build=Platform/$platform_pkg/PlatformBuild.py
@@ -218,7 +243,7 @@ if test ! -f "$stamp" || test "${NTASI_MU_NATIVE_REFRESH:-auto}" = always; then
         "$llvm_bin/clang" --version | head -1
     } > "$stamp"
 fi
-run_logged "Building $profile with native CLANGPDB" stuart_build -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG
+run_logged "Building $config_slug with native CLANGPDB" stuart_build -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG
 
 fd=$build_dir/$platform_name-AARCH64/DEBUG_CLANGPDB/FV/$platform_fd
 test -f "$fd"
@@ -235,21 +260,21 @@ llvm_identity=$(
         shasum -a 256 "$base_tools_bin/GenFfs" "$base_tools_bin/VfrCompile"
     } | shasum -a 256 | awk '{print $1}'
 )
-"$venv/bin/python" "$profile_tool" seal \
+"$mu_python" "$source_root/Tools/seal.py" \
     --source-root "$source_root" \
     --output-root "$output_dir" \
-    --target "$target" \
-    --profile "$profile" \
-    --image-ref "native:darwin-arm64" \
-    --image-id "sha256:$llvm_identity" \
-    --image-repo-digests-json '[]' \
-    --builder-platform "darwin/arm64" \
-    --evidence-echo "$NTASI_DEPLOY_EVIDENCE_ECHO"
+    --device "$device" \
+    --config "$config_slug" \
+    --with "$with_list" \
+    --without "$without_list" \
+    --fd "$artifact_dir/$platform_fd" \
+    --build-log "$native_log" \
+    --toolchain "sha256:$llvm_identity"
 
 artifact=$artifact_dir/$platform_fd
 manifest=$artifact_dir/manifest.json
-echo "READY_TO_TEST $profile"
-echo "target=$target"
+echo "READY_TO_TEST $config_slug"
+echo "device=$device"
 echo "source=$commit"
 echo "backend=native-darwin-arm64"
 echo "log=$native_log"

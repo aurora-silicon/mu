@@ -1625,7 +1625,7 @@ AllocateQueueMemory (
   // free to reclaim EfiBootServicesData immediately, so no address the DMA
   // engine has ever been given may use that type.  Reserved pages turn the
   // failure case into a bounded leak instead of DMA into arbitrary OS memory.
-  // The ordinary quiesce/reset profile retains BootServicesData semantics.
+  // The ordinary quiesce/reset build retains BootServicesData semantics.
   //
   MemoryType = FixedPcdGetBool (PcdAppleAnsPreserveForOs) ?
                  EfiReservedMemoryType : EfiBootServicesData;
@@ -2403,7 +2403,7 @@ AnsExitBootServices (
    * This is deliberately not "stop ANS before Windows": the coprocessor and
    * its RTKit shared-buffer grants remain live.  If the bounded controller
    * stop fails, every queue/TCB/bounce allocation is EfiReservedMemoryType in
-   * this profile, so the still-live DMA master cannot target reclaimed OS
+   * this build, so the still-live DMA master cannot target reclaimed OS
    * pages.  The Windows driver will disable the inherited controller before
    * programming its own queues, exactly as its start core already does.
    */
@@ -2485,7 +2485,7 @@ AnsExitBootServices (
     // entries armed -- and iBoot's entries cover iBoot's ANS buffers, which
     // Windows reclaims as conventional RAM seconds later. A standing DMA grant
     // over memory the OS is handing to arbitrary drivers is a loaded gun, and
-    // it is loaded in every profile that carries ANS, whether or not this
+    // it is loaded in every build that carries ANS, whether or not this
     // driver ever booted the IOP.
     //
     // Safe here and nowhere earlier: the coprocessor's run bit is confirmed
@@ -2544,8 +2544,8 @@ AnsExitBootServices (
   // WHY THIS IS STILL HERE EVEN THOUGH THE ANS CORRELATION IS DEAD.
   //
   // This reset was originally added because a BUGCODE_USB3_DRIVER 0x144
-  // correlated 4-for-4 with ANS-carrying profiles and 0-for-2 without. That
-  // correlation was FALSIFIED on 2026-07-30 when the `gpu-wireless` profile --
+  // correlated 4-for-4 with ANS-carrying builds and 0-for-2 without. That
+  // correlation was FALSIFIED on 2026-07-30 when the `gpu-wireless` build --
   // which contains no ANS FFS, boots no IOP, and never reaches this code --
   // produced a 0x144 of its own. ANS is not a necessary condition for the
   // bugcheck, and nothing below should be read as claiming otherwise.
@@ -2799,7 +2799,7 @@ ReportAnsPmgrDomains (
 // PURELY OBSERVATIONAL -- reads three registers per entry and writes nothing.
 //
 // Added 2026-07-30 because a BUGCODE_USB3_DRIVER 0x144 correlated with
-// ANS-carrying firmware profiles, with XHC1 halted on USBSTS.HSE (Host System
+// ANS-carrying firmware builds, with XHC1 halted on USBSTS.HSE (Host System
 // Error = the host bus rejected the controller's DMA). SART is the only
 // DMA-address-filtering hardware this firmware programs, so "what did Mu
 // actually leave in the filter?" had to become a question answerable from one
@@ -2919,7 +2919,7 @@ DiscoverHardware (
   Device->NvmeHw      = &ntasi_ans_hw_t8103;
   *AscHw              = &ntasi_asc_hw_v4;
   *SartParams         = &ntasi_sart_params_v2;
-  ANS_DEBUG ((DEBUG_INFO, "AppleANS: using QEMU fixed-resource profile\n"));
+  ANS_DEBUG ((DEBUG_INFO, "AppleANS: using QEMU fixed-resource build\n"));
   return EFI_SUCCESS;
 #else
   RootNode = dt_get ("/");
@@ -3190,11 +3190,11 @@ AppleNANDStorageDxeInitialize (
   // MINIMAL PERTURBATION GATE -- default: leave the hardware exactly as iBoot
   // left it.
   //
-  // 2026-07-30 hardware result: the `ans` profile bugchecked
+  // 2026-07-30 hardware result: the `ans` build bugchecked
   // BUGCODE_USB3_DRIVER 0x144 with the Windows ANS driver DISABLED in the
   // registry (Start=4, verified from an offline hive), while `gpu` on the same
   // commit, same cable and same everything else booted to the desktop. Tally
-  // on that cable: non-ANS profiles 6 boots / 0 failures, ANS profiles
+  // on that cable: non-ANS builds 6 boots / 0 failures, ANS builds
   // 0 boots / 3 failures. With no Windows ANS driver loading, the only
   // remaining variable is hardware state Mu's bring-up leaves behind.
   //
@@ -3228,7 +3228,7 @@ AppleNANDStorageDxeInitialize (
     // MEASURED ON HARDWARE 2026-07-31, and the reason this branch no longer
     // simply walks away.
     //
-    // A boot of the ans-gpu-wireless profile bugchecked BUGCODE_USB3_DRIVER
+    // A boot of the ans-gpu-wireless build bugchecked BUGCODE_USB3_DRIVER
     // 0x144 (Arg1=2) after stalling >100 s at storport tag-list init, where a
     // healthy boot is past that point in ~25 s. Read from EL2 at the stop:
     //

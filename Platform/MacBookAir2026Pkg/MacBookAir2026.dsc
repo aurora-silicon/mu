@@ -34,15 +34,15 @@
   SECURE_BOOT_ENABLE             = FALSE #disable secure boot for now
   DEFINE T8142_SYSTEM_MEMORY_SIZE = 0x400000000
   #
-  # Internal Apple ANS/NVMe is opt-in.  The ordinary UEFI-shell profile stays
-  # free of storage bring-up; the internal-storage profile sets these through
+  # Internal Apple ANS/NVMe is opt-in.  A build without the storage
+  # features stays free of storage bring-up; enabling them sets these through
   # BLD_* variables in Tools/build-j813-windows-native.sh.
   #
   DEFINE NTASI_ENABLE_ANS = FALSE
   DEFINE NTASI_ANS_DXE_BRINGUP = FALSE
   DEFINE NTASI_ANS_PUBLISH_BLOCK_IO = FALSE
   DEFINE NTASI_ANS_PRESERVE_FOR_OS = FALSE
-  # The internal-storage profile disables the interactive MTP survey. Its
+  # Enabling the storage features disables the interactive MTP survey. Its
   # eight-second delay loop depends on the guest counter path and can dominate
   # or stall supervised T8142 boots before ANS is dispatched.
   DEFINE MTP_HID_BUILD = TRUE
@@ -60,7 +60,7 @@
   DEFINE NTASI_ANS_PUBLISH_ACPI = FALSE
   #
   # Start J813 bring-up on Apple's native AIC: this is the path already proven
-  # to reach the internal UEFI shell. A later Windows profile will switch this
+  # to reach the internal UEFI shell. A later Windows configuration will switch this
   # to FALSE once m1n1's emulated GICv3 path is stable on T8142.
   #
   AIC_BUILD                      = TRUE

@@ -19,7 +19,7 @@
 // section (the "ALI2" tail after the fixed 144-byte AIC2 payload). T6020's
 // Left-front xHCI, ANS, right-side xHCI, and COM0 lines 1274/1832/1292/1198 sit in GIC's
 // reserved 1024..4095 gap and are refused by Windows' PnP interrupt arbiter,
-// so firmware publishes GSIVs 37/38/39/47. The GPU profile additionally maps
+// so firmware publishes GSIVs 37/38/39/47. The GPU build additionally maps
 // the AGX mailbox as 46 -> 1146.
 // An older HAL or a CSRT without this tail parses as zero aliases and behaves
 // identically to the original table.
@@ -43,7 +43,7 @@
 // The MCA table is a WHOLE separate alternative rather than more
 // #if arms interleaved into the byte stream below, for two reasons: the
 // existing text stays character-for-character untouched (so every non-MCA
-// profile is provably unchanged, not merely believed to be), and a 304-byte
+// build is provably unchanged, not merely believed to be), and a 304-byte
 // table whose length, checksum and three nested sub-lengths all move together
 // is far safer transcribed as one block than as five correlated edits.
 //
@@ -230,7 +230,7 @@ STATIC_ASSERT (sizeof (Csrt) == 312, "T6020 MCA+GPU CSRT size");
 #elif NTASI_ENABLE_MCA_PUBLICATION
 UINT8 Csrt[] = {
   //
-  // Nine ALI2 aliases: the four fixed entries every profile carries
+  // Nine ALI2 aliases: the four fixed entries every build carries
   // (37 -> 1274 XHC1, 38 -> 1832 ANS, 39 -> 1292 XHC2, 47 -> 1198 COM0) plus the five MCA
   // audio translations. The boot USB controller's alias is bit-identical to
   // the ordinary table's, so the MCA table is a strict superset and the

@@ -37,8 +37,8 @@ when Mu starts. Mu must choose its RTKit path from that observed state:
   new queues. If the bounded controller shutdown fails, reserved queue memory
   keeps the still-live DMA master from targeting pages Windows can reclaim.
 
-The `internal-storage` J414s build profile is the only profile that enables
-DXE bring-up, read-only Block I/O, and live OS handoff together. Other profiles
+The `internal-storage` J414s build build is the only build that enables
+DXE bring-up, read-only Block I/O, and live OS handoff together. Other builds
 retain their existing quiesce/reset policy.
 
 Mu includes DiskIoDxe, PartitionDxe, and the FAT filesystem driver. It does

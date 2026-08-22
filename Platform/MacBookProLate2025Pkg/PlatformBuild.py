@@ -2,8 +2,8 @@
 # stuart settings for the MacBookProLate2025 platform.
 #
 # Everything except the platform name lives in Platform/PlatformBuildCommon.py.
-# This machine has no build profiles yet; when it gains them, add a table to
-# Platform/Profiles.py and set TARGET here.
+# When this machine gains a feature set, add it to Platform/Features.py and
+# set DEVICE here.
 #
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: BSD-2-Clause-Patent

@@ -10,8 +10,8 @@
   the equivalent SSDT with AmlLib at DXE runtime, gated on
   NTASI_ENABLE_MEDIA_PUBLICATION, and installs it -- the same relationship
   ANS0 and DRT0 already have with their (deleted) static ASL.  A static table
-  was not used because it would land in the firmware volume of EVERY profile,
-  including the baseline that boots today, and the media profile must be
+  was not used because it would land in the firmware volume of EVERY build,
+  including a build with media off, and the media features must be
   additive-when-on and byte-identical-when-off.
 
   Tests/test_j414s_media_acpi_contract.py machine-checks that the _CRS window
@@ -84,7 +84,7 @@
   The correct fix is driver-side and is the same one ANS took: read the
   pmgr_east base from _DSD instead of from _CRS index 4, then drop the window.
   Until then, expect one of KBL0 / MCA0 / ISP0 to fail with Code 12 in the
-  media profile.  Nothing outside the media profile is affected: with
+  media features.  Nothing outside the media features is affected: with
   NTASI_ENABLE_MEDIA_PUBLICATION off, none of these three devices exists.
 
   ==========================================================================

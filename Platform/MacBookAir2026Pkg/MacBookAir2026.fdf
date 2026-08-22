@@ -290,7 +290,7 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   #
 
   #
-  # Firmware-owned internal storage. The internal-storage profile attaches to
+  # Firmware-owned internal storage. The storage features attaches to
   # iBoot's live ANS/RTKit state, exposes read-only EFI Block I/O, and preserves
   # the warm handoff state for the eventual Windows boot-start miniport.
   #

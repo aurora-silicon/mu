@@ -190,7 +190,7 @@ FvNameGuid         = 02e6c12f-69f7-4626-b5de-e3cfd6c0dc56
   # NTAS0023 (GPU) has NO static ACPI table. GPU.asl/GpuAcpiTables.inf were
   # deleted on 2026-07-30: their FFS GUID was never one of the four
   # Pcd*AcpiTableStorageFile GUIDs AcpiPlatformDxe reads, so the table was
-  # compiled into every gpu-profile FV and never installed -- while its _CRS
+  # compiled into every gpu-build FV and never installed -- while its _CRS
   # hardcoded hw_data_a at [0x103db294000, 0x103db29c000), a range inside OS
   # RAM that contains the exact SP_EL1 (0x103db29ba10) which crashed Mu's PEI
   # twice. Not publishing NTAS0023 is now a decision, not an accident; see

@@ -38,9 +38,6 @@ jobs:
           set -eu
           status=0
           for test in test_*.py; do
-            # test_j414s_mu_profile_manifest.py authenticates submodule gitlinks
-            # against the working tree, so it cannot pass without them.
-            case "$test" in test_j414s_mu_profile_manifest.py) continue ;; esac
             echo "== $test"
             python3 -m unittest "${test%.py}" || status=1
           done

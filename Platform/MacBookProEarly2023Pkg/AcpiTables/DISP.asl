@@ -47,7 +47,7 @@
   trade to make by default. MCA.asl documents the same hazard for its own five
   lines.
 
-  Off means preprocessor-excluded, so a profile without it produces
+  Off means preprocessor-excluded, so a build without it produces
   byte-identical firmware rather than merely equivalent firmware, and adds no
   GSIV allocation and no CSRT byte.
 
