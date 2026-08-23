@@ -1,5 +1,4 @@
 /**
- * Copyright (c) 2026 Aurora Silicon
  * @file AppleAicLib.c
  * @author amarioguy (Arminder Singh)
  * @brief 
@@ -7,6 +6,7 @@
  * @date 2022-09-24
  * 
  * @copyright Copyright (c) amarioguy (Arminder Singh), 2022.
+ * Copyright (c) 2026 Aurora Silicon
  * 
  */
 #include <Base.h>

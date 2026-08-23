@@ -1,5 +1,4 @@
 /**
- * Copyright (c) 2026 Aurora Silicon
  * @file AppleVirtualMemoryMapDefines.h
  * @author amarioguy (Arminder Singh)
  * 
@@ -9,6 +8,7 @@
  * @date 2022-08-22
  * 
  * @copyright Copyright (c) amarioguy (Arminder Singh) 2022.
+ * Copyright (c) 2026 Aurora Silicon
  * 
  * SPDX-License-Identiifer: BSD-2-Clause-Patent
  * 

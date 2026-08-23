@@ -14,11 +14,11 @@
  *     UEFI DXE (Driver Execution Environment).
  * 
  * License:
- *     Copyright (c) 2026 Aurora Silicon
  *     SPDX-License-Identifier: (BSD-2-Clause-Patent OR MIT) AND GPL-2.0
  * 
  *     Original code basis is from the Asahi Linux project fork of u-boot, original copyright and author notices below.
  *     Copyright (C) 2021 Mark Kettenis <kettenis@openbsd.org>
+ *     Copyright (c) 2026 Aurora Silicon
 */
 
 #ifndef APPLE_DART_IOMMU_DXE_H

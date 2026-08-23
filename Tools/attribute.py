@@ -55,6 +55,8 @@ VENDORED = (
     "Silicon/Apple/AppleSiliconPkg/DeviceTree/",   # Asahi's device trees, see SOURCE.json
     "Silicon/ARM/TIANO/",
     "Common/",
+    "umd/vendor/",                                 # Turing Software LLC, MIT
+    "rust/vendor/",
 )
 # Exception: files in a vendored directory that we authored ourselves.
 VENDORED_EXCEPTIONS = (
@@ -68,6 +70,7 @@ HASH = {".inf", ".dec", ".dsc", ".inc", ".py", ".sh", ".fdf", ".yml", ".yaml"}
 APPLEWOA = re.compile(r"^\s*(?:[/*#\s]*)Copyright\s*\(c\).*(?:amarioguy|AppleWOA).*$",
                       re.IGNORECASE)
 HAS_AURORA = re.compile(r"Aurora Silicon", re.IGNORECASE)
+OTHER_COPYRIGHT = re.compile(r"Copyright\b", re.IGNORECASE)
 SPDX = re.compile(r"SPDX-License-Identifier")
 
 
@@ -170,6 +173,21 @@ def apply_to(path: Path, kind: str, modified: bool) -> str | None:
     for i, l in enumerate(lines[:40]):
         if not SPDX.search(l):
             continue
+        #
+        # If someone else's copyright is already in the header, Aurora's goes
+        # after it. A ported or imported file that lists us first reads as
+        # primary authorship of work that is not ours -- the same overstatement
+        # the AppleWOA headers were making, only pointed the other way.
+        #
+        last_other = None
+        for j, prev in enumerate(lines[:30]):
+            if OTHER_COPYRIGHT.search(prev) and not HAS_AURORA.search(prev):
+                last_other = j
+        if last_other is not None:
+            at = last_other + 1
+            line = comment(path, AURORA, like=lines[last_other]) or line
+            break
+
         stripped = l.strip()
         if stripped.startswith("/*") and not stripped.endswith("*/"):
             # The SPDX tag opens a block comment it does not close. Inserting

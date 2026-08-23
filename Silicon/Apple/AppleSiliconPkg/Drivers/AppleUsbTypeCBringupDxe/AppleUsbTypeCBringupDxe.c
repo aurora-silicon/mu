@@ -11,7 +11,6 @@
  *     UEFI DXE (Driver Execution Environment).
  * 
  * License:
- *     Copyright (c) 2026 Aurora Silicon
  *     SPDX-License-Identifier: (BSD-2-Clause-Patent OR MIT) AND GPL-2.0
  * 
  *     Original code basis is from the Asahi Linux u-boot project, original copyright and author notices below.
@@ -20,6 +19,7 @@
  *     
  *     Parts of DWC3 bringup code brought in from edk2-platforms, original copyright notice below.
  *     Copyright 2017, 2020 NXP
+ *     Copyright (c) 2026 Aurora Silicon
 */
 
 #include <PiDxe.h>
