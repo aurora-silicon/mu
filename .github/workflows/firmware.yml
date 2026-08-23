@@ -28,15 +28,18 @@ jobs:
           python-version: '3.12'
 
       - name: Install build dependencies
-        # Tools/build-windows-native.sh refuses anything but an Apple Silicon
-        # macOS host: it uses clang-cl/lld-link from Homebrew LLVM and builds
-        # EDK2 BaseTools natively.
+        # Tools/mu-build refuses anything but an Apple Silicon macOS host: it
+        # uses clang-cl/lld-link from Homebrew LLVM and builds EDK2 BaseTools
+        # natively.
         run: brew install llvm lld acpica nasm
 
       - name: Build and seal
         env:
           DEVICE: ${{ github.event.inputs.device || 'j414s' }}
           WITHOUT: ${{ github.event.inputs.without }}
+          # mu-build otherwise writes to a sibling of the checkout, which is
+          # outside the workspace and therefore invisible to upload-artifact.
+          NTASI_MU_OUTPUT_ROOT: ${{ github.workspace }}/build-out
         run: |
           set -eu
           args=""
@@ -46,7 +49,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mu-firmware-${{ github.event.inputs.device || 'j414s' }}
+          # mu-build seals into <output root>/<config>/<commit>/artifacts.
           path: |
-            Build/**/FV/*.fd
-            **/artifacts/manifest.json
+            build-out/**/artifacts/*.fd
+            build-out/**/artifacts/manifest.json
           if-no-files-found: error
