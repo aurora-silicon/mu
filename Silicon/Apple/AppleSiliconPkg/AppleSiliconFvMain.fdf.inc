@@ -99,8 +99,18 @@
 !if $(PLATFORM_ENABLE_GENERIC_ACPI) == TRUE
   INF RuleOverride=ACPITABLE AppleSiliconPkg/AcpiTables/GenericAcpiTables.inf
 !endif
-  # ACPI tables: the machine's own, its product family's, its SoC's.
-  INF RuleOverride=ACPITABLE $(PLATFORM_PKG)/AcpiTables/DeviceAcpiTables.inf
+  #
+  # ACPI tables, one tier at a time: the board's, the chassis family's, the
+  # SoC's.
+  #
+  # PLATFORM_BOARD_PKG is the board the machine's ACPI was measured on, which is
+  # not always the machine itself -- eight T602X machines share J414sBoardPkg
+  # because they share its board, and a machine whose board nobody has measured
+  # uses GenericBoardPkg, which declares only what the SoC family package's PCDs
+  # already state. It was previously PLATFORM_PKG, which forced every machine to
+  # carry its own copy of tables it had not measured.
+  #
+  INF RuleOverride=ACPITABLE $(PLATFORM_BOARD_PKG)/AcpiTables/DeviceAcpiTables.inf
 !if $(PLATFORM_FAMILY_PKG) != NONE
   INF RuleOverride=ACPITABLE $(PLATFORM_FAMILY_PKG)/AcpiTables/DeviceFamilyAcpiTables.inf
 !endif
