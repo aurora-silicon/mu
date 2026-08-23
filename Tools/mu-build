@@ -244,6 +244,18 @@ stamp=$build_dir/.auroradbg-native-setup-v1
 cd "$source_root"
 if test ! -f "$stamp" || test "${NTASI_MU_NATIVE_REFRESH:-auto}" = always; then
     run_logged "Preparing native Mu workspace" stuart_setup -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG
+    #
+    # Mu publishes BaseTools, iasl, nasm and uncrustify as host_specific extdeps
+    # with Linux and Windows binaries only. stuart_update refuses a host it has
+    # no entry for, and then deletes the extdep directory on its way out -- so
+    # seeding by hand does not survive a run, and a machine that has never built
+    # here cannot get past this step.
+    #
+    # This has to run after stuart_setup, which is what materialises the
+    # descriptors, and before stuart_update, which is what fails without it.
+    #
+    run_logged "Seeding host-specific external dependencies" \
+        python3 "$source_root/Tools/seed-extdeps.py"
     run_logged "Updating pinned Mu dependencies" stuart_update -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG
     {
         shasum -a 256 "$platform_build" pip-requirements.txt NTASI-AIC2-OVERLAY.json

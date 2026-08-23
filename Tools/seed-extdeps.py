@@ -51,6 +51,12 @@ NATIVE = {
     "mu_nasm": "nasm",
 }
 
+# Tools/mu-build owns this one's host directory: it symlinks MacOs-ARM-64 at the
+# BaseTools it compiles from pinned source, and refuses to replace a real
+# directory found there. So write the state file that stops stuart fetching, and
+# leave the directory alone.
+STATE_ONLY = {"Mu-Basetools"}
+
 
 def descriptors():
     for path in sorted(REPO.rglob("*_ext_dep.yaml")):
