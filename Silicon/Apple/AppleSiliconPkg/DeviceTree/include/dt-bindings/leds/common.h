@@ -1,4 +1,3 @@
-/* Copyright (c) 2026 Aurora Silicon */
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * This header provides macros for the common LEDs device tree bindings.

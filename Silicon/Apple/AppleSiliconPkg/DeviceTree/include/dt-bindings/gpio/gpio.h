@@ -1,4 +1,3 @@
-/* Copyright (c) 2026 Aurora Silicon */
 /* SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause) */
 /*
  * This header provides constants for most GPIO bindings.

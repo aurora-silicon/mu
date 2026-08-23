@@ -45,6 +45,22 @@ from pathlib import Path
 AURORA = "Copyright (c) 2026 Aurora Silicon"
 SIMILARITY = 0.5
 
+#
+# Third-party code vendored verbatim. These carry their own upstream's
+# copyright and licence, recorded alongside them, and putting Aurora's name on
+# a Linux dt-bindings header because it is new to *this* repository is the same
+# mistake in the opposite direction from stripping AppleWOA's.
+#
+VENDORED = (
+    "Silicon/Apple/AppleSiliconPkg/DeviceTree/",   # Asahi's device trees, see SOURCE.json
+    "Silicon/ARM/TIANO/",
+    "Common/",
+)
+# Exception: files in a vendored directory that we authored ourselves.
+VENDORED_EXCEPTIONS = (
+    "Silicon/Apple/AppleSiliconPkg/DeviceTree/t8140-j700.dts",
+)
+
 # Comment syntax by extension. EDK2 sources use C block comments even for ASL.
 BLOCK = {".c", ".h", ".aslc", ".asl", ".rs", ".java"}
 HASH = {".inf", ".dec", ".dsc", ".inc", ".py", ".sh", ".fdf", ".yml", ".yaml"}
@@ -102,6 +118,9 @@ def comment(path: Path, text: str, like: str | None = None) -> str | None:
         if stripped.startswith("/*") and stripped.endswith("*/"):
             indent = like[:len(like) - len(like.lstrip())]
             return f"{indent}/* {text} */"
+        if stripped.startswith("//"):
+            indent = like[:len(like) - len(like.lstrip())]
+            return f"{indent}// {text}"
         prefix = re.match(r"^[\s*#]*", like).group(0)
         if prefix.strip():
             return prefix + text
@@ -115,7 +134,9 @@ def comment(path: Path, text: str, like: str | None = None) -> str | None:
 
 def _below_shebang(lines: list[str], at: int) -> int:
     """Never insert above a #! line -- that is what makes the file executable."""
-    if at == 0 and lines and lines[0].startswith("#!"):
+    # Rust inner attributes also start "#!", but they are not shebangs and a
+    # comment may precede them. Only a real interpreter line must stay first.
+    if at == 0 and lines and lines[0].startswith("#!") and not lines[0].startswith("#!["):
         return 1
     return at
 
@@ -131,29 +152,36 @@ def apply_to(path: Path, kind: str, modified: bool) -> str | None:
     if line is None:
         return None
 
-    if kind == "ours":
-        kept = [l for l in lines if not APPLEWOA.match(l)]
-        removed = len(lines) - len(kept)
-        lines = kept
-        if HAS_AURORA.search("".join(lines)):
-            if removed:
-                path.write_text("".join(lines))
-                return f"removed {removed} travelled AppleWOA line(s)"
-            return None
-    else:
-        if HAS_AURORA.search(text) or (kind == "upstream" and not modified):
-            return None
-        removed = 0
+    #
+    # Add only. A file absent from THIS fork's upstream may still be derived
+    # from a different one: m1n1's hv_psci.c came from AppleWOA even though
+    # Asahi, which m1n1 forks, never had it. Absence is not evidence of
+    # authorship, so removing someone's copyright is never a class decision --
+    # it needs a file looked at on its own.
+    #
+    if HAS_AURORA.search(text) or (kind == "upstream" and not modified):
+        return None
+    removed = 0
 
     # Convention is Copyright first, then SPDX-License-Identifier. Put the line
     # immediately above the SPDX tag, wearing that line's own comment prefix so
     # it matches whatever indentation the file already uses.
     at = None
     for i, l in enumerate(lines[:40]):
-        if SPDX.search(l):
+        if not SPDX.search(l):
+            continue
+        stripped = l.strip()
+        if stripped.startswith("/*") and not stripped.endswith("*/"):
+            # The SPDX tag opens a block comment it does not close. Inserting
+            # above it would put the copyright outside every comment; go one
+            # line down instead, as the block's first continuation line.
+            at = i + 1
+            indent = l[:len(l) - len(l.lstrip())]
+            line = f"{indent} * {AURORA}"
+        else:
             at = i
             line = comment(path, AURORA, like=l) or line
-            break
+        break
     if at is None:
         for i, l in enumerate(lines[:6]):
             if l.strip() in ("/**", "/*"):
@@ -182,7 +210,8 @@ def main() -> int:
 
     exts = set(args.ext.split(","))
     tracked = [f for f in (git(args.repo, "ls-files") or "").split()
-               if Path(f).suffix in exts]
+               if Path(f).suffix in exts
+               and (f in VENDORED_EXCEPTIONS or not f.startswith(VENDORED))]
     kinds = classify(args.repo, args.fork, tracked)
     modified = touched_since(args.repo, args.fork)
 
