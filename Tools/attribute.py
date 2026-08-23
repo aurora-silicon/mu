@@ -18,18 +18,26 @@ The fork point. Every file is one of three things:
   derived    we added it, but its content matches an upstream file -- a copy,
              a move, or a template for a new SoC. Both copyrights, theirs
              first, because that is the order the work happened in.
-  ours       we added it and no upstream file resembles it. Aurora alone. If
-             it carries an AppleWOA line, that line is a travelled header and
-             is removed.
+  ours       we added it and no upstream file resembles it. Aurora alone.
 
 "Resembles" is measured, not guessed: difflib ratio against the best-matching
 upstream file with the same basename, threshold 0.5.
 
+Where a file already carries someone else's copyright, Aurora's goes after it.
+A ported or imported file that lists us first reads as primary authorship of
+work that is not ours.
+
 WHAT IT WILL NOT DO
 
-It never removes a copyright from a file classed upstream or derived, and it
-never adds Aurora's to a file we have not touched. Attribution is only worth
-fixing if the fix is itself accurate.
+It never removes a copyright, from any file, for any reason. The first version
+did: it stripped AppleWOA headers from files the fork's upstream never had, on
+the theory that absence meant we wrote it. That deleted a correct notice from
+m1n1's hv_psci, which came from AppleWOA by way of ARM Trusted Firmware-A and
+which Asahi has never carried. A file can descend from an upstream that is not
+the one you forked, so removing a name is never a class decision.
+
+It also skips vendored trees entirely, and never adds Aurora's line to a file
+we have not touched. Attribution is only worth fixing if the fix is accurate.
 """
 
 from __future__ import annotations
