@@ -34,6 +34,8 @@
 #include <Library/PrintLib.h>
 
 #include <IndustryStandard/Acpi.h>
+#include <IndustryStandard/Acpi63.h>
+#include <Drivers/NtasiMadtTrim.h>
 #include <IndustryStandard/WirelessHandoff.h>
 #include <IndustryStandard/GpuBackingPool.h>
 #include <Drivers/AppleAnsHardware.h>
@@ -3465,6 +3467,20 @@ AcpiPlatformInstallAppleAnsTable (
       UINT64  PcdApcieStSysBase  = FixedPcdGet64 (PcdAppleAnsPmgrApcieStSysBase);
       UINT64  PcdApcieSt1SysBase = FixedPcdGet64 (PcdAppleAnsPmgrApcieSt1SysBase);
 
+      //
+      // Zero means the board package pinned nothing, which is what
+      // GenericBoardPkg sets for a machine whose board has not been measured.
+      // There is no transcription to check the ADT against, so checking would
+      // only produce a warning about the absence itself.
+      //
+      if ((PcdResetBase | PcdApcieStBase | PcdApcieStSysBase) == 0) {
+        DEBUG ((
+          DEBUG_INFO,
+          "AppleANS ACPI: no pinned PMGR bases for this board; using the "
+          "ADT-resolved domains without a cross-check\n"
+          ));
+      } else {
+
       if (PcdResetBase != PmgrResetBase) {
         DEBUG ((
           DEBUG_WARN,
@@ -3501,6 +3517,8 @@ AcpiPlatformInstallAppleAnsTable (
           PcdApcieSt1SysBase,
           PmgrApcieSt1SysBase
           ));
+      }
+
       }
     }
 
@@ -4246,6 +4264,118 @@ AppleAcpiPlatformChecksum (
   Buffer[ChecksumOffset] = CalculateCheckSum8 (Buffer, Size);
 }
 
+//
+// -------------------------------------------------------------------------
+// MADT trimming
+// -------------------------------------------------------------------------
+//
+// The SoC packages' MADT is sized to the die; a binned machine has fewer cores
+// than that. Publishing a GICC for a core that is not there makes Windows issue
+// PSCI CPU_ON for it and answer the failure with SYSTEM_RESET.
+//
+// The arithmetic and the table surgery live in Include/Drivers/NtasiMadtTrim.h
+// so they can be tested without an ADT (Tests/test_madt_adt_trim.c). All that
+// is left here is the ADT lookup itself.
+//
+
+//
+// PcdCoreCount is the die's core count and therefore an upper bound on the ADT
+// index. Scanning a little past it costs nothing and absorbs a machine whose
+// ADT numbers its cores less densely than we assume.
+//
+#define APPLE_ADT_CPU_SCAN_LIMIT(CoreCount)  ((CoreCount) + 8)
+
+/**
+  Whether the live ADT lists this core.
+
+  @param[in] Id       The core, as decomposed from a GICC's MPIDR.
+  @param[in] Context  Unused.
+
+  @retval NTASI_MADT_TRUE   The ADT has a /cpus/cpuN node naming this core.
+  @retval NTASI_MADT_FALSE  It does not.
+**/
+STATIC
+NTASI_MADT_BOOL
+AppleAcpiAdtHasCpu (
+  IN NTASI_MADT_CPU_ID  Id,
+  IN VOID               *Context
+  )
+{
+  UINTN  Index;
+
+  (VOID)Context;
+
+  for (Index = 0; Index < APPLE_ADT_CPU_SCAN_LIMIT (PcdGet32 (PcdCoreCount)); Index++) {
+    CHAR8      NodeName[24];
+    dt_node_t  *Node;
+    UINTN      PropSize;
+    UINT32     *Reg;
+
+    AsciiSPrint (NodeName, ARRAY_SIZE (NodeName), "/cpus/cpu%d", Index);
+    Node = dt_get (NodeName);
+    if (Node == NULL) {
+      //
+      // A hole is ordinary: m1n1's run_guest.py deletes /cpus/cpuN outright for
+      // every core not passed to -C, so a single-core hypervisor boot leaves
+      // only cpu0. Keep scanning rather than stopping at the first gap.
+      //
+      continue;
+    }
+
+    Reg = (UINT32 *)dt_node_prop (Node, "reg", &PropSize);
+    if ((Reg == NULL) || (PropSize < sizeof (UINT32))) {
+      continue;
+    }
+
+    if (NtasiMadtCpuIdEquals (NtasiMadtCpuIdFromAdtReg (*Reg), Id)) {
+      return NTASI_MADT_TRUE;
+    }
+  }
+
+  return NTASI_MADT_FALSE;
+}
+
+/**
+  Cut the MADT down to the cores this unit actually has.
+
+  Does nothing when the ADT is unavailable, on the principle that a table sized
+  to the die is a better failure than an empty one.
+
+  @param[in,out] Table      The MADT.
+  @param[in,out] TableSize  Its length; updated on return.
+**/
+STATIC
+VOID
+AppleAcpiTrimMadtToAdt (
+  IN OUT EFI_ACPI_DESCRIPTION_HEADER  *Table,
+  IN OUT UINTN                        *TableSize
+  )
+{
+  NTASI_MADT_TRIM_RESULT  Result;
+  NTASI_MADT_U64          Size = (NTASI_MADT_U64)*TableSize;
+
+  if (dt_get ("/cpus") == NULL) {
+    DEBUG ((DEBUG_WARN, "%a: no /cpus in the ADT; publishing the die-sized MADT\n",
+            __FUNCTION__));
+    return;
+  }
+
+  Result = NtasiMadtTrim ((NTASI_MADT_U8 *)Table, &Size, AppleAcpiAdtHasCpu, NULL);
+
+  if (!Result.Rewritten) {
+    if (Result.Dropped != 0) {
+      DEBUG ((DEBUG_ERROR, "%a: %d CPU(s) absent from the ADT but none matched; "
+              "keeping the die-sized MADT\n", __FUNCTION__, Result.Dropped));
+    }
+
+    return;
+  }
+
+  *TableSize = (UINTN)Size;
+  DEBUG ((DEBUG_ERROR, "%a: MADT trimmed to %d CPU(s), %d absent from the ADT\n",
+          __FUNCTION__, Result.Kept, Result.Dropped));
+}
+
 // EFI_STATUS AcpiPlatformInstallMadtTable(VOID) {
 //   //
 //   // We need to install an MADT - we can use the same table regardless of
@@ -4401,6 +4531,18 @@ AcpiPlatformEntryPoint (
 
       TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
       ASSERT (Size >= TableSize);
+
+      //
+      // The SoC packages' MADT is sized to the die. Cut it down to the cores
+      // this unit actually has before anything reads it -- see
+      // AppleAcpiTrimMadtToAdt. This must happen before the checksum, which is
+      // computed over the final length.
+      //
+      if (((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Signature ==
+          EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE)
+      {
+        AppleAcpiTrimMadtToAdt ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, &TableSize);
+      }
 
       //
       // Checksum ACPI table

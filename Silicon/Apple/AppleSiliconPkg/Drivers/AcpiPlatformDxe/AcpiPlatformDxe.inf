@@ -63,6 +63,9 @@
   # Read by Include/Platform/NtasiMediaJ414s.h to refuse a build that would
   # publish one machine's media addresses on another.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleSocIdentifier              ## CONSUMES
+  # Upper bound on the ADT's /cpus index when trimming the MADT to the cores
+  # this unit actually has.
+  gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount                       ## CONSUMES
 
 [Pcd]
   gAppleSiliconPkgTokenSpaceGuid.PcdDeviceAcpiTableStorageFile    ## CONSUMES
