@@ -31,6 +31,20 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdSystemMemoryUefiRegionSize|0x8000000|UINT32|0x00004404
   gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarLimit|0x0|UINT64|0x00004717
   gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarSize|0x0|UINT64|0x00004718
+
+  #
+  # Inclusive limits and a bus count for the PCIe windows, alongside the base
+  # and size PCDs the SoC family packages already set from the apcie node.
+  #
+  # They exist because a ResourceTemplate cannot compute them. iasl substitutes
+  # FixedPcdGet fine but does not fold arithmetic in a descriptor field, so
+  # "Base + Size - 1" reaches it as a literal expression and it reports the
+  # maximum as lower than the minimum. Stating the limit outright is the only
+  # way a root bridge's _CRS can be written once and reused across SoCs.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciBusCount|0x0|UINT32|0x00004726
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio32Limit|0x0|UINT64|0x00004727
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio64Limit|0x0|UINT64|0x00004728
   # Optional ACPI published-GSIV <-> physical-AIC-line contract for ANS.
   # A zero/zero pair publishes the live physical line directly.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|0|UINT32|0x00004719

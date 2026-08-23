@@ -93,6 +93,16 @@
   gArmTokenSpaceGuid.PcdPciMmio64Size|0x20000000
 
   gEfiMdePkgTokenSpaceGuid.PcdPciExpressBaseAddress|0x690000000
+
+  #
+  # Inclusive limits and the bus count, derived from the base and size
+  # above. GenericBoardPkg's root bridge _CRS needs them stated rather
+  # than computed: iasl substitutes a PCD fine but will not fold
+  # arithmetic in a resource descriptor.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciBusCount|0x100
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio32Limit|0xFFFFFFFF
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio64Limit|0x41FFFFFFF
   gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarSize|0x1000000
   gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarLimit|0x690FFFFFF
 

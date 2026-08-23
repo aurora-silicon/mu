@@ -168,6 +168,16 @@
   # address on this SoC at all.)
   #
   gEfiMdePkgTokenSpaceGuid.PcdPciExpressBaseAddress|0x1cb0000000
+
+  #
+  # Inclusive limits and the bus count, derived from the base and size
+  # above. GenericBoardPkg's root bridge _CRS needs them stated rather
+  # than computed: iasl substitutes a PCD fine but will not fold
+  # arithmetic in a resource descriptor.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciBusCount|0x100
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio32Limit|0xBFFFFFFF
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio64Limit|0xBDFFFFFFF
   gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarSize|0x10000000
   gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarLimit|0x1cbfffffff
 

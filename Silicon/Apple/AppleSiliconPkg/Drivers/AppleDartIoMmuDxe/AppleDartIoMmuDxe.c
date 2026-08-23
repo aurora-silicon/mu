@@ -46,7 +46,22 @@
 
 #include <Drivers/AppleDartIoMmuDxe.h>
 
-APPLE_DART_INFO DartInfo[FixedPcdGet32(PcdAppleNumDwc3Controllers) * 2];
+//
+// A machine whose board has not been measured sets PcdAppleNumDwc3Controllers
+// to zero -- GenericBoardPkg does, because the controller count is something
+// read off a live machine rather than derived from the SoC. Zero is the honest
+// value and it is handled below, but it cannot size an array: a zero-length
+// array is a constraint violation, and the ones here carry an initializer, so
+// the compiler rejects it outright rather than quietly accepting an extension.
+//
+// Size to at least one and refuse to run instead. The alternative -- keeping
+// some other machine's controller count so the arrays stay non-empty -- is how
+// this file would come to describe hardware nobody has looked at.
+//
+#define APPLE_DART_DWC3_COUNT   (FixedPcdGet32 (PcdAppleNumDwc3Controllers))
+#define APPLE_DART_ARRAY_FLOOR  (APPLE_DART_DWC3_COUNT > 0 ? APPLE_DART_DWC3_COUNT : 1)
+
+APPLE_DART_INFO DartInfo[APPLE_DART_ARRAY_FLOOR * 2];
 
 // STATIC
 // PHYSICAL_ADDRESS
@@ -533,8 +548,8 @@ AppleDartIoMmuDxeInitialize(
 )
 {
     UINT32 Midr;
-    dt_node_t *DartNode[FixedPcdGet32(PcdAppleNumDwc3Controllers)] = { 0 };
-    UINT64 DartReg[FixedPcdGet32(PcdAppleNumDwc3Controllers) * 2] = { 0 };
+    dt_node_t *DartNode[APPLE_DART_ARRAY_FLOOR] = { 0 };
+    UINT64 DartReg[APPLE_DART_ARRAY_FLOOR * 2] = { 0 };
     UINT32 DartIndex = 0;
     UINT32 Params4; // U-Boot does this
     // PHYSICAL_ADDRESS Address;
@@ -553,6 +568,21 @@ AppleDartIoMmuDxeInitialize(
     UINT64 IdentityMapRoot = 0;
     // BOOLEAN DartFound = TRUE; // assume the DART exists to start.
     //UINT32 Params4;
+
+    //
+    // Nothing to do on a machine whose DWC3 complement has not been measured.
+    // Everything below walks usb-drdN nodes and their DARTs by index up to the
+    // controller count, so with a count of zero there is no work, and the
+    // arrays above exist only to satisfy the language.
+    //
+    if (APPLE_DART_DWC3_COUNT == 0) {
+      DEBUG ((
+        DEBUG_INFO,
+        "AppleDartIoMmu: no DWC3 controller count for this board; "
+        "not programming any USB DARTs\n"
+        ));
+      return EFI_SUCCESS;
+    }
 
 
     //

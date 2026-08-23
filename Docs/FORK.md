@@ -84,8 +84,14 @@ in `T602XFamilyVirtualMemoryMapDefines.h`:
 > What I would really want is a way to generalize this based on a memory map
 > passed in. This *seems* like it should fall to the DeviceTree...
 
-And someone tried: `Silicon/Apple/T600XFamilyPkg/DeviceTree/` holds 3817 lines
-of Asahi's `.dts`/`.dtsi` for T6002, vendored and referenced by no build file.
+And someone tried: `Silicon/Apple/T600XFamilyPkg/DeviceTree/` held 3817 lines of
+Asahi's `.dts`/`.dtsi` for T6002, vendored and referenced by no build file. That
+copy is gone. Its replacement is `Silicon/Apple/AppleSiliconPkg/DeviceTree/`,
+which vendors the complete include closure of every Mac Asahi describes, pinned
+by `SOURCE.json`, compiled by `Tools/mkdtb.sh`, and read by `Tools/socfacts.py`
+and `Tools/add-soc.py` when a SoC family package is created. The output of that
+reading is committed as static source, so no build file references the trees
+either -- the difference is that now something does.
 
 Copying Linux's model is the wrong move, and we do not need it. Linux ships a
 device tree per machine because it has to. We are handed the machine's real

@@ -2949,14 +2949,33 @@ DiscoverHardware (
 #endif
   NvmeStandardBase = NvmeBase;
   NvmeStandardSize = NvmeSize;
-  // T8142 always routes the standard NVMe register page through reg[9].  The
-  // nvme-secure-bar marker is a zero-length ADT property, so treating its
-  // value pointer as the sole presence test is unnecessarily brittle.
-  SecureNvmeBar = T8142;
+  //
+  // The split secure BAR: reg[3] is the NVMMU and the standard NVMe register
+  // page moves to reg[9].  T8142 does this, and so does T8140 -- J700's ADT
+  // carries the same layout and the same nvme-secure-bar marker, measured on a
+  // live machine (aurora-silicon/neo-bringup, docs/hardware-inventory.md,
+  // "NVMe/ANS generation").
+  //
+  // This is deliberately not the same condition as T8142 above.  That flag
+  // selects T8142's register map, whose offsets were measured on T8142 and have
+  // never been read off a T8140; the BAR split is the one thing the two SoCs
+  // are known to share.
+  //
+  // The marker itself is a zero-length ADT property, so treating its value
+  // pointer as the presence test is brittle, which is why this asks the
+  // hardware description instead.
+  //
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8140)
+  SecureNvmeBar = TRUE;
+#else
+  SecureNvmeBar = T8142 ||
+                  PropertyContains (AnsNode, "compatible", "t8140") ||
+                  ((RootNode != NULL) && PropertyContains (RootNode, "compatible", "j700"));
+#endif
   if (SecureNvmeBar &&
       (dt_node_reg (AnsNode, 9, &NvmeStandardBase, &NvmeStandardSize) != 0))
   {
-    ANS_DEBUG ((DEBUG_ERROR, "AppleANS: T8142 secure NVMe reg[9] is unavailable\n"));
+    ANS_DEBUG ((DEBUG_ERROR, "AppleANS: secure NVMe reg[9] is unavailable\n"));
     return EFI_NOT_FOUND;
   }
   NvmeMinimumSize = Legacy ? APPLE_ANS_NVME_T8015_MIN_SIZE : APPLE_ANS_NVME_MIN_SIZE;

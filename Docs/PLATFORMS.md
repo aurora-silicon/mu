@@ -73,8 +73,23 @@ Not the live ADT. Asahi's device trees.
 
 `aurora-silicon/linux` on the `asahi` branch carries 110 per-machine `.dts`
 files over 112 SoC `.dtsi` files. Filtering to Macs, that is 41 machines across
-seven SoC families: T8103, T8112, T600X, T602X, T603X, T8122, T8132. We support
-two.
+seven SoC families: T8103, T8112, T600X, T602X, T603X, T8122, T8132.
+
+The complete include closure of those 41 -- 103 files, plus the eight
+dt-bindings headers they include -- is vendored under
+`Silicon/Apple/AppleSiliconPkg/DeviceTree/`, pinned by `SOURCE.json`.
+`Tools/mkdtb.sh` compiles any of them without a Linux checkout, and
+`Tools/socfacts.py` reads the compiled tree. All 41, plus J813, now have a
+platform package.
+
+One machine is not from that set. The MacBook Neo (J700, A18 Pro / T8140) is
+not a Mac Asahi supports, and its bring-up happened in
+`aurora-silicon/neo-bringup` against a live unit. `DeviceTree/t8140-j700.dts` is
+authored rather than vendored, assembled from the rows of that repo's
+`docs/hardware-inventory.md` graded "A; locally verified", with the evidence for
+each address named in the file. It then goes through the same
+`mkdtb.sh -> socfacts.py -> add-soc.py` path as every other SoC, which is the
+point of authoring a tree rather than hand-writing the family package.
 
 They are already layered the way this tree wants to be. `t6020-j414s.dts` is 47
 lines and does nothing but include `t6020.dtsi` for the SoC and
@@ -122,16 +137,100 @@ on hardware. If there is no literal — a new machine — the ADT supplies it.
 That gives a new machine no literals to transcribe, keeps J414s behaviour
 identical, and turns a silent transcription error into a message.
 
-## What adding a machine costs today
+## The tiers
+
+The answer above says which facts are ADT and which are authored. It does not
+say *where the authored ones live*, and getting that wrong is what produced 43
+copies of the same ACPI.
+
+Firmware for a Mac is composed from four tiers. A tier is included only when
+its contents are true of the machine.
+
+| tier | package | scope | comes from |
+| --- | --- | --- | --- |
+| silicon | `Silicon/Apple/<SoC>FamilyPkg` | the die | Asahi's device tree, via `Tools/add-soc.py` |
+| chassis | `Platform/<Chassis>FamilyPkg` | the enclosure | authored: FADT power profile, SMBIOS family |
+| board | `Platform/<Board>BoardPkg` | the logic board | authored, from a measured machine |
+| machine | `Platform/<Machine>Pkg` | one Mac | its identity, as build defines |
+
+The tiers are not a taxonomy imposed on the tree; they are what the measurements
+already showed.
+
+**Silicon is derivable.** Memory map, CPU topology, MMIO windows, PCIe windows,
+UART base, interrupt-controller base — every one of them is stated by the SoC's
+`.dtsi`, and `Tools/add-soc.py` reads them out of a compiled tree. That is why
+eleven SoC family packages cover forty-two machines.
+
+**Board is not derivable, and it is not per-machine either.** A keyboard's GPIO
+number and an audio complex's published GSIV come from reading a live machine.
+But the eight T602X machines were compared with comments stripped and their ACPI
+code is byte-identical: they share a board, so they share the tables. Naming the
+package for the machine it was measured on — `J414sBoardPkg`, not
+`T602XBoardPkg` — keeps the provenance in the name.
+
+**A machine that has not been measured gets `GenericBoardPkg`**, which declares
+the PCIe root bridge from PCDs and nothing else. No keyboard, no audio, no
+display. That is the honest description, and it is recoverable: measure the
+board, give it a package.
+
+### What went wrong before the tiers
+
+Machines were added by copying a measured machine's package and rewriting the
+machine name through every file. The addresses that produced were right, because
+they are properties of the SoC. The comments were not:
+
+```
+  Tests/test_j416s_media_acpi_contract.py pins this file against that C table.
+  tools/verify-j474s-av-adt.py asserts the address and the register count.
+  Linux arch/arm64/boot/dts/apple/t602x-j416-j416.dtsi
+  the pinned J514s geometry
+```
+
+None of those files exist. Each is a real citation from J414s with the machine
+name substituted, so a table whose numbers had been checked on one machine
+claimed to have been checked on another — and cited a script, a device tree and
+an ADT capture that were never written. Duplication is a maintenance cost.
+Duplication plus substitution is a correctness one: it makes an unverified
+address look verified, which is the one thing firmware provenance exists to
+prevent.
+
+Two more things fell out of the same copying. `DISP.asl` and
+`Media/{MCA,AOPA,ISP}.asl` were copied beside every machine and referenced by no
+build file — those devices are emitted from C in `AcpiPlatformDxe`, and the ASL
+is a description of what that C does. It now lives once, in
+`Drivers/AcpiPlatformDxe/AcpiReference/`. And every platform carried its own
+`FADT.aslc` while the chassis package emitted one too, so the table was
+installed twice; the two were byte-identical, and the platform copy is gone.
+
+### The bin
+
+Asahi's tree describes the die, and Apple bins these parts: an M2 Pro die
+carries twelve cores and ships as ten or twelve, an M4 die carries ten and ships
+as eight or ten. A generated MADT is therefore die-sized, and publishing a GICC
+for a core that is not fused on is not a harmless overstatement — Windows issues
+PSCI `CPU_ON` for every enabled entry and answers a truthful failure with
+`SYSTEM_RESET`.
+
+`AcpiPlatformDxe` trims the MADT against the live ADT before installing it,
+matching on identity rather than count because the absent cores are not the last
+ones: on a 10-core J414s they are slots 7 and 11, the last of each P cluster.
+The arithmetic is in `Include/Drivers/NtasiMadtTrim.h` and is tested without
+hardware by `Tests/test_madt_adt_trim.c`.
+
+That is what makes generating from the die safe. The DSDT's processor tree is
+die-sized too and is not trimmed; a device with no MADT entry backs no processor
+and is not started, so the overstatement is cosmetic there.
+
+## What adding a machine costs now
 
 | | Lines | Where it goes |
 | --- | --- | --- |
 | `PlatformBuild.py` | 38 | boilerplate over `PlatformBuildCommon` |
-| `.dsc` / `.fdf` / `.dec` | ~700 | mostly FV layout, still copied |
-| `DSDT.asl` + tables | 240–680 | authored, and rightly so |
-| Feature set | 1 line | an entry in `Platform/Features.py` |
-| SoC family package | ~1,300 | once per SoC, not per machine |
+| `.dsc` / `.fdf` | ~480 | still mostly copied — the remaining duplication |
+| ACPI tables | 0 | it shares a board package, or uses the generic one |
+| Feature set | 1 entry | `Platform/Features.py` |
+| SoC family package | 0 | one per SoC, generated, shared by every machine on it |
 
-The build script is solved. The feature set is one entry. The `.dsc`/`.fdf` pair is
-the next copy-paste to attack, and the ACPI tables are the part that should
-stay hand-written, because that is the part that is a decision.
+Adding a Mac no longer means authoring or copying any ACPI. The `.dsc`/`.fdf`
+pair is what is left: 20,488 committed lines across forty-three platforms, of
+which two maximally different machines differ in 30 and 10 lines respectively.
