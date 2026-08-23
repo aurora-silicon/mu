@@ -1,36 +1,40 @@
 /**
- * Copyright (c) 2023, amarioguy (AppleWOA authors).
- * 
- * Module Name:
- *     CSRT.aslc
- * 
- * Abstract:
- *     Core System Resource Table. This source file implements the CSRT table for
- *     "Jade" (M1 Pro/Max/Ultra) SoCs.
- * 
- * Environment:
- *     UEFI firmware/runtime services.
- * 
- * License:
- *     SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
- * 
-*/
-
-#include <Library/AcpiLib.h>
-#include <Library/ArmLib.h>
-#include <Library/PcdLib.h>
-#include <IndustryStandard/Acpi.h>
-
-/**
- * Why do we need a CSRT?
- * 
- * Apple platforms implement some non-standard core sytem resources, namely the interrupt controller and IOMMU. This ACPI
- * table is to indicate to the OS that these things are present so that it can handle these cases correctly.
- * 
- * Since the HAL no longer recognizes CSRT tables for interrupt controllers (and probably only supports the ARM SMMU) - we'll need to
- * have the hypervisor intercept the call and patch the kernel on demand to parse this. 
- * We still should use this to define the SmartIO DMA controller though.
-*/
-
-
-
+ * Core System Resource Table for the Apple T6000, T6001 family.
+ *
+ * WHY THIS IS EMPTY
+ *
+ * Apple platforms implement two core system resources that are not architected:
+ * the interrupt controller and the IOMMU. The CSRT is how firmware tells
+ * Windows they are there, and it is what Windows' AIC HAL extension binds to.
+ *
+ * It is empty because the AIC payload cannot be derived. The device tree gives
+ * the controller's base address (T6000_AIC_BASE, 0x28E100000) and its
+ * compatible string ("apple,t6000-aic", i.e. AICv1) and stops there. Everything
+ * else the table has to carry -- the IRQ count, the maximum IRQ, the die count,
+ * and the EXTINTRCFG / INTMASKSET / INTMASKCLEAR strides -- is read off the
+ * controller's own CAP0 and MAXNUMIRQ registers and out of the live ADT. Linux
+ * does this at runtime and so does m1n1, which prints the whole geometry in one
+ * line during boot:
+ *
+ *   AIC3 with 1/2 dies, 2400/4096 IRQs, reg_size:40004, config:10000,
+ *   extintrcfg_stride:04a00, intmaskset_stride:04a00, intmaskclear_stride:04a00
+ *
+ * Transcribing that line from a machine in this family, plus the GSIV alias
+ * pairs, is what completes this table. T600XFamilyPkg/AcpiTables/CSRT.aslc is
+ * the worked example and T600XJ813Topology.h documents each field.
+ *
+ * The strides in particular must be copied, never recomputed: m1n1 derives a
+ * fallback from the register layout and the ADT then overrides it, and the two
+ * differ by 0x200 per die. That is harmless on a one-die part, which is exactly
+ * what would let the mistake survive review and bite on a two-die one.
+ *
+ * WHAT WORKS WITHOUT IT
+ *
+ * Everything except Windows' interrupt handling. UEFI drives AIC through
+ * AppleAicDxe, which reads the controller directly and already handles v1, v2
+ * and v3 from one code path, so firmware boots and the machine is usable over
+ * serial and framebuffer. T810XFamilyPkg has shipped this same stub since the
+ * beginning.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+ */
