@@ -107,6 +107,7 @@ FvNameGuid         = 02e6c12f-69f7-4626-b5de-e3cfd6c0dc56
   # See AppleSiliconPkg/AppleSiliconFvMain.fdf.inc.
   #
   DEFINE PLATFORM_PKG = MacBookProEarly2023Pkg
+  DEFINE PLATFORM_BOARD_PKG = J414sBoardPkg
   DEFINE PLATFORM_FAMILY_PKG = MacBookProFamilyPkg
   DEFINE PLATFORM_SOC_PKG = T602XFamilyPkg
   DEFINE PLATFORM_NAND_SLOT = LATE

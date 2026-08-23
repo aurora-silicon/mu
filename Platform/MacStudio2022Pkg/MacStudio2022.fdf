@@ -114,8 +114,12 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   # See AppleSiliconPkg/AppleSiliconFvMain.fdf.inc.
   #
   DEFINE PLATFORM_PKG = MacStudio2022Pkg
+  DEFINE PLATFORM_BOARD_PKG = MacStudio2022Pkg
   DEFINE PLATFORM_FAMILY_PKG = NONE
-  DEFINE PLATFORM_SOC_PKG = NONE
+  # T600XFamilyPkg had no MADT, GTDT or PPTT -- its CPUAcpiTables.inf listed
+  # nothing but a commented-out MADT -- so this was the only honest setting.
+  # It has them now, generated from Asahi's tree for this silicon.
+  DEFINE PLATFORM_SOC_PKG = T600XFamilyPkg
   DEFINE PLATFORM_NAND_SLOT = EARLY
   DEFINE PLATFORM_ENABLE_DART = TRUE
   DEFINE PLATFORM_ENABLE_PCI = TRUE

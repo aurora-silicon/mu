@@ -113,6 +113,7 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   # See AppleSiliconPkg/AppleSiliconFvMain.fdf.inc.
   #
   DEFINE PLATFORM_PKG = MacBookProLate2020Pkg
+  DEFINE PLATFORM_BOARD_PKG = MacBookProLate2020Pkg
   DEFINE PLATFORM_FAMILY_PKG = MacBookProTouchBarFamilyPkg
   DEFINE PLATFORM_SOC_PKG = T810XFamilyPkg
   DEFINE PLATFORM_NAND_SLOT = EARLY

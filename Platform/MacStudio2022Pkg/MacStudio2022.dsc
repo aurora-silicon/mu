@@ -22,7 +22,17 @@
 #Basic Defines
 
 [Defines]
+  # T600XFamilyPkg takes its build-time memory size this way; the value is
+  # patched from the FDT at runtime, so it only has to be plausible.
+  DEFINE T600X_SYSTEM_MEMORY_SIZE = 0x1000000000
   PLATFORM_NAME                  = MacStudio2022
+  #
+  # Whether this SoC's family package found a PCIe root complex in
+  # Asahi's tree. The board DSDT declares its root bridge only when
+  # there is one to describe.
+  #
+  DEFINE NTASI_SOC_HAS_PCIE = 1
+
   PLATFORM_GUID                  = d7d529ec-4827-494a-85e7-5900d9841a9e
   PLATFORM_VERSION               = 1.0
   DSC_SPECIFICATION              = 0x00010005

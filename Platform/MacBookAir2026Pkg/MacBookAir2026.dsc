@@ -23,6 +23,13 @@
 
 [Defines]
   PLATFORM_NAME                  = MacBookAir2026
+  #
+  # Whether this SoC's family package found a PCIe root complex in
+  # Asahi's tree. The board DSDT declares its root bridge only when
+  # there is one to describe.
+  #
+  DEFINE NTASI_SOC_HAS_PCIE = 1
+
   PLATFORM_GUID                  = 35B1C834-FE1C-4656-BBDB-E5C6B6B3D48B
   PLATFORM_VERSION               = 1.0
   DSC_SPECIFICATION              = 0x00010005
@@ -103,19 +110,13 @@
   # absent usb-drd2 is skipped harmlessly by the node-presence check in
   # AppleDartIoMmuDxe / AppleUsbTypeCBringupDxe. At the previous value of 2,
   # usb-drd3 was unreachable, leaving only one candidate port for boot media.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Controllers|4
   # Unread by any code -- declared in AppleSiliconPkg.dec and set here and in the
   # other platform DSCs, but nothing consumes it. Kept consistent for clarity.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Darts|8
   # J813 / T8142 values resolved from the live DeviceTree.j813ap ADT in the
   # 26.6.1 (25G76) IPSW. AppleNANDStorageDxe resolves the domain by exact name
   # again at runtime and treats these values only as a write-safety cross-check.
   # T8142 calls the controller domain "ANS" (not "ANS2") and has no
   # APCIE_ST1_SYS domain, so that unused expectation is deliberately zero.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrResetBase|0x380700300
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase|0x380700410
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase|0x380700520
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase|0
   # The physical ANS NVMe line is ADT interrupt[4] == 1155. It cannot be
   # published directly as a Windows GSIV: 1155 lies in GIC's reserved
   # 1024..4095 range, and a devnode that names it comes up problem=12
@@ -134,8 +135,6 @@
   # `interrupts` properties on this machine and none of them is 996. Publishing
   # a number that is also a live line would deliver another device's interrupts
   # under ANS0's INTID, because injection is the identity on an alias miss.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|996
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt|1155
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishAcpiDevice|$(NTASI_ANS_PUBLISH_ACPI)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|$(NTASI_ANS_DXE_BRINGUP)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|$(NTASI_ANS_PUBLISH_BLOCK_IO)
@@ -171,8 +170,9 @@
 
 [Components.common]
 
-MacBookAir2026Pkg/AcpiTables/DeviceAcpiTables.inf
+J813BoardPkg/AcpiTables/DeviceAcpiTables.inf
 
+!include J813BoardPkg/J813BoardPkg.dsc.inc
 !include MacBookAirFamilyPkg/MacBookAirFamily.dsc.inc
 !include T8142FamilyPkg/T8142FamilyPkg.dsc.inc
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc

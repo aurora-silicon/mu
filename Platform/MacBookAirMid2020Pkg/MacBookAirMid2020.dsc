@@ -21,6 +21,13 @@
 
 [Defines]
   PLATFORM_NAME                  = MacBookAirMid2020
+  #
+  # Whether this SoC's family package found a PCIe root complex in
+  # Asahi's tree. The board DSDT declares its root bridge only when
+  # there is one to describe.
+  #
+  DEFINE NTASI_SOC_HAS_PCIE = 1
+
   PLATFORM_GUID                  = 482c40bb-f36c-4c25-bc04-2c05e75542ef
   PLATFORM_VERSION               = 1.0
   DSC_SPECIFICATION              = 0x00010005

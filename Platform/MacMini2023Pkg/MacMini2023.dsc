@@ -107,6 +107,13 @@
   #   NTASI_DEPLOY_EVIDENCE_ECHO=1 ./Tools/build-windows-native.sh j474s <build>
   # and leave it off for every boot whose result is meant to be attributable.
   DEFINE NTASI_DEPLOY_EVIDENCE_ECHO = 0
+  #
+  # Whether this SoC's family package found a PCIe root complex in
+  # Asahi's tree. The board DSDT declares its root bridge only when
+  # there is one to describe.
+  #
+  DEFINE NTASI_SOC_HAS_PCIE = 1
+
   PLATFORM_GUID                  = d70b31ca-2cbc-433b-885f-b8bbda409959
   PLATFORM_VERSION               = 1.0
   DSC_SPECIFICATION              = 0x00010005
@@ -126,7 +133,7 @@
 [BuildOptions.common]
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=6020
   *_*_*_CC_FLAGS = -D DISABLE_NEW_DEPRECATED_INTERFACES -D HAS_MEMCPY_INTRINSICS -DNTASI_T6020_J474S_HOMOGENEOUS_EFFICIENCY=$(NTASI_T6020_J474S_HOMOGENEOUS_EFFICIENCY) -DNTASI_ENABLE_WIRELESS_DART_HANDOFF=$(NTASI_ENABLE_WIRELESS_DART_HANDOFF) -DNTASI_GPU_RESOURCE_PROFILE=$(NTASI_GPU_RESOURCE_PROFILE) -DNTASI_ENABLE_GPU_ACPI_PUBLICATION=$(NTASI_ENABLE_GPU_ACPI_PUBLICATION) -DNTASI_GPU_ACPI_HID=$(NTASI_GPU_ACPI_HID) -DNTASI_ENABLE_MCA_PUBLICATION=$(NTASI_ENABLE_MCA_PUBLICATION) -DNTASI_ENABLE_AOP_PUBLICATION=$(NTASI_ENABLE_AOP_PUBLICATION) -DNTASI_ENABLE_ISP_PUBLICATION=$(NTASI_ENABLE_ISP_PUBLICATION) -DNTASI_ENABLE_BATTERY_PUBLICATION=$(NTASI_ENABLE_BATTERY_PUBLICATION) -DNTASI_ENABLE_DISPLAY_ACPI_PUBLICATION=$(NTASI_ENABLE_DISPLAY_ACPI_PUBLICATION) -DNTASI_ENABLE_DISPLAY_INTERRUPTS=$(NTASI_ENABLE_DISPLAY_INTERRUPTS) -DNTASI_DEPLOY_EVIDENCE_ECHO=$(NTASI_DEPLOY_EVIDENCE_ECHO)
-  *_*_*_ASLPP_FLAGS = -DNTASI_ENABLE_XHC2=$(NTASI_ENABLE_XHC2) -DNTASI_ENABLE_DISPLAY_INTERRUPTS=$(NTASI_ENABLE_DISPLAY_INTERRUPTS)
+  *_*_*_ASLPP_FLAGS = -DNTASI_SOC_HAS_PCIE=$(NTASI_SOC_HAS_PCIE) -DNTASI_ENABLE_XHC2=$(NTASI_ENABLE_XHC2) -DNTASI_ENABLE_DISPLAY_INTERRUPTS=$(NTASI_ENABLE_DISPLAY_INTERRUPTS)
 
 
 
@@ -151,17 +158,11 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"Mac mini (M2 Pro, 2023)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"J474s"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"Mac mini (M2 Pro, 2023) (J474s)"
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Controllers|3 # M2 Pro case is hardcoded for now.
   #
   # Finish exactly the deferred USB3 PIPE selected by the sealed build:
   # 0x2 = left boot-volume port for phase-1 no-XHC2 isolation;
   # 0x4 = right port for right-enabled builds. Never select both implicitly.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUsb3PipeSwitchPortMask|$(NTASI_USB3_PIPE_SWITCH_PORT_MASK)
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUsb4RoutedPipeSwitchPortMask|$(NTASI_USB4_ROUTED_PIPE_SWITCH_PORT_MASK)
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Darts|6 # M2 Pro case is hardcoded for now.
   # Windows consumes GSIV 38; the AIC2 CSRT translates it to T6020 line 1832.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|38
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt|1832
   # ANS publication is the only storage-firmware experiment.  The unified
   # baseline leaves this FALSE; the ans build build overrides it to TRUE.
   # DECOUPLED 2026-07-30 from NTASI_ENABLE_ANS (which gates the driver FFS) so
@@ -186,16 +187,13 @@
   # catastrophically wrong. Live ADT walk of /arm-io/pmgr "devices",
   # matching by name, confirms these four; TODO(Delivery 2): resolve them
   # from the ADT at runtime instead of trusting this constant again.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrResetBase|0x2902801A8
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase|0x2902801A0
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase|0x290280408
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase|0x290280410
 
 [Components.common]
 
-  MacMini2023Pkg/AcpiTables/DeviceAcpiTables.inf
+  J414sBoardPkg/AcpiTables/DeviceAcpiTables.inf
 
-!include MacBookProFamilyPkg/MacBookProFamilyPkg.dsc.inc
+!include J414sBoardPkg/J414sBoardPkg.dsc.inc
+!include MacMiniFamilyPkg/MacMiniFamilyPkg.dsc.inc
 !include T602XFamilyPkg/T602XFamilyPkg.dsc.inc
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc
 !include AppleSiliconPkg/FrontpageDsc.inc
