@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   J414s AOP (Always-On Processor) internal microphone array ACPI device.
 

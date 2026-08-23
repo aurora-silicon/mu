@@ -1,6 +1,7 @@
 /** @file
   Compatibility include for the renamed wireless handoff ABI.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

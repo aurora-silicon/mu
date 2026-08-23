@@ -28,6 +28,7 @@
   (AuroraSilicon/drivers/AppleAic/aic3_platform.c) and asserted by
   drivers/AppleAic/tests/test_aic3_layout.c.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

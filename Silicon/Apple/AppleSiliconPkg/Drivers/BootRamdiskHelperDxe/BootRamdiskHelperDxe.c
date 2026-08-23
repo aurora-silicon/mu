@@ -1,6 +1,7 @@
 /** @file
   Register an in-place appended FAT ramdisk, retaining the legacy FV fallback.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

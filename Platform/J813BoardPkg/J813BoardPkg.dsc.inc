@@ -2,6 +2,7 @@
 # Board values measured on J813. See ../J414sBoardPkg/J414sBoardPkg.dsc.inc for
 # what these are and why they live with the board.
 #
+# Copyright (c) 2026 Aurora Silicon
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 #
 

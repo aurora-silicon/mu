@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 [PcdsPatchableInModule.common]
   #These will get overriden by the FDT settings
   gArmTokenSpaceGuid.PcdSystemMemoryBase|0x800000000

@@ -16,6 +16,7 @@
   owner of the one SMC mailbox would corrupt the session, so the transport is
   the interface, never a claimed resource.  No FADT change is needed.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

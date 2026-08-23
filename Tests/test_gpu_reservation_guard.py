@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Compile and run the host-side GPU reservation guard regression test.
 
 This wraps Tests/test_gpu_reservation_guard.c -- a standalone, EDK2-free C

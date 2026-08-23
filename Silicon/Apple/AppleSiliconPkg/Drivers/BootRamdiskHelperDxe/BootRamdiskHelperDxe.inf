@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 # BootRamdiskHelperDxe.inf: Sets up a RAMDisk embedded in the FV.
 # Copyright (c) amarioguy (Arminder Singh), 2022.
 [Defines]

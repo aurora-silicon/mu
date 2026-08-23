@@ -7,6 +7,7 @@
 # board's ACPI, not copied into each machine's .dsc where the eight machines
 # sharing this board each kept their own copy of them.
 #
+# Copyright (c) 2026 Aurora Silicon
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 #
 

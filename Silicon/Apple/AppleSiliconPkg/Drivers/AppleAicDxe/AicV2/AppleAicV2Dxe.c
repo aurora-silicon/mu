@@ -9,6 +9,7 @@
  * 
  * @copyright Copyright (c) amarioguy (Arminder Singh), 2022.
  * 
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: BSD-2-Clause-Patent
  * 
  */

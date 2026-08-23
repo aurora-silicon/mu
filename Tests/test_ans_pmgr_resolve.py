@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Compile and run the host-side ANS PMGR domain resolution regression test.
 
 This wraps Tests/test_ans_pmgr_resolve.c -- a standalone, EDK2-free C

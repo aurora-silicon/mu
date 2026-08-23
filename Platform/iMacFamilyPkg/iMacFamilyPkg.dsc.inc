@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 [PcdsFixedAtBuild.common]
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemFamily|"iMac"
   #will be changed later on, default values

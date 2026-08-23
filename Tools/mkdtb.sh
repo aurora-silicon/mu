@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (c) 2026 Aurora Silicon
+
 # Compile a vendored Asahi device tree to a DTB.
 #
 # Tools/socfacts.py and Tools/add-soc.py read compiled trees rather than .dtsi

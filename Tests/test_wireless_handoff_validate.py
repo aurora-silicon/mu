@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Compile and run the host-side wireless DART handoff validator test.
 
 This wraps Tests/test_wireless_handoff_validate.c, which compiles the real

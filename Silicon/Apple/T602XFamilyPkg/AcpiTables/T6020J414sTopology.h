@@ -14,6 +14,7 @@
   first P-core is 0x10100, so copying ADT reg=0x100 directly into MADT is
   incorrect and makes Windows' GICv3 startup carrier reject CPU4.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

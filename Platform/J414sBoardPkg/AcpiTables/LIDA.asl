@@ -30,6 +30,7 @@
       drivers/iio/common/aop_sensors/aop_las.rs ("apple,aop-las", angle byte).
     AOP MMIO windows from AOPA.asl (windows 0-2).
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

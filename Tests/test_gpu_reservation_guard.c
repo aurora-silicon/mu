@@ -23,6 +23,7 @@
  * NtasiRangeContainsPoint() would ever fail to flag that exact
  * computation again.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: MIT
  */
 

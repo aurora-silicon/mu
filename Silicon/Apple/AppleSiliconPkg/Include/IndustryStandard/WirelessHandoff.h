@@ -1,6 +1,7 @@
 /** @file
   Versioned same-instance m1n1 -> Mu -> AppleDart wireless handoff ABI.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

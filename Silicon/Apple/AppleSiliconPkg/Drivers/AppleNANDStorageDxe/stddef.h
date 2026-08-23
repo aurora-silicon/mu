@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** Portable C size and offset definitions for the shared ANS cores. */
 #ifndef APPLE_ANS_EDK_STDDEF_H
 #define APPLE_ANS_EDK_STDDEF_H

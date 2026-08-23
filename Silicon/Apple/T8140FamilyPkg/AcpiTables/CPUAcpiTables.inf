@@ -1,6 +1,7 @@
 ## @file
 #  ACPI tables describing the Apple T8140 processor complex.
 #
+#  Copyright (c) 2026 Aurora Silicon
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 

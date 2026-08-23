@@ -24,6 +24,7 @@
  * the ANS domains and must never confuse them with DCS_09/DCS_10, even
  * though both live at identical offsets within their respective blocks.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: MIT
  */
 

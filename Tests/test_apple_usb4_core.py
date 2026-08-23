@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 """Build and run the host-only Apple USB4 ACIO/NHI sequencing core."""
 
 from __future__ import annotations

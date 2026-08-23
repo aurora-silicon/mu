@@ -19,6 +19,7 @@
 # M3 Pro machine's .dsc named T602X's pmgr block at 0x2902801A8 and J414s'
 # measured AIC line 1832, neither of which is an address on its silicon.
 #
+# Copyright (c) 2026 Aurora Silicon
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 #
 

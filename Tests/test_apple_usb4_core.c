@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>

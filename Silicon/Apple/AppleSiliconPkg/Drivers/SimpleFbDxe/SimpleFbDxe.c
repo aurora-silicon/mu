@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /* SimpleFbDxe: Simple FrameBuffer */
 #include <PiDxe.h>
 #include <Uefi.h>

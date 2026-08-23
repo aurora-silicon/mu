@@ -35,7 +35,7 @@
  *  proxyclient/m1n1/hw/asc.py, cross-checked against
  *  proxyclient/experiments/mtp.py for which reg indices carry what.
  *
- *  Copyright (c) 2026, AppleWOA authors. All rights reserved.
+ *  Copyright (c) 2026 Aurora Silicon
  *  SPDX-License-Identifier: BSD-2-Clause-Patent
  **/
 

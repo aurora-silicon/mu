@@ -13,6 +13,7 @@
  * Only the constructs that header actually uses are defined. It is not a
  * general EDK2 emulation and must not grow into one.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: MIT
  */
 

@@ -1,4 +1,5 @@
 /**
+ * Copyright (c) 2026 Aurora Silicon
  * @file BootRamdiskHelperDxe.h
  * @author amarioguy (Arminder Singh)
  * 

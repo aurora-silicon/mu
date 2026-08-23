@@ -5,6 +5,7 @@
 #  Asahi's device tree, plus the processor tree that package generates. See
 #  DSDT.asl for what is deliberately absent and why.
 #
+#  Copyright (c) 2026 Aurora Silicon
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 

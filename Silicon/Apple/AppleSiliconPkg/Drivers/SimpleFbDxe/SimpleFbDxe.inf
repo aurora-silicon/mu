@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 # SimpleFbDxe.inf: Implements Simple FrameBuffer in UEFI.
 
 [Defines]

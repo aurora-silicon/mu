@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** Portable C integer types for the shared ANS cores in EDK II. */
 #ifndef APPLE_ANS_EDK_STDINT_H
 #define APPLE_ANS_EDK_STDINT_H

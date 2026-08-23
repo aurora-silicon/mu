@@ -15,6 +15,7 @@
   PrePi therefore publishes the real values in this HOB. Consumers must use the
   HOB, never the PCDs.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 

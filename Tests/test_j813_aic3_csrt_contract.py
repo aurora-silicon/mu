@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Fail-closed tests for the J813 / T8142 native AIC3 CSRT contract.
 
 The same AIC3 geometry is written down in four places that cannot see each

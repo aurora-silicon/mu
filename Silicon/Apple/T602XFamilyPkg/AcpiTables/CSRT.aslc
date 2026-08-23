@@ -5,6 +5,7 @@
   drivers/AppleAic/aic2_csrt.h. Keep it byte-for-byte equivalent to the
   m2-pro fixture emitted by drivers/AppleAic/emit_aic2_csrt.c.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

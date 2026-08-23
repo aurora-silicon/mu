@@ -1,6 +1,7 @@
 /** @file
   Apple ANS NVMe DXE driver.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

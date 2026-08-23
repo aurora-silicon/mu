@@ -32,6 +32,7 @@
   left to the caller as a predicate, so both can be exercised by
   Tests/test_madt_adt_trim.c with no EDK2, no ADT and no hardware.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

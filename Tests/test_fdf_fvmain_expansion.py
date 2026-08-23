@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Every platform's FvMain module list is one of a small number of known shapes.
 
 Silicon/Apple/AppleSiliconPkg/AppleSiliconFvMain.fdf.inc holds the INF lines

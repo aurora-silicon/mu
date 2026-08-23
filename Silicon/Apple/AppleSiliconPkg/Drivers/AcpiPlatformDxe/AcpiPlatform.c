@@ -12,6 +12,7 @@
  *  UEFI Driver Execution Environment (DXE)/UEFI boot services
  * 
  * License:
+ *  Copyright (c) 2026 Aurora Silicon
  *  SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
  * 
 **/

@@ -11,6 +11,7 @@
  * in this family has been booted. Treat a successful build as evidence that the
  * package is self-consistent and nothing more.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
  */
 

@@ -5,6 +5,7 @@
 # read off J704 hardware -- see docs/T8142-PLATFORM.md and docs/T8132-VS-T8142.md
 # in the project root.
 #
+# Copyright (c) 2026 Aurora Silicon
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 #
 

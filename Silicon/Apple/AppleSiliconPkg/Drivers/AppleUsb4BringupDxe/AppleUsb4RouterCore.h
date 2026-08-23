@@ -3,6 +3,7 @@
   Asahi Linux sven/tbt-wip 5265e38457df79188be2e13870192a1d488831ac
   drivers/thunderbolt/{ctl.c,ctl.h,tb_msgs.h}.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: GPL-2.0-only
 **/
 

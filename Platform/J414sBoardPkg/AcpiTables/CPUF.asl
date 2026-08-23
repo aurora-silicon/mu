@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   J414s CPU cluster DVFS (P-state) ACPI device.
 

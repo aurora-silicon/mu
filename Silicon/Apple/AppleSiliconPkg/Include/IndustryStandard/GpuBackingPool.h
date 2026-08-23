@@ -1,6 +1,7 @@
 /** @file
   Authenticated AGX native-16K backing-pool handoff, ABI v1.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 #ifndef NTASI_GPU_BACKING_POOL_H_

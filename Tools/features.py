@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Command-line face of Platform/Features.py, for the shell to call.
 
 Kept separate so Tools/mu-build needs no inline Python and Features.py stays a

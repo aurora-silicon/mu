@@ -13,6 +13,7 @@
 #  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #
 #
+# Copyright (c) 2026 Aurora Silicon
 # SPDX-License-Identifier: BSD-2-Clause OR MIT
 
 

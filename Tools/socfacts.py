@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Read SoC-level facts out of a compiled Asahi device tree.
 
 WHY A SECOND DEVICE-TREE READER

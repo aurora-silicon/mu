@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Aurora Silicon */
 /* SPDX-License-Identifier: MIT */
 #ifndef NTASI_APPLE_ASC_CORE_H
 #define NTASI_APPLE_ASC_CORE_H

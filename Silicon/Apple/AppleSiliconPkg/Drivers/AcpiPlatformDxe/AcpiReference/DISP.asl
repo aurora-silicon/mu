@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   J414s internal display adapter ACPI device for the AppleDisplay WDDM
   display driver (rungs (a) and (b) of docs/j414s-display-driver.md).

@@ -2,6 +2,7 @@
   PCI Express Memory Mapped Configuration Space Base Address Description Table
   for the MacBook Pro (Early 2023) platform.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

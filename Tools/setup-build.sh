@@ -1,4 +1,5 @@
 #!/bin/sh
+# Copyright (c) 2026 Aurora Silicon
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 #
 # Get this tree to the point where it can build firmware.

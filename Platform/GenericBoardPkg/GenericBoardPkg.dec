@@ -1,6 +1,7 @@
 ## @file
 #  GenericBoardPkg -- ACPI for a machine whose board has not been measured.
 #
+#  Copyright (c) 2026 Aurora Silicon
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 

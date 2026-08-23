@@ -36,5 +36,6 @@
  * serial and framebuffer. T810XFamilyPkg has shipped this same stub since the
  * beginning.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
  */

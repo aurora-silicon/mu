@@ -29,6 +29,7 @@
   internal NVMe -- AppleNANDStorageDxe takes every address from the live ADT --
   with serial through DBG2 and a framebuffer inherited from the bootloader.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

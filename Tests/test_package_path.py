@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """ArmPkg, ArmPlatformPkg and DynamicTablesPkg must resolve to Silicon/ARM/TIANO.
 
 All three exist in both MU_BASECORE and Silicon/ARM/TIANO since the M5-Dev

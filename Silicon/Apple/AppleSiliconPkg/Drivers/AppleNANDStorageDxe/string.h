@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** Portable C memory operations for the shared ANS cores in EDK II. */
 #ifndef APPLE_ANS_EDK_STRING_H
 #define APPLE_ANS_EDK_STRING_H

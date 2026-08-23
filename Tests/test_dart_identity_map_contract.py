@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 """Host-side contract tests for the DART identity-map fallback.
 
 T8142's usb DART cannot bypass. Measured on J813 over the m1n1 proxy by

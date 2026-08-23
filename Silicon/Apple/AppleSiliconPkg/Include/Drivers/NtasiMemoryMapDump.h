@@ -24,6 +24,7 @@
   over. Call it late in DXE instead; nothing between that point and the
   handoff changes the reserved regions this is looking for.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

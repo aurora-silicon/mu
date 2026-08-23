@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Compile and run the host-side Apple RTKit buffer-request regression test.
 
 This wraps Tests/test_rtkit_buffer_request.c -- a standalone, EDK2-free C

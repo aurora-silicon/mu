@@ -30,6 +30,7 @@
   what is emitted here. T8142J813Topology.h emits the opposite and documents
   why; do not copy it.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

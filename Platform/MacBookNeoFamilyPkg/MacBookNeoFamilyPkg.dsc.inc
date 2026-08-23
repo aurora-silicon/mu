@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 [PcdsFixedAtBuild.common]
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemFamily|"MacBook Neo"
   #will be changed later on, default values

@@ -25,6 +25,7 @@
  * 11 are absent in the ADT". Dropping by count instead of by identity would
  * keep exactly the wrong two.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: MIT
  */
 

@@ -13,6 +13,7 @@
  *
  * Describes 2 die(s), 3 cluster(s) per die, 10 cores per die.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
  */
 

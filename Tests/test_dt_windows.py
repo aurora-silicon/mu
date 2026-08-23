@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """The generated MMIO windows match the device tree, and the tables match them.
 
 Tools/dtwindows.py reads Asahi's vendored device trees and emits

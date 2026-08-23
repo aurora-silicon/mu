@@ -6,6 +6,7 @@
   remains fail-closed until the platform ACIO, DART, RTKit, router, and
   usb-auss owners are all present.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: GPL-2.0-only
 **/
 

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 """Minimal flattened-device-tree reader.
 
 Enough of the FDT spec to answer structural questions about a compiled Apple

@@ -13,6 +13,7 @@
   winload and ntoskrnl, which the Windows loader maps without installing an EFI
   Loaded Image protocol.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 

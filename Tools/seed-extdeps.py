@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Satisfy the host-specific external dependencies Mu does not publish for macOS.
 
 Mu ships BaseTools, iasl, nasm, uncrustify and CodeQL as `host_specific`

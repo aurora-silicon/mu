@@ -6,6 +6,7 @@
   engineering contracts pinned in this directory's README. In particular,
   Type5 does not use the t8103 Linux driver's CTRL/INIT aperture.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: GPL-2.0-only
 **/
 

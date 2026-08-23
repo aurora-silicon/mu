@@ -31,6 +31,7 @@
   else): a wrong GPU reservation must degrade the GPU, never touch memory
   Mu itself depends on.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

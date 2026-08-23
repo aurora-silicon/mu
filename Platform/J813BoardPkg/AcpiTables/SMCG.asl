@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   J813 SMC GPIO controller (NTAS0052).
 

@@ -20,6 +20,7 @@
 
   Scope (\_SB) is opened by the DSDT; this only adds to it.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
 **/
 

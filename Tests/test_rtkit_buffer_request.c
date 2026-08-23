@@ -37,6 +37,7 @@
  *
  * or via Tests/test_rtkit_buffer_request.py, which does exactly that.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: MIT
  */
 

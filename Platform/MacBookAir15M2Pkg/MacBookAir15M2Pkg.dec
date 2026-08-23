@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aurora Silicon
+
 [Defines]
   DEC_SPECIFICATION              = 0x00010005
   PACKAGE_NAME                   = MacBookProFamilyPkg

@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   SMBIOS Table for Apple Silicon ARM platforms
   Derived from the SurfaceDuoPkg version of the package

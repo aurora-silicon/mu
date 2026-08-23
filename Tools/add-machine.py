@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Create a Mu platform package for a Mac, from its Asahi device tree.
 
 WHAT A MACHINE PACKAGE IS, AFTER THE TIERS

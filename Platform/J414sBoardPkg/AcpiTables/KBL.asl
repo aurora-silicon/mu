@@ -37,6 +37,7 @@
     live Mac ADT pwm0/kbd-backlight node (pwm-frequency 24000000,
       high+low period 960 cycles)
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

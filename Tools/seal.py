@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Record what a firmware build was, beside the firmware.
 
 The manifest names the device, the features that were on, the source it came

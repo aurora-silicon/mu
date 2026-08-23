@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   Pure, freestanding, host-testable arithmetic for resolving Apple PMGR
   power-state register addresses from the live ADT's "/arm-io/pmgr" node,

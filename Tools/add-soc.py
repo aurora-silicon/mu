@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Create a Mu SoC family package from an Asahi device tree.
 
 WHY THIS EXISTS, AND WHAT IT DELIBERATELY DOES NOT DO

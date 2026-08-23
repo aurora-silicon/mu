@@ -1,6 +1,7 @@
 /** @file
   Contract for a FAT ramdisk appended immediately after the loaded Mu FD.
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

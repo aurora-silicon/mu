@@ -2,6 +2,7 @@
  *MsBootOptionsLib  - Ms Extensions to BdsDxe.
 
 Copyright (C) Microsoft Corporation. All rights reserved.
+ * Copyright (c) 2026 Aurora Silicon
 SPDX-License-Identifier: BSD-2-Clause-Patent
 
 **/

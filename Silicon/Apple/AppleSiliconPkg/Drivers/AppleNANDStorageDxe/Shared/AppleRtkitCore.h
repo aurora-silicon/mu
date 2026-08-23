@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Aurora Silicon */
 /* SPDX-License-Identifier: MIT */
 #ifndef NTASI_APPLE_RTKIT_H
 #define NTASI_APPLE_RTKIT_H

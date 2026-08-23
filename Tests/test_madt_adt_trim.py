@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Compile and run the host-side MADT trimming regression test.
 
 This wraps Tests/test_madt_adt_trim.c -- a standalone, EDK2-free C program that

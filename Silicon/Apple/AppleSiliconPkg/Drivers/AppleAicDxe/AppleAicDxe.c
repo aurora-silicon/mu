@@ -11,6 +11,7 @@
  * 
  * Credits to the Asahi Linux contributors for the initial AIC implementations in m1n1 and linux.
  * 
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: BSD-2-Clause-Patent
  * 
  */

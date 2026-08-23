@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Aurora Silicon */
 /* SPDX-License-Identifier: GPL-2.0+ OR MIT */
 #ifndef _DT_BINDINGS_INTERRUPT_CONTROLLER_APPLE_AIC_H
 #define _DT_BINDINGS_INTERRUPT_CONTROLLER_APPLE_AIC_H

@@ -35,6 +35,7 @@
  *
  * or via Tests/test_wireless_handoff_validate.py.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: MIT
  */
 

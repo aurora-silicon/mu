@@ -24,6 +24,7 @@
     Linux arch/arm64/boot/dts/apple/t6020-j414s.dts
     m1n1 proxyclient/experiments/mtp.py
 
+ * Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: MIT
 **/
 

@@ -5,6 +5,7 @@
 #  Copyright (c) 2015 - 2016, Intel Corporation. All rights reserved.
 #  Copyright (c) 2018 - 2019, Bingxing Wang. All rights reserved.
 #
+#  Copyright (c) 2026 Aurora Silicon
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
 #
 ##

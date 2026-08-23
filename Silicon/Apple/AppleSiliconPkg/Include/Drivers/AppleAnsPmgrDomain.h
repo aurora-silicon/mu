@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   Live-ADT resolution and read-only inspection of the Apple PMGR
   power-state words the ANS/NVMe coprocessor depends on.

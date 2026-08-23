@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Generate MMIO window tables from Asahi's device trees.
 
 WHY
@@ -162,6 +164,7 @@ def header_for(machine: str) -> str:
         "  a renumbering of the physical AIC lines that must agree with m1n1's alias",
         "  table and the CSRT, and exists in no device tree. See Docs/PLATFORMS.md.",
         "",
+        "  Copyright (c) 2026 Aurora Silicon",
         "  SPDX-License-Identifier: MIT",
         "**/",
         "",

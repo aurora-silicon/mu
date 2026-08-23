@@ -1,5 +1,4 @@
 #
-#  Copyright (c) 2026, AppleWOA authors. All rights reserved.
 #
 #  Module Name:
 #    AppleMtpHidDxe.inf
@@ -14,6 +13,7 @@
 #    UEFI Driver Execution Environment (DXE)
 #
 #  License:
+#    Copyright (c) 2026 Aurora Silicon
 #    SPDX-License-Identifier: BSD-2-Clause-Patent
 #
 #    Register layout is derived from m1n1 (MIT):

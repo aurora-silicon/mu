@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Aurora Silicon
+
 """Rewrite the two cell spellings upstream dtc rejects. Used by Tools/mkdtb.sh.
 
 Asahi builds its device trees with a patched dtc. Two of its tolerances show up

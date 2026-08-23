@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2015, Linaro Ltd. All rights reserved.
  *
+ * Copyright (c) 2026 Aurora Silicon
  * SPDX-License-Identifier: BSD-2-Clause-Patent
  */
 

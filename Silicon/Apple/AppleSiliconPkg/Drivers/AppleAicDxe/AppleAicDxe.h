@@ -1,5 +1,6 @@
 
 /**
+ * Copyright (c) 2026 Aurora Silicon
  * @file AppleAicDxe.h
  * @author amarioguy (Arminder Singh)
  * @brief AIC DXE Driver Header File.

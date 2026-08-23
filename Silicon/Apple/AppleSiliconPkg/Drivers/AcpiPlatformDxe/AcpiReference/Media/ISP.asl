@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
 /** @file
   J414s (M2 Pro / T6020) FaceTime camera ISP coprocessor ACPI device.
 
