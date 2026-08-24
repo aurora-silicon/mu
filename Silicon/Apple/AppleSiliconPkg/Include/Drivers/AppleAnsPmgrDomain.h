@@ -163,8 +163,9 @@ AppleAnsPmgrResolveDomainEx (
   }
 
   //
-  // "ps-regs" up to T8132 (M4), "ps-groups" from T8142 (M5). Take whichever
-  // this ADT actually carries, the same way m1n1's pmgr_init() does -- and
+  // Older SoCs use "ps-regs"; T6040/T6041 and T8142 use "ps-groups". Take
+  // whichever this ADT actually carries, the same way m1n1's pmgr_init() does
+  // -- and
   // fail only when NEITHER is present, because that is the only case this
   // code genuinely cannot resolve. Requiring ps-regs unconditionally is what
   // withheld NTAS2003 on J813 while the SSD itself was working perfectly:
@@ -263,18 +264,19 @@ AppleAnsPmgrResolveDomain (
   Resolve a PMGR domain whose exact Apple name changed between SoC families.
 
   T602x calls the ANS controller domain "ANS2" and its system-storage parent
-  "APCIE_ST_SYS". T8142 calls the same roles "ANS" and "APCIE_SYS_ST".
-  This helper preserves the important safety property above: both candidates
-  are exact names read from the live ADT, and no numeric address is ever used
-  as a fallback.
+  "APCIE_ST_SYS". T6040/T6041 and T8142 use several different exact spellings
+  for the same roles. This helper preserves the important safety property
+  above: every candidate is an exact name read from the live ADT, and no
+  numeric address is ever used as a fallback.
 **/
 STATIC
 inline
 EFI_STATUS
-AppleAnsPmgrSelectDomain (
+AppleAnsPmgrSelectDomain3 (
   IN  CONST CHAR8   *Tag,
   IN  CONST CHAR8   *PrimaryName,
   IN  CONST CHAR8   *AlternateName OPTIONAL,
+  IN  CONST CHAR8   *ThirdName OPTIONAL,
   OUT CONST CHAR8  **SelectedName,
   OUT UINT64        *Address
   )
@@ -296,7 +298,12 @@ AppleAnsPmgrSelectDomain (
   // failure easy to miss. Quiet for the speculative attempt, loud for the last
   // one, so the log only shouts when no spelling worked.
   //
-  Status = AppleAnsPmgrResolveDomainEx (Tag, PrimaryName, (BOOLEAN)(AlternateName != NULL), Address);
+  Status = AppleAnsPmgrResolveDomainEx (
+             Tag,
+             PrimaryName,
+             (BOOLEAN)((AlternateName != NULL) || (ThirdName != NULL)),
+             Address
+             );
   if (!EFI_ERROR (Status)) {
     *SelectedName = PrimaryName;
     return EFI_SUCCESS;
@@ -306,12 +313,48 @@ AppleAnsPmgrSelectDomain (
     return Status;
   }
 
-  Status = AppleAnsPmgrResolveDomain (Tag, AlternateName, Address);
+  Status = AppleAnsPmgrResolveDomainEx (
+             Tag,
+             AlternateName,
+             (BOOLEAN)(ThirdName != NULL),
+             Address
+             );
   if (!EFI_ERROR (Status)) {
     *SelectedName = AlternateName;
+    return EFI_SUCCESS;
+  }
+
+  if (ThirdName == NULL) {
+    return Status;
+  }
+
+  Status = AppleAnsPmgrResolveDomain (Tag, ThirdName, Address);
+  if (!EFI_ERROR (Status)) {
+    *SelectedName = ThirdName;
   }
 
   return Status;
+}
+
+STATIC
+inline
+EFI_STATUS
+AppleAnsPmgrSelectDomain (
+  IN  CONST CHAR8   *Tag,
+  IN  CONST CHAR8   *PrimaryName,
+  IN  CONST CHAR8   *AlternateName OPTIONAL,
+  OUT CONST CHAR8  **SelectedName,
+  OUT UINT64        *Address
+  )
+{
+  return AppleAnsPmgrSelectDomain3 (
+           Tag,
+           PrimaryName,
+           AlternateName,
+           NULL,
+           SelectedName,
+           Address
+           );
 }
 
 /**

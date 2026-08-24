@@ -3199,10 +3199,13 @@ Exit:
   hardware build are derived from the live Apple Device Tree so one firmware
   binary does not bake in a board-specific MMIO map.
 
-  The three memory resources have a stable ABI with the Windows miniport:
+  The first three memory resources have a stable ABI with the Windows miniport:
     0: ASC CPU/mailbox aperture (mailbox registers are at +0x8000)
     1: ANS NVMe aperture (ADT reg[3])
     2: SART aperture
+
+  ASC wrapper v6 systems with a split secure BAR append one resource:
+    3: standard NVMe registers and secure queue window (ADT reg[9])
 
   CHANGED 2026-07-30: NTAS2003 used to append four more resources -- the exact
   4-byte ps_ans2 / ps_apcie_st / ps_apcie_st_sys / ps_apcie_st1_sys PMGR words
@@ -3232,6 +3235,8 @@ AcpiPlatformInstallAppleAnsTable (
   UINT64                       CpuSize;
   UINT64                       NvmeBase;
   UINT64                       NvmeSize;
+  UINT64                       NvmeStandardBase;
+  UINT64                       NvmeStandardSize;
   UINT64                       SartBase;
   UINT64                       SartSize;
   UINT64                       PmgrResetBase;
@@ -3251,9 +3256,13 @@ AcpiPlatformInstallAppleAnsTable (
   UINTN                        PropertySize;
   UINTN                        InterruptsSize;
   BOOLEAN                      Legacy;
+  BOOLEAN                      SecureNvmeBar;
   CONST CHAR8                  *HardwareId;
   CONST CHAR8                  *InterruptContract;
-  CONST CHAR8                  *PmgrDomainName;
+  CONST CHAR8                  *PmgrControllerDomain;
+  CONST CHAR8                  *PmgrTransitDomain;
+  CONST CHAR8                  *PmgrSystemDomain;
+  CONST CHAR8                  *PmgrFourthDomain;
 
   RootNode = NULL;
   Table    = NULL;
@@ -3261,6 +3270,12 @@ AcpiPlatformInstallAppleAnsTable (
   PmgrApcieStBase = 0;
   PmgrApcieStSysBase = 0;
   PmgrApcieSt1SysBase = 0;
+  PmgrControllerDomain = NULL;
+  PmgrTransitDomain = NULL;
+  PmgrSystemDomain = NULL;
+  PmgrFourthDomain = NULL;
+  NvmeStandardBase = 0;
+  NvmeStandardSize = 0;
 
   //
   // Do not publish the ANS controller in a build whose FV has no
@@ -3284,6 +3299,22 @@ AcpiPlatformInstallAppleAnsTable (
       (dt_node_reg (AnsNode, 3, &NvmeBase, &NvmeSize) != 0) ||
       (dt_node_reg (SartNode, 0, &SartBase, &SartSize) != 0))
   {
+    return EFI_DEVICE_ERROR;
+  }
+
+  // T6040/T6041 and T8142 put the standard NVMe register page and secure
+  // queue-admission window in reg[9].  Presence of that complete aperture is
+  // the runtime hardware contract; older ADTs simply have no usable reg[9].
+  SecureNvmeBar =
+    dt_node_reg (AnsNode, 9, &NvmeStandardBase, &NvmeStandardSize) == 0;
+  if (SecureNvmeBar &&
+      !AppleAnsMmioRangeValid (
+         NvmeStandardBase,
+         NvmeStandardSize,
+         APPLE_ANS_NVME_SECURE_MIN_SIZE
+         ))
+  {
+    DEBUG ((DEBUG_ERROR, "AppleANS ACPI: split NVMe reg[9] is truncated\n"));
     return EFI_DEVICE_ERROR;
   }
 
@@ -3398,28 +3429,41 @@ AcpiPlatformInstallAppleAnsTable (
     // NTAS2003 entirely (EFI_NOT_FOUND, handled by the caller as "no ANS device
     // today") rather than publishing good addresses alongside a wrong one.
     //
-    // TWO NAMES PER ROLE, AND THREE DOMAINS NOT ALWAYS FOUR. T602x calls the
-    // controller domain "ANS2" and the system-storage parent "APCIE_ST_SYS";
+    // MULTIPLE EXACT NAMES PER ROLE, AND THREE DOMAINS NOT ALWAYS FOUR. T602x
+    // calls the controller domain "ANS2" and the system-storage parent
+    // "APCIE_ST_SYS";
     // T8142 calls the same two roles "ANS" and "APCIE_SYS_ST", and has no
     // "APCIE_ST1_SYS" at all. Measured on J813 from the live ADT: the storage
     // domains present are ANS (0x380700300), APCIE_ST (0x380700410) and
     // APCIE_SYS_ST (0x380700520) -- exactly the three addresses the DSC's
-    // hardware-confirmed PCDs already record, with PcdAppleAnsPmgrApcieSt1SysBase
-    // deliberately zero to record the fourth domain's absence.
+    // hardware-confirmed PCDs already record. T6040/T6041 call the transit and
+    // parent roles APCIE_ST0/APCIE_SYS_ST0 and add APCIE_SYS_ST1. The selected
+    // names remain exact live-ADT names; no address fallback is permitted.
+    // PcdAppleAnsPmgrApcieSt1SysBase is deliberately zero to record the fourth
+    // domain's absence.
     //
     // This mirrors AppleNANDStorageDxe, which has always selected by both
     // spellings; only this publication path still asked for the T602x names
     // unconditionally, so on T8142 it withheld NTAS2003 even once the
     // ps-groups layout was understood.
     //
-    if (EFI_ERROR (AppleAnsPmgrSelectDomain (mAppleAnsAcpiTag, "ANS2", "ANS", &PmgrDomainName, &PmgrResetBase)) ||
-        EFI_ERROR (AppleAnsPmgrResolveDomain (mAppleAnsAcpiTag, "APCIE_ST", &PmgrApcieStBase)) ||
+    if (EFI_ERROR (AppleAnsPmgrSelectDomain (mAppleAnsAcpiTag, "ANS2", "ANS", &PmgrControllerDomain, &PmgrResetBase)) ||
         EFI_ERROR (
           AppleAnsPmgrSelectDomain (
             mAppleAnsAcpiTag,
+            "APCIE_ST",
+            "APCIE_ST0",
+            &PmgrTransitDomain,
+            &PmgrApcieStBase
+            )
+          ) ||
+        EFI_ERROR (
+          AppleAnsPmgrSelectDomain3 (
+            mAppleAnsAcpiTag,
             "APCIE_ST_SYS",
             "APCIE_SYS_ST",
-            &PmgrDomainName,
+            "APCIE_SYS_ST0",
+            &PmgrSystemDomain,
             &PmgrApcieStSysBase
             )
           ))
@@ -3432,23 +3476,25 @@ AcpiPlatformInstallAppleAnsTable (
     }
 
     //
-    // The fourth domain is T602x-only. A platform that has it records its
-    // address in the PCD; a zero PCD means "this SoC does not have it", which
-    // is a fact to honour, not a resolution failure to report.
+    // T602x and T6040/T6041 have a fourth domain. A platform that has it
+    // records its address in the PCD; a zero PCD means "this SoC does not have
+    // it", which is a fact to honour, not a resolution failure to report.
     //
     PmgrApcieSt1SysBase = 0;
     if (FixedPcdGet64 (PcdAppleAnsPmgrApcieSt1SysBase) != 0) {
       if (EFI_ERROR (
-            AppleAnsPmgrResolveDomain (
+            AppleAnsPmgrSelectDomain (
               mAppleAnsAcpiTag,
               "APCIE_ST1_SYS",
+              "APCIE_SYS_ST1",
+              &PmgrFourthDomain,
               &PmgrApcieSt1SysBase
               )
             ))
       {
         DEBUG ((
           DEBUG_ERROR,
-          "AppleANS ACPI: APCIE_ST1_SYS is expected by PCD but did not resolve; NTAS2003 withheld\n"
+          "AppleANS ACPI: fourth system-storage PMGR domain is expected by PCD but did not resolve; NTAS2003 withheld\n"
           ));
         return EFI_NOT_FOUND;
       }
@@ -3486,8 +3532,9 @@ AcpiPlatformInstallAppleAnsTable (
         DEBUG ((
           DEBUG_WARN,
           "AppleANS ACPI: PcdAppleAnsPmgrResetBase 0x%lx disagrees with the ADT-resolved "
-          "controller domain (ANS2/ANS) 0x%lx\n",
+          "controller domain %a 0x%lx\n",
           PcdResetBase,
+          PmgrControllerDomain,
           PmgrResetBase
           ));
       }
@@ -3495,8 +3542,9 @@ AcpiPlatformInstallAppleAnsTable (
       if (PcdApcieStBase != PmgrApcieStBase) {
         DEBUG ((
           DEBUG_WARN,
-          "AppleANS ACPI: PcdAppleAnsPmgrApcieStBase 0x%lx disagrees with ADT-resolved APCIE_ST 0x%lx\n",
+          "AppleANS ACPI: PcdAppleAnsPmgrApcieStBase 0x%lx disagrees with ADT-resolved %a 0x%lx\n",
           PcdApcieStBase,
+          PmgrTransitDomain,
           PmgrApcieStBase
           ));
       }
@@ -3505,8 +3553,9 @@ AcpiPlatformInstallAppleAnsTable (
         DEBUG ((
           DEBUG_WARN,
           "AppleANS ACPI: PcdAppleAnsPmgrApcieStSysBase 0x%lx disagrees with the ADT-resolved "
-          "system-storage domain (APCIE_ST_SYS/APCIE_SYS_ST) 0x%lx\n",
+          "system-storage domain %a 0x%lx\n",
           PcdApcieStSysBase,
+          PmgrSystemDomain,
           PmgrApcieStSysBase
           ));
       }
@@ -3514,8 +3563,9 @@ AcpiPlatformInstallAppleAnsTable (
       if (PcdApcieSt1SysBase != PmgrApcieSt1SysBase) {
         DEBUG ((
           DEBUG_WARN,
-          "AppleANS ACPI: PcdAppleAnsPmgrApcieSt1SysBase 0x%lx disagrees with ADT-resolved APCIE_ST1_SYS 0x%lx\n",
+          "AppleANS ACPI: PcdAppleAnsPmgrApcieSt1SysBase 0x%lx disagrees with ADT-resolved %a 0x%lx\n",
           PcdApcieSt1SysBase,
+          PmgrFourthDomain,
           PmgrApcieSt1SysBase
           ));
       }
@@ -3598,6 +3648,12 @@ AcpiPlatformInstallAppleAnsTable (
 
   if (!AppleAnsMmioRangeValid (CpuBase, CpuSize, APPLE_ANS_CPU_MIN_SIZE) ||
       !AppleAnsMmioRangeValid (NvmeBase, NvmeSize, NvmeMinimumSize) ||
+      (SecureNvmeBar &&
+       !AppleAnsMmioRangeValid (
+          NvmeStandardBase,
+          NvmeStandardSize,
+          APPLE_ANS_NVME_SECURE_MIN_SIZE
+          )) ||
       !AppleAnsMmioRangeValid (SartBase, SartSize, SartMinimumSize))
   {
     DEBUG ((
@@ -3675,6 +3731,17 @@ AcpiPlatformInstallAppleAnsTable (
   Status = AppleAnsAddMemoryResource (CrsNode, SartBase, SartSize);
   if (EFI_ERROR (Status)) {
     goto Exit;
+  }
+
+  if (SecureNvmeBar) {
+    Status = AppleAnsAddMemoryResource (
+               CrsNode,
+               NvmeStandardBase,
+               NvmeStandardSize
+               );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
   }
 
   //
@@ -3810,7 +3877,7 @@ AcpiPlatformInstallAppleAnsTable (
   if (!EFI_ERROR (Status)) {
     DEBUG ((
       DEBUG_INFO,
-      "AppleANS ACPI: %a cpu=%lx/%lx nvme=%lx/%lx sart=%lx/%lx pmgr-ans2=%lx apcie-st=%lx st-sys=%lx st1-sys=%lx "
+      "AppleANS ACPI: %a cpu=%lx/%lx nvme=%lx/%lx standard=%lx/%lx secure=%d sart=%lx/%lx pmgr-ans2=%lx apcie-st=%lx st-sys=%lx st1-sys=%lx "
       "pmgr-word-size=%x (published via _DSD, NOT _CRS -- those addresses are inside KBL0's page) "
       "irq=%u physical=%u contract=%a\n",
       HardwareId,
@@ -3818,6 +3885,9 @@ AcpiPlatformInstallAppleAnsTable (
       CpuSize,
       NvmeBase,
       NvmeSize,
+      NvmeStandardBase,
+      NvmeStandardSize,
+      SecureNvmeBar,
       SartBase,
       SartSize,
       PmgrResetBase,

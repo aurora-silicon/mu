@@ -13,6 +13,8 @@
 #define APPLE_ANS_CPU_MIN_SIZE         0x8840u
 #define APPLE_ANS_NVME_T8015_MIN_SIZE  0x1304u
 #define APPLE_ANS_NVME_MIN_SIZE        0x28124u
+/* Complete ADT reg[9] standard/secure controller aperture. */
+#define APPLE_ANS_NVME_SECURE_MIN_SIZE 0x10000u
 #define APPLE_ANS_SART_V0_MIN_SIZE     0x80u
 #define APPLE_ANS_SART_V2_MIN_SIZE     0x80u
 #define APPLE_ANS_SART_V3_MIN_SIZE     0xc0u

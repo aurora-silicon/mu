@@ -241,34 +241,20 @@ int ntasi_ans_controller_start_variant(
         return NTASI_ANS_CONTROLLER_ERR_BOOT_TIMEOUT;
 
     if (linear) {
-#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
-        /*
-         * J813 is compiled against the T8142 ANS contract.  Do not leave the
-         * legacy +0x24908 access reachable through a bad or stale runtime
-         * descriptor: the M5 fabric reports an asynchronous external abort
-         * for either direction at that address.
-         */
-        (void)hw;
-#else
         if (hw->linear_sq_ctrl_present) {
             value = read32(controller, NTASI_ANS_REG_LINEAR_SQ_CTRL);
             write32(controller, NTASI_ANS_REG_LINEAR_SQ_CTRL,
                     value | NTASI_ANS_LINEAR_SQ_EN);
         }
-#endif
-#if !defined (SILICON_PLATFORM) || (SILICON_PLATFORM != 8142)
         if (hw->prp_null_check_ctrl_present) {
             value = read32(controller, NTASI_ANS_REG_UNKNOWN_CTRL);
             write32(controller, NTASI_ANS_REG_UNKNOWN_CTRL,
                     value & ~NTASI_ANS_UNKCTRL_PRP_NULL_CHECK);
         }
-#endif
-#if !defined (SILICON_PLATFORM) || (SILICON_PLATFORM != 8142)
         if (hw->max_pend_cmds_ctrl_present) {
             write32(controller, NTASI_ANS_REG_MAX_PEND_CMDS,
                     ntasi_ans_max_pend_cmds(slots));
         }
-#endif
         write32(controller, NTASI_ANS_REG_NVMMU_NUM,
                 ntasi_ans_nvmmu_num(slots));
         write64(controller, NTASI_ANS_REG_NVMMU_ASQ_BASE, admin->tcbs_dma);
@@ -282,19 +268,19 @@ int ntasi_ans_controller_start_variant(
              * implementation does; a generic 64-bit MMIO store is not
              * equivalent at this secure aperture.
              */
-            write32(controller, NTASI_ANS_REG_T8142_IOQA,
+            write32(controller, NTASI_ANS_REG_SECURE_IOQA,
                     ntasi_ans_aqa(slots));
             dma_write_barrier(controller);
-            write32(controller, NTASI_ANS_REG_T8142_IOCQ_ADDR,
+            write32(controller, NTASI_ANS_REG_SECURE_IOCQ_ADDR,
                     (uint32_t)io->completions_dma);
             dma_write_barrier(controller);
-            write32(controller, NTASI_ANS_REG_T8142_IOCQ_ADDR + 4u,
+            write32(controller, NTASI_ANS_REG_SECURE_IOCQ_ADDR + 4u,
                     (uint32_t)(io->completions_dma >> 32));
             dma_write_barrier(controller);
-            write32(controller, NTASI_ANS_REG_T8142_IOSQ_ADDR,
+            write32(controller, NTASI_ANS_REG_SECURE_IOSQ_ADDR,
                     (uint32_t)io->commands_dma);
             dma_write_barrier(controller);
-            write32(controller, NTASI_ANS_REG_T8142_IOSQ_ADDR + 4u,
+            write32(controller, NTASI_ANS_REG_SECURE_IOSQ_ADDR + 4u,
                     (uint32_t)(io->commands_dma >> 32));
             dma_write_barrier(controller);
         }

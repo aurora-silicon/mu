@@ -24,6 +24,17 @@ const struct ntasi_ans_hw ntasi_ans_hw_t8103 = {
     .secure_io_queue_registers = false,
 };
 
+const struct ntasi_ans_hw ntasi_ans_hw_t604x = {
+    .submission_mode = NTASI_ANS_SUBMISSION_LINEAR_NVMMU,
+    .max_queue_depth = 64,
+    .admin_queue_depth = 2,
+    .io_command_stride = NTASI_ANS_SQE_SIZE,
+    .linear_sq_ctrl_present = false,
+    .prp_null_check_ctrl_present = false,
+    .max_pend_cmds_ctrl_present = false,
+    .secure_io_queue_registers = true,
+};
+
 const struct ntasi_ans_hw ntasi_ans_hw_t8142 = {
     .submission_mode = NTASI_ANS_SUBMISSION_LINEAR_NVMMU,
     .max_queue_depth = 64,
@@ -117,7 +128,10 @@ void ntasi_ans_tcb_fill(struct ntasi_ans_tcb *tcb,
     /* The NVMMU shadow must describe the same command as the SQE. */
     *tcb = (struct ntasi_ans_tcb){0};
     tcb->opcode = sqe->opcode;
-    tcb->dma_flags = (uint8_t)direction;
+    /* Commands such as queue creation and flush have no data mapping.  Asahi
+     * leaves both DMA bits clear when PRP1 is zero; setting a direction on
+     * these commands is rejected by the newer secure ANS contract. */
+    tcb->dma_flags = sqe->prp1 == 0 ? 0 : (uint8_t)direction;
     tcb->command_id = sqe->tag;
     tcb->length = (uint16_t)sqe->cdw12;
     tcb->prp1 = sqe->prp1;

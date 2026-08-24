@@ -87,10 +87,10 @@
 
 #define NTASI_ANS_REG_MAX_PEND_CMDS 0x1210u /* legacy pending-count control */
 
-/* T8142 secure I/O queue registration window (matching SPTM order). */
-#define NTASI_ANS_REG_T8142_IOSQ_ADDR 0x1200u
-#define NTASI_ANS_REG_T8142_IOCQ_ADDR 0x1208u
-#define NTASI_ANS_REG_T8142_IOQA      0x1210u
+/* Secure I/O queue registration window used by split-BAR ANS generations. */
+#define NTASI_ANS_REG_SECURE_IOSQ_ADDR 0x1200u
+#define NTASI_ANS_REG_SECURE_IOCQ_ADDR 0x1208u
+#define NTASI_ANS_REG_SECURE_IOQA      0x1210u
 
 #define NTASI_ANS_REG_UNKNOWN_CTRL       0x24008u /* nvme.c:45, cleared nvme.c:352 */
 #define NTASI_ANS_UNKCTRL_PRP_NULL_CHECK (1u << 11) /* nvme.c:46 */
@@ -154,21 +154,21 @@ struct ntasi_ans_hw {
     uint32_t admin_queue_depth;
     uint32_t io_command_stride;
     /*
-     * LINEAR_SQ_CTRL exists on the older ANS2 register contract.  T8142
-     * raises an asynchronous fabric error for both reads and writes at that
-     * offset, so the M5 contract must omit the register entirely.
+     * LINEAR_SQ_CTRL exists on the older ANS2 register contract.  Secure
+     * split-BAR generations raise an asynchronous fabric error at that offset.
      */
     bool linear_sq_ctrl_present;
-    /* T8142 also omits the legacy PRP-null-check control at +0x24008. */
+    /* Secure split-BAR generations omit the legacy PRP-null-check control. */
     bool prp_null_check_ctrl_present;
     /* Older ANS generations use +0x1210 as MAX_PEND_CMDS. */
     bool max_pend_cmds_ctrl_present;
-    /* T8142 instead uses +0x1200..+0x1210 to admit its I/O queues. */
+    /* Newer ANS uses the standard BAR's +0x1200..+0x1210 queue window. */
     bool secure_io_queue_registers;
 };
 
 extern const struct ntasi_ans_hw ntasi_ans_hw_t8015;
 extern const struct ntasi_ans_hw ntasi_ans_hw_t8103;
+extern const struct ntasi_ans_hw ntasi_ans_hw_t604x;
 extern const struct ntasi_ans_hw ntasi_ans_hw_t8142;
 
 /* ------------------------------------------------------------------ */

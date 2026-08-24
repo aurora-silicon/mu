@@ -1322,9 +1322,9 @@ NvmeRead32 (
   }
 
   Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
-          ((Device->NvmeHw == &ntasi_ans_hw_t8142) &&
-           (Offset >= NTASI_ANS_REG_T8142_IOSQ_ADDR) &&
-           (Offset <= (NTASI_ANS_REG_T8142_IOQA + sizeof (UINT32))))) ?
+          (Device->NvmeHw->secure_io_queue_registers &&
+           (Offset >= NTASI_ANS_REG_SECURE_IOSQ_ADDR) &&
+           (Offset <= (NTASI_ANS_REG_SECURE_IOQA + sizeof (UINT32))))) ?
            Device->NvmeStandardBase : Device->NvmeBase;
   return MmioRead32 (Base + Offset);
 }
@@ -1346,9 +1346,9 @@ NvmeWrite32 (
   }
 
   Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
-          ((Device->NvmeHw == &ntasi_ans_hw_t8142) &&
-           (Offset >= NTASI_ANS_REG_T8142_IOSQ_ADDR) &&
-           (Offset <= (NTASI_ANS_REG_T8142_IOQA + sizeof (UINT32))))) ?
+          (Device->NvmeHw->secure_io_queue_registers &&
+           (Offset >= NTASI_ANS_REG_SECURE_IOSQ_ADDR) &&
+           (Offset <= (NTASI_ANS_REG_SECURE_IOQA + sizeof (UINT32))))) ?
            Device->NvmeStandardBase : Device->NvmeBase;
   MmioWrite32 (Base + Offset, Value);
 }
@@ -1367,9 +1367,9 @@ NvmeWrite64 (
   Device->LastNvmeWriteOffset = Offset;
   Device->LastNvmeWriteValid  = TRUE;
   Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
-          ((Device->NvmeHw == &ntasi_ans_hw_t8142) &&
-           (Offset >= NTASI_ANS_REG_T8142_IOSQ_ADDR) &&
-           (Offset <= (NTASI_ANS_REG_T8142_IOQA + sizeof (UINT32))))) ?
+          (Device->NvmeHw->secure_io_queue_registers &&
+           (Offset >= NTASI_ANS_REG_SECURE_IOSQ_ADDR) &&
+           (Offset <= (NTASI_ANS_REG_SECURE_IOQA + sizeof (UINT32))))) ?
            Device->NvmeStandardBase : Device->NvmeBase;
   MmioWrite64 (Base + Offset, Value);
 }
@@ -2660,7 +2660,7 @@ AnsExitBootServices (
 // full reasoning and the hardware measurements). This firmware therefore
 // does not enable, reset, or write anything either. What it does do is say,
 // on every ANS boot, what state the platform's ANS domains were actually in --
-// T602x has four and T8142 has three -- so that
+// T602x and T6040/T6041 have four and T8142 has three -- so that
 // if a future boot does find ANS gated, the log names the domain instead of
 // leaving a bare MMIO stall with no explanation.
 //
@@ -2689,7 +2689,9 @@ ReportAnsPmgrDomains (
     UINT64       Expected;
   } Domains[4];
   CONST CHAR8  *ControllerDomain;
+  CONST CHAR8  *TransitDomain;
   CONST CHAR8  *SystemStorageDomain;
+  CONST CHAR8  *FourthDomain;
   UINT64        DomainAddress;
   UINT64        FourthDomainExpected;
   UINTN         DomainCount;
@@ -2703,7 +2705,9 @@ ReportAnsPmgrDomains (
   DomainCount           = 0;
   ExpectedDomainCount   = 3;
   ControllerDomain      = NULL;
+  TransitDomain         = NULL;
   SystemStorageDomain   = NULL;
+  FourthDomain          = NULL;
   DomainAddress         = 0;
   FourthDomainExpected  = FixedPcdGet64 (PcdAppleAnsPmgrApcieSt1SysBase);
 
@@ -2720,14 +2724,24 @@ ReportAnsPmgrDomains (
     DomainCount++;
   }
 
-  Domains[DomainCount].Name     = "APCIE_ST";
-  Domains[DomainCount].Expected = FixedPcdGet64 (PcdAppleAnsPmgrApcieStBase);
-  DomainCount++;
-
   if (!EFI_ERROR (AppleAnsPmgrSelectDomain (
+                    Tag,
+                    "APCIE_ST",
+                    "APCIE_ST0",
+                    &TransitDomain,
+                    &DomainAddress
+                    )))
+  {
+    Domains[DomainCount].Name     = TransitDomain;
+    Domains[DomainCount].Expected = FixedPcdGet64 (PcdAppleAnsPmgrApcieStBase);
+    DomainCount++;
+  }
+
+  if (!EFI_ERROR (AppleAnsPmgrSelectDomain3 (
                     Tag,
                     "APCIE_ST_SYS",
                     "APCIE_SYS_ST",
+                    "APCIE_SYS_ST0",
                     &SystemStorageDomain,
                     &DomainAddress
                     )))
@@ -2737,12 +2751,22 @@ ReportAnsPmgrDomains (
     DomainCount++;
   }
 
-  // T602x has this fourth domain; T8142 does not, and records that fact with
-  // a zero PCD rather than inventing an address or aliasing another register.
+  // T602x and T6040/T6041 have this fourth domain; T8142 does not, and records
+  // that fact with a zero PCD rather than inventing an address or aliasing
+  // another register.
   if (FourthDomainExpected != 0) {
-    Domains[DomainCount].Name     = "APCIE_ST1_SYS";
-    Domains[DomainCount].Expected = FourthDomainExpected;
-    DomainCount++;
+    if (!EFI_ERROR (AppleAnsPmgrSelectDomain (
+                      Tag,
+                      "APCIE_ST1_SYS",
+                      "APCIE_SYS_ST1",
+                      &FourthDomain,
+                      &DomainAddress
+                      )))
+    {
+      Domains[DomainCount].Name     = FourthDomain;
+      Domains[DomainCount].Expected = FourthDomainExpected;
+      DomainCount++;
+    }
     ExpectedDomainCount++;
   }
 
@@ -2887,6 +2911,7 @@ DiscoverHardware (
 {
 #if !defined (APPLE_ANS_QEMU_TEST)
   dt_node_t  *AnsNode;
+  dt_node_t  *ArmIoNode;
   dt_node_t  *RootNode;
   dt_node_t  *SartNode;
   UINT64     CpuBase;
@@ -2904,6 +2929,8 @@ DiscoverHardware (
   UINT32     *VersionProperty;
   BOOLEAN    Legacy;
   BOOLEAN    T8142;
+  BOOLEAN    T604x;
+  BOOLEAN    SecureQueueMap;
   BOOLEAN    SecureNvmeBar;
 #endif
 
@@ -2924,6 +2951,7 @@ DiscoverHardware (
   return EFI_SUCCESS;
 #else
   RootNode = dt_get ("/");
+  ArmIoNode = dt_get ("/arm-io");
   AnsNode  = dt_get ("/arm-io/ans");
   SartNode = dt_get ("/arm-io/sart-ans");
   if ((AnsNode == NULL) || (SartNode == NULL)) {
@@ -2948,6 +2976,18 @@ DiscoverHardware (
   T8142 = PropertyContains (AnsNode, "compatible", "t8142") ||
           ((RootNode != NULL) && PropertyContains (RootNode, "compatible", "j813"));
 #endif
+#if defined (SILICON_PLATFORM) && \
+    ((SILICON_PLATFORM == 6040) || (SILICON_PLATFORM == 6041))
+  T604x = TRUE;
+#else
+  T604x = ((ArmIoNode != NULL) &&
+           (PropertyContains (ArmIoNode, "compatible", "t6040") ||
+            PropertyContains (ArmIoNode, "compatible", "t6041"))) ||
+          ((RootNode != NULL) &&
+           (PropertyContains (RootNode, "compatible", "j614") ||
+            PropertyContains (RootNode, "compatible", "j616")));
+#endif
+  SecureQueueMap = T604x || T8142;
   NvmeStandardBase = NvmeBase;
   NvmeStandardSize = NvmeSize;
   //
@@ -2969,7 +3009,7 @@ DiscoverHardware (
 #if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8140)
   SecureNvmeBar = TRUE;
 #else
-  SecureNvmeBar = T8142 ||
+  SecureNvmeBar = SecureQueueMap ||
                   PropertyContains (AnsNode, "compatible", "t8140") ||
                   ((RootNode != NULL) && PropertyContains (RootNode, "compatible", "j700"));
 #endif
@@ -3010,7 +3050,8 @@ DiscoverHardware (
       !AppleAnsMmioRangeValid (
          NvmeStandardBase,
          NvmeStandardSize,
-         (T8142 ? NTASI_ANS_REG_T8142_IOQA : NTASI_ANS_REG_DB_IOCQ) +
+         (SecureQueueMap ? NTASI_ANS_REG_SECURE_IOQA :
+                           NTASI_ANS_REG_DB_IOCQ) +
            sizeof (UINT32)
          ) ||
       !AppleAnsMmioRangeValid (SartBase, SartSize, SartMinimumSize))
@@ -3039,12 +3080,13 @@ DiscoverHardware (
   Device->SartBase    = (UINTN)SartBase;
   Device->MailboxBase = Device->CpuBase + APPLE_ANS_MAILBOX_OFFSET;
   Device->NvmeHw      = Legacy ? &ntasi_ans_hw_t8015 :
-                        (T8142 ? &ntasi_ans_hw_t8142 : &ntasi_ans_hw_t8103);
+                        (T604x ? &ntasi_ans_hw_t604x :
+                         (T8142 ? &ntasi_ans_hw_t8142 : &ntasi_ans_hw_t8103));
   *AscHw              = Legacy ? &ntasi_asc_hw_t8015 : &ntasi_asc_hw_v4;
 
   ANS_DEBUG ((
     DEBUG_INFO,
-    "AppleANS: cpu=%Lx/%Lx mailbox=%lx nvme=%Lx/%Lx standard=%Lx/%Lx secure=%d sart=%Lx/%Lx legacy=%d t8142=%d sartv%d\n",
+    "AppleANS: cpu=%Lx/%Lx mailbox=%lx nvme=%Lx/%Lx standard=%Lx/%Lx secure=%d sart=%Lx/%Lx legacy=%d t604x=%d t8142=%d sartv%d\n",
     CpuBase,
     CpuSize,
     Device->MailboxBase,
@@ -3056,6 +3098,7 @@ DiscoverHardware (
     SartBase,
     SartSize,
     Legacy,
+    T604x,
     T8142,
     SartVersion
     ));
