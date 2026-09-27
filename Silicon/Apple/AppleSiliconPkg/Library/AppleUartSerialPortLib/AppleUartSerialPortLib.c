@@ -48,6 +48,10 @@ EFI_STATUS EFIAPI SerialPortInitialize(VOID)
         return EFI_SUCCESS;
     }
 
+#if SILICON_PLATFORM == 8152
+    // Preserve the native m1n1/KIS DockChannel configuration.
+    return EFI_SUCCESS;
+#endif
     UINT32 BaudRateConfig = AppleSerialPortCalculateBaudRateConfig();
     //AppleUARTBaseAddress = UART_BASE;
     
@@ -116,6 +120,27 @@ UINTN EFIAPI SerialPortWrite(IN UINT8 *Buffer, IN UINTN NumberOfBytes)
     //
     // for now, operate UART port in polled mode, disable and re-enable interrupts
     // when entering and exiting
+#if SILICON_PLATFORM == 8152
+    // Do not unmask interrupts while SEC/DXE is installing exception vectors.
+    for (Index = 0; Index < NumberOfBytes; Index++) {
+        UINTN Spins = 0;
+#if defined(J873_WINDOWS)
+        while (!(MmioRead32 (UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_TXBE)) {
+#else
+        while (MmioRead32 (UART_BASE + 0x14) == 0) {
+#endif
+            if (++Spins == 10000000) {
+                return Index;
+            }
+        }
+#if defined(J873_WINDOWS)
+        MmioWrite32 (UART_BASE + UART_TX_BYTE, Buffer[Index]);
+#else
+        MmioWrite32 (UART_BASE + 0x04, Buffer[Index]);
+#endif
+    }
+    return Index;
+#endif
     ArmDisableInterrupts();
     for(Index = 0; Index < NumberOfBytes; Index++)
     {
@@ -160,7 +185,11 @@ UINTN EFIAPI SerialPortRead(
     }
 
     for (Count = 0; (Count < NumberOfBytes) && SerialPortPoll (); Count++, Buffer++) {
+#if SILICON_PLATFORM == 8152 && !defined(J873_WINDOWS)
+      *Buffer = (UINT8)(MmioRead32 (UART_BASE + 0x1c) >> 8);
+#else
       *Buffer = MmioRead32 (UART_BASE + UART_RX_BYTE);
+#endif
     }
     return Count;
 }
@@ -182,6 +211,9 @@ UINTN SerialPortFlush(VOID)
         return 0;
     }
 
+#if SILICON_PLATFORM == 8152
+    return 0;
+#endif
     while(!(MmioRead32(UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_TXE))
     {
 
@@ -207,7 +239,11 @@ BOOLEAN EFIAPI SerialPortPoll(VOID)
         return FALSE;
     }
 
+#if SILICON_PLATFORM == 8152 && !defined(J873_WINDOWS)
+    return MmioRead32 (UART_BASE + 0x2c) != 0;
+#else
     return (MmioRead32(UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_RXD) ? TRUE : FALSE;
+#endif
 }
 
 /**
@@ -340,10 +376,22 @@ RETURN_STATUS EFIAPI SerialPortSetAttributes(
         *BaudRate = FixedPcdGet64(PcdUartDefaultBaudRate);
     }
     if (ReceiveFifoDepth != NULL) {
+#if SILICON_PLATFORM == 8152
+        *ReceiveFifoDepth = 1;
+#else
         *ReceiveFifoDepth = 0;
+#endif
     }
     if (Timeout != NULL) {
+#if SILICON_PLATFORM == 8152
+        // SerialDxe never polls when its resolved timeout is zero. Preserve
+        // explicit requests and resolve the UEFI "use default" value here.
+        if (*Timeout == 0) {
+            *Timeout = 1000;
+        }
+#else
         *Timeout = 0;
+#endif
     }
     if (Parity != NULL) {
         *Parity = (EFI_PARITY_TYPE)FixedPcdGet8(PcdUartDefaultParity);

@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+
+// These are m1n1 software GIC INTIDs, not native Apple interrupt numbers.
+EFI_ACPI_6_4_GENERIC_TIMER_DESCRIPTION_TABLE Gtdt = {
+  .Header = __ACPI_HEADER (EFI_ACPI_6_4_GENERIC_TIMER_DESCRIPTION_TABLE_SIGNATURE,
+                          EFI_ACPI_6_4_GENERIC_TIMER_DESCRIPTION_TABLE,
+                          EFI_ACPI_6_4_GENERIC_TIMER_DESCRIPTION_TABLE_REVISION),
+  .CntControlBasePhysicalAddress = MAX_UINT64,
+  .NonSecurePL1TimerGSIV = 17,
+  .VirtualTimerGSIV = 18,
+  .CntReadBasePhysicalAddress = MAX_UINT64,
+};
+VOID *CONST ReferenceAcpiTable = &Gtdt;

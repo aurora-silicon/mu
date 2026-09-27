@@ -277,7 +277,11 @@ UINT32 InitializeUART(VOID)
     // whenever handing a new .fd over, and grep the log for it before trusting
     // anything else in that log.
     //
+#if SILICON_PLATFORM == 8152
+    DEBUG((EFI_D_INFO | EFI_D_LOAD, "J873 firmware build marker: J873-MU-005\n"));
+#else
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "J704 firmware build marker: J704-FW-15\n"));
+#endif
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "FD Base Address - 0x%llx\n", PcdGet64(PcdFdBaseAddress)));
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "FV Base Address - 0x%llx\n", PcdGet64(PcdFvBaseAddress)));
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "Current ADT Pointer: 0x%llx\n", PcdGet64(PcdAdtPointer)));

@@ -2,3 +2,5 @@
 # and leave all files detected as binary untouched.
 * text=auto
 *.sh eol=lf
+# Unified patches contain a required context prefix on blank lines.
+Tools/j873-patches/*.patch whitespace=-blank-at-eol

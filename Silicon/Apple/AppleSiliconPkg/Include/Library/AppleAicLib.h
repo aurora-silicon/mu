@@ -225,3 +225,5 @@ UINTN EFIAPI AppleAicV2ReadUncorePmcStatusRegister(VOID);
 
 
 #endif //APPLEAIC_H_
+
+UINT32 EFIAPI AppleAicCapabilityOffset (IN CONST CHAR8 *Name, IN UINT32 Fallback);
