@@ -1,0 +1,41 @@
+diff --git a/MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.c b/MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.c
+index 753f9eed..24b6cb79 100644
+--- a/MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.c
++++ b/MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.c
+@@ -153,7 +153,10 @@ SetExitBootServicesIndicator (
+ {
+   EFI_STATUS  Status;
+ 
+-  Status = SetPhaseIndicator (EXIT_BOOT_SERVICES_INDICATOR_VAR_NAME, EXIT_BOOT_SERVICES_INDICATOR_VAR_ATTR);
++  Status = SetPhaseIndicator (EXIT_BOOT_SERVICES_INDICATOR_VAR_NAME, EXIT_BOOT_SERVICES_INDICATOR_VAR_ATTR);
++#if defined(J873_WINDOWS)
++  DEBUG ((DEBUG_INFO, "J873_VARPOL_EBS: phase indicator write %r\n", Status));
++#endif
+ 
+   // If successful, close the event so it doesn't get signalled repeatedly.
+   if (!EFI_ERROR (Status)) {
+@@ -274,9 +277,21 @@ MuVarPolicyFoundationDxeMain (
+ 
+     //
+     // Register ExitBootServices callback.
+-    ExitBootServicesStatus = gBS->CreateEventEx (
+-                                    EVT_NOTIFY_SIGNAL,
+-                                    TPL_CALLBACK,                     // SOMEWHERE in ExitBootServices
++    ExitBootServicesStatus = gBS->CreateEventEx (
++                                    EVT_NOTIFY_SIGNAL,
++#if defined(J873_WINDOWS)
++                                    // VariableRuntimeDxe's RuntimeLib switches
++                                    // to runtime at TPL_NOTIFY. This driver
++                                    // depends on its policy protocol and is
++                                    // registered later. Core queues this event
++                                    // group newest-first at each TPL, so equal
++                                    // priority writes the volatile indicator
++                                    // before the runtime transition. Preserve
++                                    // the policy and assertion on failure.
++                                    TPL_NOTIFY,
++#else
++                                    TPL_CALLBACK,                     // SOMEWHERE in ExitBootServices
++#endif
+                                     SetExitBootServicesIndicator,
+                                     NULL,
+                                     &gEfiEventExitBootServicesGuid,

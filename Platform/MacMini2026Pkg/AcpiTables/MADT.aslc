@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+
+#pragma pack (1)
+typedef struct {
+  EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER Header;
+  EFI_ACPI_6_3_GIC_STRUCTURE Cpu[12];
+  EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE Distributor;
+  EFI_ACPI_6_4_GICR_STRUCTURE Redistributors;
+} J873_MADT;
+#pragma pack ()
+
+// All twelve measured affinities; CPU6/7 are the qualified two-core baseline.
+// The boot CPU must be the first GICC entry, even though its ADT ID is six.
+// The launch gate verifies MPIDR affinity 0x10100 before entering Mu.
+// The redistributor discovery span covers the twelve measured physical cores;
+// GICR_TYPER.Last terminates it earlier if m1n1 started fewer secondaries.
+J873_MADT Madt = {
+  { __ACPI_HEADER (EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+                  J873_MADT, EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION),
+    0, 0 },
+  {
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      6, 6, 0x10100, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      7, 7, 0x10101, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      8, 8, 0x40102, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      9, 9, 0x40103, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      10, 10, 0x40104, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      11, 11, 0x40105, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      0, 0, 0, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      1, 1, 1, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      2, 2, 2, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      3, 3, 3, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      4, 4, 4, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      5, 5, 5, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+  },
+  EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT (
+    0, FixedPcdGet64 (PcdGicDistributorBase), 0, 3),
+  { EFI_ACPI_6_4_GICR, sizeof (EFI_ACPI_6_4_GICR_STRUCTURE), 0,
+    FixedPcdGet64 (PcdGicRedistributorsBase), 12 * 0x20000 },
+};
+VOID *CONST ReferenceAcpiTable = &Madt;
