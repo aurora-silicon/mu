@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+//
+// T6050 / J714s native-AIC MADT for the x1n1 Windows profile.
+//
+// This is the native Apple AIC (v3) replacement for the boot-agent's
+// GICv3-shaped J714 MADT (MacBookProM5Pkg/AcpiTables/MADT.aslc).  It exists so
+// the x1n1 Windows path can drop the software GICv3 CPU interface and the
+// GICD/GICR stage-2 carrier: Windows finds the physical AIC v3 through the
+// APPL/NTAS AIC3 CSRT (CSRT.aslc in this directory) and this MADT deliberately
+// advertises NO GIC distributor and NO GIC redistributor, so Windows never
+// instantiates a GICv3 controller shell.  See WINDOWS_NATIVE_FIQ.md s1
+// ("Mu-side dependency") and windows-native-aic.md.
+//
+// What is published:
+//   * GICC (Generic Interrupt Controller CPU Interface) structures ONLY, purely
+//     as the ACPI processor-enumeration entries (MADT is how ACPI enumerates
+//     CPUs).  Their GIC base, GICV, GICH and GICR addresses are all zero: there
+//     is no GICv3 CPU interface (Apple has none) and no redistributor.
+//   * NO EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE.
+//   * NO EFI_ACPI_6_4_GICR_STRUCTURE.
+//   * NO ITS (matching the hardware-proven j873 native MADT).
+//
+// PMU is intentionally not exposed: it is an Apple processor-local FIQ handled
+// through native AIC, exactly as in the T602X/T6020 MADT.
+//
+// CPU count: the current x1n1 Windows milestone brings up a SINGLE boot CPU
+// (WINDOWS_HANDOFF: "Add the remaining 17 cores only after a UEFI shell boots
+// under x1n1").  T6050_J714S_MADT_CPU_COUNT therefore defaults to 1 so this is a
+// drop-in for the boot-agent MADT.  Define it to T6050_J714S_CPU_COUNT (18) to
+// publish all captured cores once multi-CPU bring-up is qualified under x1n1.
+//
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+#include "T6050J714sTopology.h"
+
+#if (T6050_J714S_MADT_CPU_COUNT != 1) && \
+    (T6050_J714S_MADT_CPU_COUNT != T6050_J714S_CPU_COUNT)
+#error "T6050_J714S_MADT_CPU_COUNT must be 1 (boot CPU) or T6050_J714S_CPU_COUNT (all cores)"
+#endif
+
+#pragma pack (1)
+typedef struct {
+  EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER  Header;
+  EFI_ACPI_6_3_GIC_STRUCTURE                           Cpu[T6050_J714S_MADT_CPU_COUNT];
+} J714_NATIVE_MADT;
+#pragma pack ()
+
+//
+// Format: EFI_ACPI_6_3_GICC_STRUCTURE_INIT(GicId, AcpiCpuUid, Mpidr, Flags,
+//   PmuIrq, GicBase, GicVBase, GicHBase, GsivId, GicRBase, Efficiency,
+//   SpeOvflIrq)
+//
+// The primary CPU must be the first entry (ACPI 5.1 s5.2.12.14).  Every GIC
+// address is 0: no CPU interface, no maintenance interrupt, no redistributor.
+//
+#define T6050_NATIVE_GICC(LogicalUid, RawMpidr, Efficiency)                    \
+  EFI_ACPI_6_3_GICC_STRUCTURE_INIT (                                           \
+    LogicalUid, LogicalUid, RawMpidr,                                          \
+    EFI_ACPI_6_3_GIC_ENABLED,                                                  \
+    0,   /* PMU not exposed: Apple processor-local FIQ via native AIC */       \
+    0,   /* GicBase: no GICv3 CPU interface */                                 \
+    0,   /* GicVBase */                                                        \
+    0,   /* GicHBase */                                                        \
+    0,   /* VGIC maintenance GSIV: none */                                     \
+    0,   /* GICR base: no redistributor */                                     \
+    Efficiency,                                                                \
+    0),  /* SPE overflow IRQ: none */
+
+J714_NATIVE_MADT  Madt = {
+  {
+    __ACPI_HEADER (
+      EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+      J714_NATIVE_MADT,
+      EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION
+      ),
+    0,   // LocalApicAddress
+    0,   // Flags
+  },
+  {
+#if (T6050_J714S_MADT_CPU_COUNT == T6050_J714S_CPU_COUNT)
+    T6050_J714S_CPU_LIST (T6050_NATIVE_GICC)
+#else
+    //
+    // Single boot CPU: T6050 cpu0, MPIDR 0x80040000 (verified from the J714s
+    // ADT), matching the boot-agent single-CPU J714 MADT.
+    //
+    T6050_NATIVE_GICC (0, T6050_J714S_BOOT_CPU_MPIDR, 0)
+#endif
+  },
+};
+
+//
+// Reference the table being generated to prevent the optimizer from removing
+// the data structure from the executable.
+//
+VOID *CONST ReferenceAcpiTable = &Madt;

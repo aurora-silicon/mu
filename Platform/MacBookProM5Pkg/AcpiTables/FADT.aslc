@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+// T6050 / J714s FADT. HW-reduced ACPI, PSCI-compliant.
+//
+// DEVIATION FROM j873: the PSCI conduit is HVC, not SMC. Under x1n1, SMC cannot
+// be trapped (see WINDOWS_HANDOFF "SPTM guest HCR policy"), so PSCI/SMCCC MUST
+// use HVC. j873 runs under m1n1-aurora on real hardware and uses the SMC conduit;
+// this build sets EFI_ACPI_6_4_ARM_PSCI_USE_HVC to satisfy the x1n1 ABI.
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+
+EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE Fadt = {
+  .Header = __ACPI_HEADER (EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_SIGNATURE,
+                          EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE,
+                          EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_REVISION),
+  .PreferredPmProfile = EFI_ACPI_6_4_PM_PROFILE_MOBILE,
+  .Flags = EFI_ACPI_6_4_HW_REDUCED_ACPI,
+  .ArmBootArch = EFI_ACPI_6_4_ARM_PSCI_COMPLIANT | EFI_ACPI_6_4_ARM_PSCI_USE_HVC,
+  .MinorVersion = EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_MINOR_REVISION,
+};
+VOID *CONST ReferenceAcpiTable = &Fadt;

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  DEC_SPECIFICATION = 0x00010005
+  PACKAGE_NAME = MacBookProM5Pkg
+  PACKAGE_GUID = 72657809-fde9-46a0-a054-63a331c32098
+  PACKAGE_VERSION = 0.1

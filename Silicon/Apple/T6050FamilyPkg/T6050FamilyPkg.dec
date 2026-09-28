@@ -1,0 +1,32 @@
+# T6050 (Apple M5 Pro) EDK2 Package Description File
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+# Port of T8152FamilyPkg (Apple M6 / J873) to the T6050 (Apple M5 Pro / J714s).
+# Values are taken from the live J714s ADT fixture
+# (emuasi/build/sptm-macho-j714/dtree-18) and from the x1n1 guest ABI contract
+# in WINDOWS_HANDOFF.md. Do NOT invent hardware constants here.
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = T6050FamilyPkg
+  PACKAGE_GUID                   = 504f8788-9b8f-4ae5-bc35-3d6359c1bc16
+  PACKAGE_VERSION                = 0.1
+
+[Includes.common]
+  Include
+
+[Guids.common]
+  gT6050FamilyPkgTokenSpaceGuid = { 0x14bde17d, 0x077c, 0x4189, { 0xb6, 0x26, 0x94, 0x05, 0x8e, 0xda, 0x00, 0x37 } }
+
+[PcdsPatchableInModule.common]
+  #
+  # Number of cores. T6050 (M5 Pro) is 18: two 6-core E clusters (cluster0,
+  # cluster1) plus one 6-core P cluster (cluster2). Verified from the J714s ADT.
+  # The first x1n1 milestone still ships a single boot CPU in the MADT; this is
+  # only the upper bound used for per-core carveout reservation loops.
+  #
+  gT6050FamilyPkgTokenSpaceGuid.PcdCoreCount|18|UINT32|0x00006406
+
+  #
+  # Three clusters (2x E + 1x P).
+  #
+  gT6050FamilyPkgTokenSpaceGuid.PcdClusterCount|3|UINT32|0x00006407
