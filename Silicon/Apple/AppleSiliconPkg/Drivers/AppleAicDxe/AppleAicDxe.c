@@ -40,12 +40,14 @@ InterruptDxeInitialize (
   switch(Version) {
     case APPLE_AIC_VERSION_1:
     case APPLE_AIC_VERSION_2:
-      Status = AppleAicV2DxeInit(ImageHandle, SystemTable, Version);
-      break;
     case APPLE_AIC_VERSION_3:
       //
-      // TODO: add AICv3 support, seen in M3 and A17 based SoCs.
+      // AICv2 and AICv3 (T6050 / M5-class) share one MMIO-programming engine
+      // whose register geometry is derived from the ADT; AppleAicV2DxeInit()
+      // handles both. AICv1 is currently a stub (AppleAicV1DxeInit is unused).
       //
+      Status = AppleAicV2DxeInit(ImageHandle, SystemTable, Version);
+      break;
     default:
       DEBUG((DEBUG_INFO, "Unsupported AIC revision, exiting\n"));
       Status = EFI_UNSUPPORTED;

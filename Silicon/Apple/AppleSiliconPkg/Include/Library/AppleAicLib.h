@@ -32,6 +32,18 @@ typedef enum {
     APPLE_AIC_VERSION_UNKNOWN
 } APPLE_AIC_VERSION;
 
+/*
+ * AICv2 and AICv3 share one MMIO-programming engine in this driver: the same
+ * MASK_SET/MASK_CLEAR/SW_SET/SW_CLEAR/EVENT model, differing only in register
+ * geometry, which is derived from the ADT (extint-baseaddress, *-stride,
+ * aic-iack-offset).  AICv1 is a different, fixed-layout engine.  Use this
+ * predicate wherever the "v2-class" engine path must cover both v2 and v3 so
+ * that formally reporting AICv3 (T6050 / M5-class, compatible = "aic,3") does
+ * not fall through the v2 branches.
+ */
+#define APPLE_AIC_VERSION_IS_V2_ENGINE(v)  \
+    (((v) == APPLE_AIC_VERSION_2) || ((v) == APPLE_AIC_VERSION_3))
+
 /**
  * 
  * AIC structs, to keep important information about the AIC like the number of IRQs and CPU dies.

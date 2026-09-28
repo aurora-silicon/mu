@@ -276,7 +276,7 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         AicInfoStruct->MaxCpuDies = 1;
         AicInfoStruct->NumCpuDies = 1;
     }
-    else if(mAicVersion == APPLE_AIC_VERSION_2){
+    else if(APPLE_AIC_VERSION_IS_V2_ENGINE(mAicVersion)){
         AicInfoStruct->MaxCpuDies = FIELD_GET(AIC_V2_INFO_REG3_MAX_DIE_COUNT_BITFIELD, MmioRead32(AicV2Base + AppleAicCapabilityOffset ("maxnumirq-offset", AIC_V2_INFO_REG3)));
         AicInfoStruct->NumCpuDies = (FIELD_GET(AIC_V2_INFO_REG1_LAST_CPU_DIE_BITFIELD, MmioRead32(AicV2Base + AppleAicCapabilityOffset ("cap0-offset", AIC_V2_INFO_REG1)))) + 1;
     }
@@ -312,16 +312,17 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         StartOffset = mAicV2IrqCfgOffset = AIC_TARGET_CPU;
         mAicV2EventReg = AicV2Base;
     }
-    else if(mAicVersion == APPLE_AIC_VERSION_2){
+    else if(APPLE_AIC_VERSION_IS_V2_ENGINE(mAicVersion)){
         mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
         AURORA_AIC_STAGE (0x16, mAicV2EventReg, 0, 0);
 
         /**
          * The external interrupt config block is RELOCATABLE on AICv3.
          *
-         * AppleArmGetAicVersion() maps "aic,3" onto APPLE_AIC_VERSION_2, so this
-         * path also runs on AICv3 hardware -- but there the config base is not
-         * the AICv2 constant. On T8142 (Apple M5) the ADT reports
+         * AppleArmGetAicVersion() reports "aic,3" as APPLE_AIC_VERSION_3, which
+         * APPLE_AIC_VERSION_IS_V2_ENGINE() routes through this same v2-class
+         * path -- but there the config base is not the AICv2 constant. On T8142
+         * (Apple M5) and T6050 (M5 Pro) the ADT reports
          * extint-baseaddress = 0x10000, whereas AIC_V2_IRQ_CFG_REG is 0x2000.
          *
          * This matters a great deal, because SW_SET, SW_CLEAR, MASK_SET,

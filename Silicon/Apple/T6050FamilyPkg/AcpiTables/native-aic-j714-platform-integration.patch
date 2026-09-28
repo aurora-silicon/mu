@@ -1,0 +1,47 @@
+# T6050/J714s native Apple AIC (v3) ACPI - J714 Windows platform integration.
+# Apply from the Mu repo root:  git apply -p1 <this file>
+# It wires the native tables built by
+#   Silicon/Apple/T6050FamilyPkg/AcpiTables/J714NativeAcpiTables.inf
+# into the boot-agent's MacBookProM5Pkg (J714_WINDOWS profile) and drops the
+# GICv3 MADT so only the native GIC-free MADT is installed.
+#
+diff --git a/Platform/MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf b/Platform/MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf
+index e666799..c8e7dda 100644
+--- a/Platform/MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf
++++ b/Platform/MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf
+@@ -9,7 +9,9 @@
+   DSDT.asl
+   FADT.aslc
+   GTDT.aslc
+-  MADT.aslc
++  # MADT.aslc removed: the native GIC-free MADT in
++  # T6050FamilyPkg/AcpiTables/MADT_NativeAic.aslc replaces it so Windows
++  # does not instantiate a GICv3 shell. Installed via J714NativeAcpiTables.inf.
+ [Packages]
+   MdePkg/MdePkg.dec
+   MdeModulePkg/MdeModulePkg.dec
+diff --git a/Platform/MacBookProM5Pkg/MacBookProM5.dsc b/Platform/MacBookProM5Pkg/MacBookProM5.dsc
+index f4a892c..337cea9 100644
+--- a/Platform/MacBookProM5Pkg/MacBookProM5.dsc
++++ b/Platform/MacBookProM5Pkg/MacBookProM5.dsc
+@@ -109,5 +109,7 @@
+   MacBookProM5Pkg/Applications/J714BootProbe/J714BootProbe.inf
+ !if $(J714_WINDOWS) == TRUE
+   MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf
++  # Native Apple AIC v3 tables: AIC3 CSRT + GIC-free MADT for T6050/J714s.
++  T6050FamilyPkg/AcpiTables/J714NativeAcpiTables.inf
+   MacBookProM5Pkg/Drivers/J714AcpiDxe/J714AcpiDxe.inf
+ !endif
+diff --git a/Platform/MacBookProM5Pkg/MacBookProM5.fdf b/Platform/MacBookProM5Pkg/MacBookProM5.fdf
+index 32c7717..e7e5c5d 100644
+--- a/Platform/MacBookProM5Pkg/MacBookProM5.fdf
++++ b/Platform/MacBookProM5Pkg/MacBookProM5.fdf
+@@ -109,6 +109,8 @@ FvNameGuid         = ecd176ad-0915-40ca-a8de-5271171345be
+ !if $(J714_WINDOWS) == TRUE
+   INF MacBookProM5Pkg/Drivers/J714AcpiDxe/J714AcpiDxe.inf
+   INF RuleOverride=ACPITABLE MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf
++  # Native Apple AIC v3 tables: AIC3 CSRT + GIC-free MADT for T6050/J714s.
++  INF RuleOverride=ACPITABLE T6050FamilyPkg/AcpiTables/J714NativeAcpiTables.inf
+ !endif
+   INF MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+   INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf
