@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = J714AnsDxe
+  FILE_GUID = 873714a5-1820-4aab-8210-8d2790133e01
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J714AnsEntry
+[Sources]
+  J714AnsDxe.c
+  Shared/AppleNvmeCore.c
+  Shared/AppleNvmeControllerCore.c
+  Shared/AppleNvmeBlockCore.c
+  Shared/AppleNvmePrpCore.c
+  Shared/AppleAscCore.c
+  Shared/AppleRtkitCore.c
+  Shared/AppleRtkitRuntimeCore.c
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  ArmLib
+  BaseMemoryLib
+  DebugLib
+  IoLib
+  MemoryAllocationLib
+  TimerLib
+[Protocols]
+  gEfiBlockIoProtocolGuid
+  gEfiDevicePathProtocolGuid
+  gHardwareInterruptProtocolGuid
+[Guids]
+  gEfiEventExitBootServicesGuid
+[Depex]
+  gHardwareInterruptProtocolGuid

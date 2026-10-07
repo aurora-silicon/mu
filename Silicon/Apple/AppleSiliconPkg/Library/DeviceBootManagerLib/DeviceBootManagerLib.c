@@ -18,6 +18,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Guid/DfciPacketHeader.h>
 
 #include <Protocol/OnScreenKeyboard.h>
+#include <Protocol/GraphicsOutput.h>
 #include <Protocol/TpmPpProtocol.h>
 
 #include <Library/BaseMemoryLib.h>
@@ -52,6 +53,10 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 
 #include <Settings/BootMenuSettings.h>
 #include <Settings/DfciSettings.h>
+
+#if defined (J714_USB_INSTALLER) && J714_USB_INSTALLER
+EFI_STATUS J714UsbInstallerPriorityBoot (EFI_BOOT_MANAGER_LOAD_OPTION *BootOption);
+#endif
 
 static EFI_EVENT  mPreReadyToBootEvent;
 static EFI_EVENT  mPostReadyToBootEvent;
@@ -981,6 +986,21 @@ DeviceBootManagerAfterConsole (
   //
   DumpConsoleVariable (ConIn, L"ConIn");
   DumpConsoleVariable (ConOut, L"ConOut");
+  {
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = NULL;
+    Status = gBS->HandleProtocol (gST->ConsoleOutHandle,
+        &gEfiGraphicsOutputProtocolGuid, (VOID **)&Gop);
+    DEBUG ((DEBUG_INFO, "CONSOLEDUMP: system GOP %r handle=%p\n",
+        Status, gST->ConsoleOutHandle));
+    if (!EFI_ERROR (Status) && Gop != NULL && Gop->Mode != NULL) {
+      DEBUG ((DEBUG_INFO, "CONSOLEDUMP: GOP mode=%u/%u fb=%lx size=%lx %ux%u stride=%u format=%u\n",
+          Gop->Mode->Mode, Gop->Mode->MaxMode, Gop->Mode->FrameBufferBase,
+          (UINT64)Gop->Mode->FrameBufferSize,
+          Gop->Mode->Info->HorizontalResolution, Gop->Mode->Info->VerticalResolution,
+          Gop->Mode->Info->PixelsPerScanLine, Gop->Mode->Info->PixelFormat));
+    }
+  }
+
 
   MsPreBootChecks ();
 
@@ -1154,7 +1174,11 @@ DeviceBootManagerPriorityBoot (
     Status = MsBootOptionsLibGetBootManagerMenu (BootOption, "VOL+");
     SetRebootReason (OEM_REBOOT_TO_SETUP_KEY);
   } else {
+#if defined (J714_USB_INSTALLER) && J714_USB_INSTALLER
+    Status = J714UsbInstallerPriorityBoot (BootOption);
+#else
     Status = EFI_NOT_FOUND;
+#endif
   }
 
   return Status;

@@ -18,6 +18,7 @@
 
 [Sources]
   DeviceBootManagerLib.c
+  J714UsbInstallerBoot.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -65,6 +66,8 @@
   gDfciSettingsManagerVarNamespace
 
 [Protocols]
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiGraphicsOutputProtocolGuid    ## CONSUMES
   gMsOSKProtocolGuid                ## CONSUMES
   gMsSWMProtocolGuid                ## CONSUMES
   gTpmPpProtocolGuid                ## CONSUMES

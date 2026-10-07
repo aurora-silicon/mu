@@ -4,16 +4,15 @@
 // DSDT) from the FV. Ported from j873's J873AcpiDxe.
 //
 // The Windows profile requires EL1 (x1n1 enters Mu at EL1). That is a hard gate.
-// The boot-CPU MPIDR check is a WARNING only, not a refusal: what MPIDR the x1n1
-// guest observes for T6050 cpu0 under QEMU has not yet been captured, and a wrong
-// literal would silently block all ACPI. The expected value from the J714s ADT is
-// cpu0 MPIDR 0x80040000 (low 40 bits).
+// This isolated Windows build uses the QEMU fixture topology.
 #include <Uefi.h>
 #include <Library/AcpiLib.h>
 #include <Library/ArmLib.h>
 #include <Library/DebugLib.h>
 
-#define J714_BOOT_CPU_MPIDR  0x80040000ULL
+#include "../../AcpiTables/T6050J714sTopology.h"
+
+#define J714_BOOT_CPU_MPIDR  T6050_J714S_BOOT_CPU_MPIDR
 #define J714_MPIDR_AFF_MASK  0xFFFFFFFFFFULL   // aff0..aff3
 
 STATIC CONST EFI_GUID mTables = {
@@ -41,7 +40,7 @@ EFI_STATUS EFIAPI J714AcpiEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *Syste
 
   Status = LocateAndInstallAcpiFromFv (&mTables);
   DEBUG ((DEBUG_INFO,
-    "J714_WINDOWS_ACPI: single boot CPU, software GIC (GICD 0xF00000000 / GICR 0xF10000000), "
-    "timer 17/18, PSCI over HVC: %r\n", Status));
+    "J714_WINDOWS_ACPI: %u CPUs, native Apple AIC (hardware=%u), "
+    "timer 17/18, PSCI over HVC: %r\n", T6050_J714S_MADT_CPU_COUNT, J714_HARDWARE, Status));
   return Status;
 }

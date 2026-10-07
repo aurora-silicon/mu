@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// T6050 / J714s GTDT. GSIVs are the x1n1 software-GIC INTIDs the hypervisor
-// reflects Apple's FIQ-wired timers onto (non-secure PL1 = 17, virtual = 18),
-// per the WINDOWS_HANDOFF ABI. Matches the proven j873 GTDT.
+// T6050 / J714s native-AIC GTDT. These are the processor-local line IDs
+// registered by HalExtAppleInterruptController, outside the hardware IRQ
+// domain. They match aic_native.h, not the old software-GIC profile.
 #include <Library/AcpiLib.h>
 #include <Library/PcdLib.h>
 #include <IndustryStandard/Acpi64.h>
@@ -12,8 +12,8 @@ EFI_ACPI_6_4_GENERIC_TIMER_DESCRIPTION_TABLE Gtdt = {
                           EFI_ACPI_6_4_GENERIC_TIMER_DESCRIPTION_TABLE,
                           EFI_ACPI_6_4_GENERIC_TIMER_DESCRIPTION_TABLE_REVISION),
   .CntControlBasePhysicalAddress = MAX_UINT64,
-  .NonSecurePL1TimerGSIV = 17,
-  .VirtualTimerGSIV = 18,
+  .NonSecurePL1TimerGSIV = 0xfffff001,
+  .VirtualTimerGSIV = 0xfffff002,
   .CntReadBasePhysicalAddress = MAX_UINT64,
 };
 VOID *CONST ReferenceAcpiTable = &Gtdt;

@@ -14,6 +14,9 @@ EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE Fadt = {
   .Header = __ACPI_HEADER (EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_SIGNATURE,
                           EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE,
                           EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_REVISION),
+  // The pinned Windows 26100.1 SocEntry runs before CSRT extensions and
+  // requires an inbox discovery carrier. The AIC HAL retires it before MMIO.
+  .Header.OemId = { 'B', 'C', '2', '8', '3', '6' },
   .PreferredPmProfile = EFI_ACPI_6_4_PM_PROFILE_MOBILE,
   .Flags = EFI_ACPI_6_4_HW_REDUCED_ACPI,
   .ArmBootArch = EFI_ACPI_6_4_ARM_PSCI_COMPLIANT | EFI_ACPI_6_4_ARM_PSCI_USE_HVC,

@@ -38,7 +38,32 @@
 // T8142 uses 12 core MMIO ranges + 9 PCIe ranges (2 ECAM + 7 BAR windows) +
 // DRAM + framebuffer + terminator = 24 descriptors. Kept at 28 for headroom.
 //
+#include "windows-guest-memory.h"
+#if defined(J714_FULL_RAM) && J714_FULL_RAM
+#define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS (28 + WIN_RAM_MAX_BANKS)
+STATIC struct win_ram_bank mWindowsRamBanks[WIN_RAM_MAX_BANKS];
+STATIC UINT32 mWindowsRamCount;
+STATIC BOOLEAN LoadWindowsRamBanks(VOID)
+{
+  CONST UINT8 *Info = (CONST UINT8 *)(UINTN)(FixedPcdGet64 (PcdBootArgsPointer) + WIN_RAM_INFO_OFFSET);
+  if (*(CONST UINT64 *)(Info+WIN_RAM_MAGIC_OFFSET)!=WIN_RAM_MAGIC)
+    return FALSE;
+  UINT64 Count=*(CONST UINT64 *)(Info+WIN_RAM_COUNT_OFFSET);
+  UINT64 Total=*(CONST UINT64 *)(Info+WIN_RAM_TOTAL_OFFSET);
+  if (Count<2 || Count>WIN_RAM_MAX_BANKS) return FALSE;
+  for (UINT32 I=0;I<(UINT32)Count;I++) {
+    mWindowsRamBanks[I].base=*(CONST UINT64 *)(Info+WIN_RAM_BANK_OFFSET+I*16);
+    mWindowsRamBanks[I].size=*(CONST UINT64 *)(Info+WIN_RAM_BANK_OFFSET+I*16+8);
+  }
+  if (!win_ram_validate(mWindowsRamBanks,(UINT32)Count,
+      PcdGet64(PcdSystemMemoryBase),PcdGet64(PcdSystemMemorySize),Total)) return FALSE;
+  mWindowsRamCount=(UINT32)Count;
+  DEBUG((DEBUG_ERROR,"MemoryPeim: verified Windows RAM banks=%u total=0x%lx\n",mWindowsRamCount,Total));
+  return TRUE;
+}
+#else
 #define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS 28
+#endif
 
 #define DDR_ATTRIBUTES_CACHED           ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK
 #define DDR_ATTRIBUTES_UNCACHED         ARM_MEMORY_REGION_ATTRIBUTE_UNCACHED_UNBUFFERED
@@ -163,7 +188,21 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   UINT64                              AppendedReservationSize;
   EFI_PHYSICAL_ADDRESS                AppendedTop;
   NTASI_APPENDED_RAMDISK_LOCATION     AppendedLocation;
+  EFI_PHYSICAL_ADDRESS                MainMemoryBase;
+  UINT64                              MainMemorySize;
 
+#if defined(J714_FULL_RAM) && J714_FULL_RAM
+  if (!LoadWindowsRamBanks()) {
+    DEBUG((DEBUG_ERROR,"MemoryPeim: full RAM handoff refused\n"));
+    return EFI_COMPROMISED_DATA;
+  }
+#endif
+  MainMemoryBase = PcdGet64 (PcdSystemMemoryBase);
+  MainMemorySize = PcdGet64 (PcdSystemMemorySize);
+#if defined(J714_FULL_RAM) && J714_FULL_RAM
+  MainMemoryBase = mWindowsRamBanks[0].base;
+  MainMemorySize = mWindowsRamBanks[0].size;
+#endif
   // build up virtual memory map
   BuildVirtualMemoryMap(&MemoryTable);
 
@@ -189,8 +228,8 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   NextHob.Raw = GetHobList ();
   while ((NextHob.Raw = GetNextHob (EFI_HOB_TYPE_RESOURCE_DESCRIPTOR, NextHob.Raw)) != NULL) {
     if ((NextHob.ResourceDescriptor->ResourceType == EFI_RESOURCE_SYSTEM_MEMORY) &&
-        (PcdGet64 (PcdSystemMemoryBase) >= NextHob.ResourceDescriptor->PhysicalStart) &&
-        (NextHob.ResourceDescriptor->PhysicalStart + NextHob.ResourceDescriptor->ResourceLength <= PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize)))
+        (MainMemoryBase >= NextHob.ResourceDescriptor->PhysicalStart) &&
+        (NextHob.ResourceDescriptor->PhysicalStart + NextHob.ResourceDescriptor->ResourceLength <= MainMemoryBase + MainMemorySize))
     {
       Found = TRUE;
       break;
@@ -204,8 +243,8 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
     BuildResourceDescriptorHob (
       EFI_RESOURCE_SYSTEM_MEMORY,
       ResourceAttributes,
-      PcdGet64 (PcdSystemMemoryBase),
-      PcdGet64 (PcdSystemMemorySize)
+      MainMemoryBase,
+      MainMemorySize
       );
   }
 
@@ -213,13 +252,19 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   // Reserved the memory space occupied by the firmware volume
   //
 
-  SystemMemoryTop = (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdSystemMemoryBase) + (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdSystemMemorySize);
+#if defined(J714_FULL_RAM) && J714_FULL_RAM
+  for (UINT32 I=1;I<mWindowsRamCount;I++)
+    BuildResourceDescriptorHob(EFI_RESOURCE_SYSTEM_MEMORY,ResourceAttributes,
+      mWindowsRamBanks[I].base,mWindowsRamBanks[I].size);
+#endif
+
+  SystemMemoryTop = MainMemoryBase + (EFI_PHYSICAL_ADDRESS)MainMemorySize;
   FdTop           = (EFI_PHYSICAL_ADDRESS)PcdGet64 (PcdFdBaseAddress) + (EFI_PHYSICAL_ADDRESS)PcdGet32 (PcdFdSize);
 
   // EDK2 does not have the concept of boot firmware copied into DRAM. To avoid the DXE
   // core to overwrite this area we must create a memory allocation HOB for the region,
   // but this only works if we split off the underlying resource descriptor as well.
-  if ((PcdGet64 (PcdFdBaseAddress) >= PcdGet64 (PcdSystemMemoryBase)) && (FdTop <= SystemMemoryTop)) {
+  if ((PcdGet64 (PcdFdBaseAddress) >= MainMemoryBase) && (FdTop <= SystemMemoryTop)) {
     Found = FALSE;
 
     // Search for System Memory Hob that contains the firmware
@@ -498,6 +543,19 @@ VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
   // Windows UART with J873_WINDOWS because its native path used a different
   // DockChannel block; T6050 uses one UART for both, so no guard is needed.)
   MAP_DEVICE_RANGE (T6050_UART_BASE, T6050_UART_SIZE);
+#if defined(J714_USB3) && J714_USB3
+  // Explicit right USB host grant. SPTM still denies holes and all USB0 IO.
+  MAP_DEVICE_RANGE (0x8a000000, 0x400000);
+#if defined(J714_USB_HOSTS) && J714_USB_HOSTS
+  MAP_DEVICE_RANGE (0x89000000, 0x400000);
+  // Stage-1 mapping for the trapped, versioned readiness ABI. This is not
+  // a native SPTM physical MMIO grant; EL2 supplies these read-only fields.
+  MAP_DEVICE_RANGE (0x61f00000, 0x4000);
+#endif
+#endif
+#if defined(J714_KBL) && J714_KBL
+  MAP_DEVICE_RANGE (0x62610000, 0x8000);
+#endif
 
 #undef MAP_DEVICE_RANGE
 
@@ -508,10 +566,29 @@ VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
   Index--;
 
   //System DRAM
-  VirtualMemoryTable[++Index].PhysicalBase = PcdGet64(PcdSystemMemoryBase);
-  VirtualMemoryTable[Index].VirtualBase    = PcdGet64(PcdSystemMemoryBase);
-  VirtualMemoryTable[Index].Length         = PcdGet64(PcdSystemMemorySize);
+  VirtualMemoryTable[++Index].PhysicalBase =
+#if defined(J714_FULL_RAM) && J714_FULL_RAM
+      mWindowsRamBanks[0].base;
+#else
+      PcdGet64(PcdSystemMemoryBase);
+#endif
+  VirtualMemoryTable[Index].VirtualBase    = VirtualMemoryTable[Index].PhysicalBase;
+  VirtualMemoryTable[Index].Length         =
+#if defined(J714_FULL_RAM) && J714_FULL_RAM
+      mWindowsRamBanks[0].size;
+#else
+      PcdGet64(PcdSystemMemorySize);
+#endif
   VirtualMemoryTable[Index].Attributes     = CacheAttributes;
+#if defined(J714_FULL_RAM) && J714_FULL_RAM
+  for (UINT32 I=1;I<mWindowsRamCount;I++) {
+    VirtualMemoryTable[++Index].PhysicalBase=mWindowsRamBanks[I].base;
+    VirtualMemoryTable[Index].VirtualBase=mWindowsRamBanks[I].base;
+    VirtualMemoryTable[Index].Length=mWindowsRamBanks[I].size;
+    VirtualMemoryTable[Index].Attributes=CacheAttributes;
+  }
+#endif
+
 
 
   DEBUG ((

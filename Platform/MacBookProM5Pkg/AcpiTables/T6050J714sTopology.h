@@ -1,15 +1,11 @@
 /** @file
-  Exact processor topology and native-AIC (AIC v3) resources for the T6050
-  J714s (Apple M5 Pro, MacBook Pro).
+  Separate hardware/QEMU Windows topologies and native-AIC resources for J714s.
 
-  This is the single source shared by the native-AIC MADT and the AIC v3 CSRT.
-  Every value below is grounded in a captured description, not invented:
+  This isolated profile describes fixtures/windows/dtree-24mhz, whose CPU reg
+  values produce QEMU MPIDRs 0x80000000+{0..5}, 0x80000100+{0..5}, and
+  0x80000200+{0..5}. Physical J714s uses different affinity values; this table
+  is selected by J714_HARDWARE=1 and matches the 2026-09-29 Linux boot traces.
 
-  * The 18 CPU MPIDRs are the live J714s values captured in
-    NOTES-windows-guest.md ("T6050 MPIDRs: 0x80040000+{0..5}, 0x80040100+{0..5},
-    0x80010200+{0..5}").  They are the real MPIDR_EL1 values (bit 31 RES1 set),
-    so they are placed into the MADT GICC MPIDR field verbatim, exactly as the
-    boot-agent single-CPU J714 MADT places cpu0's 0x80040000.
   * The AIC v3 register geometry mirrors the captured T6050 fixture in
     drivers/AppleAic/aic3_platform.c (ntasi_aic3_t6050_fixture): AIC3 core base
     0x280400000, size 0x1cc000, EVENT base 0x280440000, 3104/4096 IRQs.  The
@@ -57,13 +53,19 @@
 /*
  * X(LogicalUid, RawMpidr, EfficiencyClass)
  *
- * ACPI UIDs are dense for Windows.  RawMpidr is the captured MPIDR_EL1 value
+ * ACPI UIDs are dense for Windows.  RawMpidr is the emulated MPIDR_EL1 value
  * (bit 31 RES1 set), placed into the GICC MPIDR field verbatim.
  *
- *   Cluster 0 (Aff2=4, Aff1=0): 0x80040000..0x80040005
- *   Cluster 1 (Aff2=4, Aff1=1): 0x80040100..0x80040105
- *   Cluster 2 (Aff2=1, Aff1=2): 0x80010200..0x80010205
+ *   QEMU fixture cluster 0: 0x80000000..0x80000005
+ *   QEMU fixture cluster 1: 0x80000100..0x80000105
+ *   QEMU fixture cluster 2: 0x80000200..0x80000205
+ * J714_HARDWARE selects the captured physical affinities (Aff2=4,4,1).
+ * The default emulator profile retains its ADT reg-derived affinities.
  */
+#ifndef J714_HARDWARE
+#error J714_HARDWARE must be defined for both C and ASLCC topology consumers
+#endif
+#if J714_HARDWARE
 #define T6050_J714S_CPU_LIST(X)                                                \
   X ( 0, 0x80040000, 0)                                                        \
   X ( 1, 0x80040001, 0)                                                        \
@@ -84,23 +86,38 @@
   X (16, 0x80010204, 0)                                                        \
   X (17, 0x80010205, 0)
 
-/*
- * The boot CPU MPIDR for the single-CPU milestone (matches the boot-agent
- * J714 MADT: T6050 cpu0, MPIDR 0x80040000).
- */
+/* Boot CPU in the captured J714s hardware topology. */
 #define T6050_J714S_BOOT_CPU_MPIDR   0x80040000
 
-/*
- * Number of CPUs the native-AIC MADT actually publishes.
- *
- * The current x1n1 Windows milestone brings up a SINGLE boot CPU (see the
- * boot-agent MADT and WINDOWS_HANDOFF: "Add the remaining 17 cores only after a
- * UEFI shell boots under x1n1").  Default to that so this native-AIC MADT is a
- * drop-in for the boot-agent's GICv3 MADT without changing CPU bring-up.  Set to
- * T6050_J714S_CPU_COUNT to publish all 18 captured cores.
- */
+#else
+#define T6050_J714S_CPU_LIST(X)                                                \
+  X ( 0, 0x80000000, 0)                                                        \
+  X ( 1, 0x80000001, 0)                                                        \
+  X ( 2, 0x80000002, 0)                                                        \
+  X ( 3, 0x80000003, 0)                                                        \
+  X ( 4, 0x80000004, 0)                                                        \
+  X ( 5, 0x80000005, 0)                                                        \
+  X ( 6, 0x80000100, 0)                                                        \
+  X ( 7, 0x80000101, 0)                                                        \
+  X ( 8, 0x80000102, 0)                                                        \
+  X ( 9, 0x80000103, 0)                                                        \
+  X (10, 0x80000104, 0)                                                        \
+  X (11, 0x80000105, 0)                                                        \
+  X (12, 0x80000200, 0)                                                        \
+  X (13, 0x80000201, 0)                                                        \
+  X (14, 0x80000202, 0)                                                        \
+  X (15, 0x80000203, 0)                                                        \
+  X (16, 0x80000204, 0)                                                        \
+  X (17, 0x80000205, 0)
+
+/* Boot CPU in the QEMU fixture. */
+#define T6050_J714S_BOOT_CPU_MPIDR   0x80000000
+
+#endif
+
+/* Publish all QEMU cores; retain a single-CPU diagnostic build override. */
 #ifndef T6050_J714S_MADT_CPU_COUNT
-#define T6050_J714S_MADT_CPU_COUNT   1
+#define T6050_J714S_MADT_CPU_COUNT   18
 #endif
 
 #endif /* T6050_J714S_TOPOLOGY_H_ */

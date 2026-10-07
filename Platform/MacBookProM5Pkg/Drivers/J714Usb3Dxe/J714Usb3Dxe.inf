@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = J714Usb3Dxe
+  FILE_GUID = 09a70526-9f0a-46a6-bf1a-295ce0a38d28
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J714Usb3Entry
+[Sources]
+  J714Usb3Dxe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  DebugLib
+  IoLib
+  TimerLib
+  ArmGenericTimerCounterLib
+  BaseMemoryLib
+  NonDiscoverableDeviceRegistrationLib
+  AppleDTLib
+[Guids]
+  gEfiEndOfDxeEventGroupGuid
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+  gEfiTimerArchProtocolGuid
+[Depex]
+  TRUE

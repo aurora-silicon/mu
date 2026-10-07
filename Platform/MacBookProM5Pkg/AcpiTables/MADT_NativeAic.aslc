@@ -23,11 +23,7 @@
 // PMU is intentionally not exposed: it is an Apple processor-local FIQ handled
 // through native AIC, exactly as in the T602X/T6020 MADT.
 //
-// CPU count: the current x1n1 Windows milestone brings up a SINGLE boot CPU
-// (WINDOWS_HANDOFF: "Add the remaining 17 cores only after a UEFI shell boots
-// under x1n1").  T6050_J714S_MADT_CPU_COUNT therefore defaults to 1 so this is a
-// drop-in for the boot-agent MADT.  Define it to T6050_J714S_CPU_COUNT (18) to
-// publish all captured cores once multi-CPU bring-up is qualified under x1n1.
+// This isolated Windows profile publishes all 18 CPUs in the QEMU fixture.
 //
 #include <Library/AcpiLib.h>
 #include <Library/PcdLib.h>
@@ -52,13 +48,31 @@ typedef struct {
 //   PmuIrq, GicBase, GicVBase, GicHBase, GsivId, GicRBase, Efficiency,
 //   SpeOvflIrq)
 //
+// With the BCM discovery carrier, Windows matches LocalUnitId against GicId,
+// not the MPIDR field. Keep GicId equal to the HAL compact MPIDR while ACPI
+// UIDs remain dense. Otherwise the first cross-cluster CPU never acknowledges
+// startup, despite executing successfully.
+//
 // The primary CPU must be the first entry (ACPI 5.1 s5.2.12.14).  Every GIC
 // address is 0: no CPU interface, no maintenance interrupt, no redistributor.
 //
+//
+// Debug-monitor profile: the last CPU stays present but disabled (Flags 0), so
+// Windows never issues CPU_ON for it and the hypervisor can keep it in host
+// context. Default builds enable every CPU.
+//
+#ifndef T6050_J714S_RESERVE_LAST_CPU
+#define T6050_J714S_RESERVE_LAST_CPU 0
+#endif
+#define T6050_NATIVE_GICC_FLAGS(LogicalUid)                                    \
+  ((T6050_J714S_RESERVE_LAST_CPU &&                                            \
+    (LogicalUid) == (T6050_J714S_CPU_COUNT - 1)) ? 0 : EFI_ACPI_6_3_GIC_ENABLED)
+
 #define T6050_NATIVE_GICC(LogicalUid, RawMpidr, Efficiency)                    \
   EFI_ACPI_6_3_GICC_STRUCTURE_INIT (                                           \
-    LogicalUid, LogicalUid, RawMpidr,                                          \
-    EFI_ACPI_6_3_GIC_ENABLED,                                                  \
+    ((RawMpidr) & 0x00ffffff) | (((UINT64)(RawMpidr) >> 8) & 0xff000000), \
+    LogicalUid, RawMpidr,                                                     \
+    T6050_NATIVE_GICC_FLAGS (LogicalUid),                                      \
     0,   /* PMU not exposed: Apple processor-local FIQ via native AIC */       \
     0,   /* GicBase: no GICv3 CPU interface */                                 \
     0,   /* GicVBase */                                                        \
@@ -83,8 +97,7 @@ J714_NATIVE_MADT  Madt = {
     T6050_J714S_CPU_LIST (T6050_NATIVE_GICC)
 #else
     //
-    // Single boot CPU: T6050 cpu0, MPIDR 0x80040000 (verified from the J714s
-    // ADT), matching the boot-agent single-CPU J714 MADT.
+    // Single boot CPU: T6050 cpu0, MPIDR 0x80000000 in this QEMU fixture.
     //
     T6050_NATIVE_GICC (0, T6050_J714S_BOOT_CPU_MPIDR, 0)
 #endif

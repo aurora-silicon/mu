@@ -660,6 +660,19 @@ SimpleFbDxeInitialize(
   mEdidActive.SizeOfEdid     = sizeof(mEdid);
   mEdidActive.Edid           = mEdid;
 
+#if J714_BGR_DIAGNOSTIC
+  // Explicit format-isolation diagnostic: retain the real 10-bit BLT renderer
+  // but advertise Windows' required BGR format. Direct Windows pixels will
+  // have incorrect colors until DCP's scanout is truly switched to BGRA.
+  // This changes no batching or concurrency and is never a default profile.
+  if (mNativeDepth == 30) {
+    mDisplay.Mode->Info->PixelFormat = PixelBlueGreenRedReserved8BitPerColor;
+    ZeroMem(&mDisplay.Mode->Info->PixelInformation,
+            sizeof(mDisplay.Mode->Info->PixelInformation));
+    DEBUG((DEBUG_ERROR, "SimpleFbDxe: BGR format diagnostic on 10-bit scanout; colors not corrected\n"));
+  }
+#endif
+
   /* Register handle */
   Status = gBS->InstallMultipleProtocolInterfaces(
       &hUEFIDisplayHandle, &gEfiDevicePathProtocolGuid, &mDisplayDevicePath,

@@ -37,6 +37,17 @@
 !ifndef J714_WINDOWS
   DEFINE J714_WINDOWS = FALSE
 !endif
+!ifndef J714_NATIVE_FIQ
+  DEFINE J714_NATIVE_FIQ = FALSE
+!endif
+!ifndef J714_BGR_DIAGNOSTIC
+  DEFINE J714_BGR_DIAGNOSTIC = FALSE
+!endif
+!if $(J714_BGR_DIAGNOSTIC) == TRUE
+  DEFINE J714_BGR_DIAGNOSTIC_VALUE = 1
+!else
+  DEFINE J714_BGR_DIAGNOSTIC_VALUE = 0
+!endif
 # WinPE needs a bank larger than the 512 MiB memalign bank AND a conventional
 # LOW guest-physical map so Windows bootmgr's fixed low-address allocations
 # (0x102000, image-reloc 0x10000000+) land in RAM. When J714_LARGE_BANK is TRUE,
@@ -47,6 +58,95 @@
 # SPTM_GUEST_BOOTARGS_OFF/SPTM_GUEST_ADT_OFF and the FD IPA. Run x1n1 with a big
 # --ram-size (<=1.5 GiB, below the 0x60000000 UART/IO window), the image loaded
 # at host PA 0x10081000000, and dispatched at guest FD IPA 0x1000000.
+!ifndef J714_HARDWARE
+  DEFINE J714_HARDWARE = FALSE
+!endif
+# Opt-in debug profile: publish the last CPU's GICC entry disabled so Windows
+# never starts it; x1n1 keeps that core in host context as a debug monitor.
+!ifndef J714_SMC
+  DEFINE J714_SMC = FALSE
+!endif
+!if $(J714_SMC) == TRUE
+  DEFINE J714_SMC_VALUE = 1
+!else
+  DEFINE J714_SMC_VALUE = 0
+!endif
+!ifndef J714_FULL_RAM
+  DEFINE J714_FULL_RAM = FALSE
+!endif
+!if $(J714_FULL_RAM) == TRUE
+  DEFINE J714_FULL_RAM_VALUE = 1
+!else
+  DEFINE J714_FULL_RAM_VALUE = 0
+!endif
+!ifndef J714_KBL
+  DEFINE J714_KBL = FALSE
+!endif
+!ifndef J714_UEFI_KBL
+  DEFINE J714_UEFI_KBL = FALSE
+!endif
+!ifndef J714_UEFI_ANS
+  DEFINE J714_UEFI_ANS = FALSE
+!endif
+!if $(J714_KBL) == TRUE
+  DEFINE J714_KBL_VALUE = 1
+!else
+  DEFINE J714_KBL_VALUE = 0
+!endif
+!ifndef J714_N1
+  DEFINE J714_N1 = FALSE
+!endif
+!if $(J714_N1) == TRUE
+  DEFINE J714_N1_VALUE = 1
+!else
+  DEFINE J714_N1_VALUE = 0
+!endif
+!ifndef J714_USB_HOSTS
+  DEFINE J714_USB_HOSTS = FALSE
+!endif
+!if $(J714_USB_HOSTS) == TRUE
+  DEFINE J714_USB_HOSTS_VALUE = 1
+!else
+  DEFINE J714_USB_HOSTS_VALUE = 0
+!endif
+!ifndef J714_USB3
+  DEFINE J714_USB3 = FALSE
+!endif
+!if $(J714_USB3) == TRUE
+  DEFINE J714_USB3_VALUE = 1
+!else
+  DEFINE J714_USB3_VALUE = 0
+!endif
+!ifndef J714_USB_INSTALLER
+  DEFINE J714_USB_INSTALLER = FALSE
+!endif
+!if $(J714_USB_INSTALLER) == TRUE
+  DEFINE J714_USB_INSTALLER_VALUE = 1
+!else
+  DEFINE J714_USB_INSTALLER_VALUE = 0
+!endif
+!ifndef J714_NVME
+  DEFINE J714_NVME = FALSE
+!endif
+!if $(J714_NVME) == TRUE
+  DEFINE J714_NVME_VALUE = 1
+!else
+  DEFINE J714_NVME_VALUE = 0
+!endif
+!ifndef J714_MONITOR_CPU
+  DEFINE J714_MONITOR_CPU = FALSE
+!endif
+!if $(J714_MONITOR_CPU) == TRUE
+  DEFINE J714_MONITOR_CPU_VALUE = 1
+!else
+  DEFINE J714_MONITOR_CPU_VALUE = 0
+!endif
+!if $(J714_HARDWARE) == TRUE
+  DEFINE J714_HARDWARE_VALUE = 1
+!else
+  DEFINE J714_HARDWARE_VALUE = 0
+!endif
+
 !ifndef J714_LARGE_BANK
   DEFINE J714_LARGE_BANK = FALSE
 !endif
@@ -67,8 +167,12 @@
   # NTASI_J813_PMCCNTR_EMULATION preserves the full-width EL1 stack for PMU faults
   # (existing ArmExceptionLib option). J873_WINDOWS turns on the shared Windows
   # behaviors described above.
-  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=6050 -DJ714_WINDOWS=1 -DJ873_WINDOWS=1 -DNTASI_J813_PMCCNTR_EMULATION=1
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=6050 -DJ714_WINDOWS=1 -DJ714_HARDWARE=$(J714_HARDWARE_VALUE) -DJ873_WINDOWS=1 -DNTASI_J813_PMCCNTR_EMULATION=1 -DJ714_BGR_DIAGNOSTIC=$(J714_BGR_DIAGNOSTIC_VALUE) -DJ714_USB3=$(J714_USB3_VALUE) -DJ714_USB_HOSTS=$(J714_USB_HOSTS_VALUE) -DJ714_KBL=$(J714_KBL_VALUE) -DJ714_N1=$(J714_N1_VALUE) -DJ714_FULL_RAM=$(J714_FULL_RAM_VALUE) -DJ714_USB_INSTALLER=$(J714_USB_INSTALLER_VALUE)
   GCC:*_*_AARCH64_PP_FLAGS = -DNTASI_J813_PMCCNTR_EMULATION=1
+  # .aslc uses ASLCC, independently of the DXE driver's CC flags. Both
+  # consumers must select the same hardware/QEMU CPU-affinity table.
+  GCC:*_*_AARCH64_ASLCC_FLAGS = -DJ714_HARDWARE=$(J714_HARDWARE_VALUE) -DT6050_J714S_RESERVE_LAST_CPU=$(J714_MONITOR_CPU_VALUE) -DJ714_NVME=$(J714_NVME_VALUE) -DJ714_SMC=$(J714_SMC_VALUE) -DJ714_USB3=$(J714_USB3_VALUE) -DJ714_USB_HOSTS=$(J714_USB_HOSTS_VALUE) -DJ714_KBL=$(J714_KBL_VALUE) -DJ714_N1=$(J714_N1_VALUE)
+  GCC:*_*_AARCH64_ASLPP_FLAGS = -DJ714_NVME=$(J714_NVME_VALUE) -DJ714_SMC=$(J714_SMC_VALUE) -DJ714_USB3=$(J714_USB3_VALUE) -DJ714_USB_HOSTS=$(J714_USB_HOSTS_VALUE) -DJ714_KBL=$(J714_KBL_VALUE) -DJ714_N1=$(J714_N1_VALUE)
 !endif
 
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc
@@ -112,8 +216,29 @@
   gEfiMdeModulePkgTokenSpaceGuid.PcdConOutColumn|0
 
 [Components.common]
+!if $(J714_UEFI_ANS) == TRUE
+  MacBookProM5Pkg/Drivers/J714AnsDxe/J714AnsDxe.inf
+!endif
+!if $(J714_UEFI_KBL) == TRUE
+  MacBookProM5Pkg/Drivers/J714KeyboardBacklightDxe/J714KeyboardBacklightDxe.inf
+!endif
   MacBookProM5Pkg/Applications/J714BootProbe/J714BootProbe.inf
 !if $(J714_WINDOWS) == TRUE
+!if $(J714_N1) == TRUE
+  MacBookProM5Pkg/AcpiTables/J714N1AcpiTables.inf
+!else
   MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf
+!endif
   MacBookProM5Pkg/Drivers/J714AcpiDxe/J714AcpiDxe.inf
+!if $(J714_NATIVE_FIQ) == TRUE
+  MacBookProM5Pkg/Drivers/J714NativeFiqDxe/J714NativeFiqDxe.inf
+!endif
+!endif
+
+!if $(J714_USB3) == TRUE
+  MacBookProM5Pkg/Drivers/J714Usb3Dxe/J714Usb3Dxe.inf
+  MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceDxe.inf
+  MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
+  MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBusDxe.inf
+  MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
 !endif

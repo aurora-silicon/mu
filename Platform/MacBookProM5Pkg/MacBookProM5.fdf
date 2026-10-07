@@ -88,6 +88,10 @@ FvNameGuid         = ecd176ad-0915-40ca-a8de-5271171345be
 
   INF EmbeddedPkg/Drivers/VirtualKeyboardDxe/VirtualKeyboardDxe.inf
 
+!if $(J714_UEFI_KBL) == TRUE
+  INF MacBookProM5Pkg/Drivers/J714KeyboardBacklightDxe/J714KeyboardBacklightDxe.inf
+!endif
+
   INF MdeModulePkg/Universal/FvSimpleFileSystemDxe/FvSimpleFileSystemDxe.inf
 
 !if $(MTP_HID_BUILD) == TRUE
@@ -96,7 +100,18 @@ FvNameGuid         = ecd176ad-0915-40ca-a8de-5271171345be
   INF  MsCorePkg/Universal/StatusCodeHandler/Serial/Dxe/SerialStatusCodeHandlerDxe.inf
   INF  MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.inf
 
+!if $(J714_USB3) == TRUE
+  INF MacBookProM5Pkg/Drivers/J714Usb3Dxe/J714Usb3Dxe.inf
+  INF MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceDxe.inf
+  INF MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
+  INF MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBusDxe.inf
+  INF MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
+!endif
+
   INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
+!if $(J714_UEFI_ANS) == TRUE
+  INF MacBookProM5Pkg/Drivers/J714AnsDxe/J714AnsDxe.inf
+!endif
   INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
   INF FatPkg/EnhancedFatDxe/Fat.inf
   INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
@@ -108,7 +123,14 @@ FvNameGuid         = ecd176ad-0915-40ca-a8de-5271171345be
   INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
 !if $(J714_WINDOWS) == TRUE
   INF MacBookProM5Pkg/Drivers/J714AcpiDxe/J714AcpiDxe.inf
+!if $(J714_NATIVE_FIQ) == TRUE
+  INF MacBookProM5Pkg/Drivers/J714NativeFiqDxe/J714NativeFiqDxe.inf
+!endif
+!if $(J714_N1) == TRUE
+  INF RuleOverride=ACPITABLE MacBookProM5Pkg/AcpiTables/J714N1AcpiTables.inf
+!else
   INF RuleOverride=ACPITABLE MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf
+!endif
 !endif
   INF MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
   INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf
