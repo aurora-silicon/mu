@@ -90,6 +90,22 @@
 !ifndef J714_KBL
   DEFINE J714_KBL = FALSE
 !endif
+!ifndef J714_UEFI_MTP
+  DEFINE J714_UEFI_MTP = FALSE
+!endif
+!if $(J714_UEFI_MTP) == TRUE
+  DEFINE J714_UEFI_MTP_VALUE = 1
+!else
+  DEFINE J714_UEFI_MTP_VALUE = 0
+!endif
+!ifndef J714_UEFI_MENU
+  DEFINE J714_UEFI_MENU = FALSE
+!endif
+!if $(J714_UEFI_MENU) == TRUE
+  DEFINE J714_UEFI_MENU_VALUE = 1
+!else
+  DEFINE J714_UEFI_MENU_VALUE = 0
+!endif
 !ifndef J714_UEFI_KBL
   DEFINE J714_UEFI_KBL = FALSE
 !endif
@@ -175,7 +191,7 @@
   # NTASI_J813_PMCCNTR_EMULATION preserves the full-width EL1 stack for PMU faults
   # (existing ArmExceptionLib option). J873_WINDOWS turns on the shared Windows
   # behaviors described above.
-  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=6050 -DJ714_WINDOWS=1 -DJ714_HARDWARE=$(J714_HARDWARE_VALUE) -DJ873_WINDOWS=1 -DNTASI_J813_PMCCNTR_EMULATION=1 -DJ714_BGR_DIAGNOSTIC=$(J714_BGR_DIAGNOSTIC_VALUE) -DJ714_USB3=$(J714_USB3_VALUE) -DJ714_USB_HOSTS=$(J714_USB_HOSTS_VALUE) -DJ714_KBL=$(J714_KBL_VALUE) -DJ714_N1=$(J714_N1_VALUE) -DJ714_FULL_RAM=$(J714_FULL_RAM_VALUE) -DJ714_USB_INSTALLER=$(J714_USB_INSTALLER_VALUE)
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=6050 -DJ714_WINDOWS=1 -DJ714_HARDWARE=$(J714_HARDWARE_VALUE) -DJ873_WINDOWS=1 -DNTASI_J813_PMCCNTR_EMULATION=1 -DJ714_BGR_DIAGNOSTIC=$(J714_BGR_DIAGNOSTIC_VALUE) -DJ714_USB3=$(J714_USB3_VALUE) -DJ714_USB_HOSTS=$(J714_USB_HOSTS_VALUE) -DJ714_KBL=$(J714_KBL_VALUE) -DJ714_N1=$(J714_N1_VALUE) -DJ714_FULL_RAM=$(J714_FULL_RAM_VALUE) -DJ714_USB_INSTALLER=$(J714_USB_INSTALLER_VALUE) -DJ714_UEFI_MENU=$(J714_UEFI_MENU_VALUE) -DJ714_UEFI_MTP=$(J714_UEFI_MTP_VALUE)
   GCC:*_*_AARCH64_PP_FLAGS = -DNTASI_J813_PMCCNTR_EMULATION=1
   # .aslc uses ASLCC, independently of the DXE driver's CC flags. Both
   # consumers must select the same hardware/QEMU CPU-affinity table.
@@ -188,11 +204,16 @@
 !include T6050FamilyPkg/T6050FamilyPkg.dsc.inc
 
 [LibraryClasses.common]
+  J714MtpKeyboardLib|MacBookProM5Pkg/Drivers/J714MtpKeyboardDxe/J714MtpKeyboardLib.inf
   AcpiLib|EmbeddedPkg/Library/AcpiLib/AcpiLib.inf
 
 [PcdsFixedAtBuild.common]
+!if $(J714_UEFI_MENU) == TRUE
+  gEfiMdeModulePkgTokenSpaceGuid.PcdBootManagerMenuFile|{ 0x6b, 0x41, 0x47, 0x3f, 0x40, 0x71, 0xb0, 0x4b, 0xa0, 0x3c, 0x56, 0x41, 0x35, 0x21, 0x00, 0x01 }
+!else
   # Enter the built-in shell without depending on the graphical settings UI.
   gEfiMdeModulePkgTokenSpaceGuid.PcdBootManagerMenuFile|{ 0x83, 0xA5, 0x04, 0x7C, 0x3E, 0x9E, 0x1C, 0x4F, 0xAD, 0x65, 0xE0, 0x52, 0x68, 0xD0, 0xB4, 0xD1 }
+!endif
   gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"MacBook Pro (M5 Pro, 2026)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"Mac17,1"
@@ -231,6 +252,9 @@
   MacBookProM5Pkg/Drivers/J714KeyboardBacklightDxe/J714KeyboardBacklightDxe.inf
 !endif
   MacBookProM5Pkg/Applications/J714BootProbe/J714BootProbe.inf
+!if $(J714_UEFI_MENU) == TRUE
+  MacBookProM5Pkg/Applications/J714BootMenu/J714BootMenu.inf
+!endif
 !if $(J714_WINDOWS) == TRUE
 !if $(J714_N1) == TRUE
   MacBookProM5Pkg/AcpiTables/J714N1AcpiTables.inf

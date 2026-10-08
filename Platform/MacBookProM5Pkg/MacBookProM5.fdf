@@ -106,6 +106,10 @@ FvNameGuid         = ecd176ad-0915-40ca-a8de-5271171345be
   INF MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
   INF MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBusDxe.inf
   INF MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
+!if $(J714_UEFI_MENU) == TRUE
+  INF MdeModulePkg/Bus/Usb/UsbKbDxe/UsbKbDxe.inf
+  INF HidPkg/HidKeyboardDxe/HidKeyboardDxe.inf
+!endif
 !endif
 
   INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
@@ -142,6 +146,9 @@ FvNameGuid         = ecd176ad-0915-40ca-a8de-5271171345be
 
   INF ShellPkg/Application/Shell/Shell.inf
   INF MacBookProM5Pkg/Applications/J714BootProbe/J714BootProbe.inf
+!if $(J714_UEFI_MENU) == TRUE
+  INF MacBookProM5Pkg/Applications/J714BootMenu/J714BootMenu.inf
+!endif
 !ifdef $(INCLUDE_TFTP_COMMAND)
   INF ShellPkg/DynamicCommand/TftpDynamicCommand/TftpDynamicCommand.inf
 !endif #$(INCLUDE_TFTP_COMMAND)

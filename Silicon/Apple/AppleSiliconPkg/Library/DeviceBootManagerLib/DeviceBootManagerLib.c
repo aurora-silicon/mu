@@ -1174,7 +1174,16 @@ DeviceBootManagerPriorityBoot (
     Status = MsBootOptionsLibGetBootManagerMenu (BootOption, "VOL+");
     SetRebootReason (OEM_REBOOT_TO_SETUP_KEY);
   } else {
-#if defined (J714_USB_INSTALLER) && J714_USB_INSTALLER
+#if defined (J714_UEFI_MENU) && J714_UEFI_MENU
+    STATIC BOOLEAN MenuAttempted;
+    UINT16 Next;
+    UINTN NextSize = sizeof (Next);
+    // BDS has cached BootNext but has not deleted it at this point.
+    Status = gRT->GetVariable (L"BootNext", &gEfiGlobalVariableGuid, NULL, &NextSize, &Next);
+    if (MenuAttempted || (!EFI_ERROR (Status) && NextSize == sizeof (Next))) return EFI_NOT_FOUND;
+    MenuAttempted = TRUE;
+    Status = MsBootOptionsLibGetBootManagerMenu (BootOption, "AUTO");
+#elif defined (J714_USB_INSTALLER) && J714_USB_INSTALLER
     Status = J714UsbInstallerPriorityBoot (BootOption);
 #else
     Status = EFI_NOT_FOUND;

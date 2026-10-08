@@ -3,6 +3,8 @@
  * USB2, granted the 20 alias windows, mapped private guest DMA with native
  * SPTM DART, and prepared the PHY. No host/USB0 DART access from Mu. */
 #include <Uefi.h>
+#include <Protocol/FirmwareVolume2.h>
+#include <Library/DevicePathLib.h>
 #include <Library/UefiDriverEntryPoint.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
@@ -168,23 +170,48 @@ STATIC EFI_STATUS SetFirmwareTimer(BOOLEAN enable)
   }
   return EFI_SUCCESS;
 }
+STATIC BOOLEAN IsFirmwareMenu(EFI_LOADED_IMAGE_PROTOCOL *loaded)
+{
+  STATIC CONST EFI_GUID menu = {0x3f47416b, 0x7140, 0x4bb0,
+    {0xa0,0x3c,0x56,0x41,0x35,0x21,0x00,0x01}};
+  EFI_DEVICE_PATH_PROTOCOL *node = loaded->FilePath;
+  EFI_FIRMWARE_VOLUME2_PROTOCOL *fv;
+  // Only this built-in, FIQ-capable Mu application keeps the timer. An
+  // arbitrary disk application must retain the protected Windows boundary.
+  if (node == NULL || EFI_ERROR(gBS->HandleProtocol(loaded->DeviceHandle,
+      &gEfiFirmwareVolume2ProtocolGuid, (VOID **)&fv))) return FALSE;
+  if (DevicePathType(node) != MEDIA_DEVICE_PATH ||
+      DevicePathSubType(node) != MEDIA_PIWG_FW_FILE_DP ||
+      DevicePathNodeLength(node) != sizeof(MEDIA_FW_VOL_FILEPATH_DEVICE_PATH) ||
+      !IsDevicePathEnd(NextDevicePathNode(node))) return FALSE;
+  return CompareGuid(&((MEDIA_FW_VOL_FILEPATH_DEVICE_PATH *)node)->FvFileName, &menu);
+}
 STATIC EFI_STATUS EFIAPI StartImage(EFI_HANDLE image, UINTN *size, CHAR16 **data)
 {
   EFI_LOADED_IMAGE_PROTOCOL *loaded = NULL;
-  BOOLEAN restore = FALSE;
+  BOOLEAN restore = FALSE, menuActivated = FALSE;
   EFI_STATUS s;
-  if (mTimerPhaseActive &&
-      !EFI_ERROR(gBS->HandleProtocol(image, &gEfiLoadedImageProtocolGuid, (VOID **)&loaded)) &&
-      loaded->ImageCodeType == EfiLoaderCode) {
-    s = SetFirmwareTimer(FALSE);
-    if (EFI_ERROR(s)) return s; /* Never enter an application with FMO released. */
-    restore = TRUE;
+  if (!EFI_ERROR(gBS->HandleProtocol(image, &gEfiLoadedImageProtocolGuid, (VOID **)&loaded))) {
+    if (IsFirmwareMenu(loaded)) {
+      // The menu needs events even when no host USB controller was prepared.
+      if (!mTimerPhaseActive) {
+        s = SetFirmwareTimer(TRUE);
+        if (EFI_ERROR(s)) return s;
+        menuActivated = TRUE;
+      }
+    } else if (mTimerPhaseActive && loaded->ImageCodeType == EfiLoaderCode) {
+      s = SetFirmwareTimer(FALSE);
+      if (EFI_ERROR(s)) return s; /* Never enter Windows with FMO released. */
+      restore = TRUE;
+    }
   }
   s = mStartImage(image, size, data);
-  if (restore) {
-    EFI_STATUS timerStatus = SetFirmwareTimer(TRUE);
-    if (EFI_ERROR(timerStatus))
+  if (restore || menuActivated) {
+    EFI_STATUS timerStatus = SetFirmwareTimer(restore);
+    if (EFI_ERROR(timerStatus)) {
       DEBUG((DEBUG_ERROR, "J714_MU_TIMER_RETURN_FAILED: %r\n", timerStatus));
+      return timerStatus;
+    }
   }
   return s;
 }

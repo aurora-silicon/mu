@@ -15,6 +15,7 @@
   EmbeddedPkg/EmbeddedPkg.dec
   AppleSiliconPkg/AppleSiliconPkg.dec
 [LibraryClasses]
+  DevicePathLib
   UefiDriverEntryPoint
   UefiBootServicesTableLib
   UefiLib
@@ -28,6 +29,7 @@
 [Guids]
   gEfiEndOfDxeEventGroupGuid
 [Protocols]
+  gEfiFirmwareVolume2ProtocolGuid
   gEfiLoadedImageProtocolGuid
   gEfiTimerArchProtocolGuid
 [Depex]

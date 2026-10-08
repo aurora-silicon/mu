@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = J714MtpKeyboardLib
+  FILE_GUID = 3f47416b-7140-4bb0-a03c-564135210002
+  MODULE_TYPE = BASE
+  LIBRARY_CLASS = J714MtpKeyboardLib|UEFI_APPLICATION
+[Sources]
+  J714MtpKeyboard.c
+  Shared/AppleMtpBootKeyboardCore.c
+  Shared/AppleDockChannel.c
+  Shared/AppleMtpProtocol.c
+  Shared/AppleMtpStream.c
+  Shared/AppleMtpBootstrap.c
+  Shared/AppleMtpHid.c
+  Shared/AppleAscCore.c
+  Shared/AppleRtkitCore.c
+  Shared/AppleRtkitRuntimeCoreM5.c
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  HidPkg/HidPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+[LibraryClasses]
+  ArmLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  IoLib
+  MemoryAllocationLib
+  TimerLib
+  UefiBootManagerLib
+  UefiBootServicesTableLib
+[Protocols]
+  gEfiCpuArchProtocolGuid
+  gHidKeyboardProtocolGuid
+  gEfiDevicePathProtocolGuid
