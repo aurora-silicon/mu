@@ -4,6 +4,33 @@ DefinitionBlock ("", "DSDT", 2, "AURORA", "J714WIN", 1)
 {
     Scope (\_SB)
     {
+#if J714_DCP
+        // Native T6050 mapping handoff, distinct from J414's direct DART
+        // resources. The host publishes this ABI only after every shared
+        // CPU grant is installed. No raw firmware PA is a guest resource.
+        // The separate transport alias avoids ANS/N1 resource ownership.
+        OperationRegion (DCRD, SystemMemory, 0x61F08090, 8)
+        Field (DCRD, QWordAcc, NoLock, Preserve) { DABI, 64 }
+        Device (DCP0)
+        {
+            Name (_HID, "NTAS3070")
+            Name (_UID, Zero)
+            Name (_CCA, One)
+            Method (_STA, 0, NotSerialized)
+            {
+                If (LEqual (DABI, 0x4443505700000001)) { Return (0x0F) }
+                Return (Zero)
+            }
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x6E000000, 0x4000) // ASC
+                Memory32Fixed (ReadWrite, 0x6E008000, 0x4000) // mailbox
+                Memory32Fixed (ReadWrite, 0x6E010000, 0x4000) // VBAR
+                Memory32Fixed (ReadWrite, 0x6E020000, 0x4000) // PMC
+                Memory32Fixed (ReadWrite, 0x61F08000, 0x4000) // SPTM queries
+            })
+        }
+#endif
 #if J714_N1
         // Persistent owner for N1 firmware/DART storage across PCI personality
         // replacement. It owns this alias independently from ANS and PCI BARs.

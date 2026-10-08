@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "utc": "2026-10-08T05:11:55.918896+00:00",
+  "scope": "M5 native shared CPU grants and Mu readiness resource handoff through Windows ACPI enumeration. Windows display miniport/provider was not installed in this run.",
+  "run": "/home/dj/Work/windows-native-20261005/runs/windows-dcp-retained-v9-sparse-fix",
+  "window": {
+    "terminal": true,
+    "probe_exit": 0,
+    "recovery_verified": true,
+    "n1_verified": true,
+    "stage_package_sha256": "1a76681d9ee1c4bb4e95dccb61fa35e79742df7f0caa459cf90dea7143987d7f",
+    "stage_elf_sha256": "eefced5204ce86a51a755427fdc81d003c65f99b7dd85970451ac03ce190b426",
+    "utc": "2026-10-08T04:15:03.347575+00:00",
+    "wrapper_pid": 2231102,
+    "probe_pid": 2231104,
+    "ports_free": true,
+    "elapsed_seconds": 180.61163941999257
+  },
+  "mu_fd_sha256": "2b79875a235ba7e38f757470ad547b7972d34730ba347f80d92fcf7c37b9d88d",
+  "full_ram_banks": 13,
+  "bgra_depth": 32,
+  "dcp_grant_count": 4,
+  "dcp_grant_bytes": 92094464,
+  "windows_version": "10.0.26100.1",
+  "device": "ACPI\\NTAS3070\\0",
+  "device_problem": 28,
+  "device_problem_reason": "No matching driver in existing WinPE image; enumeration only.",
+  "root_cause": "v8 exhausted the fixed16-slot sparse guest L3 tracker at IPA0x104000000; DCP install state4/error0x203.",
+  "fix": "2048-bit bitmap covers every32MiB span in supported64GiB aperture, O(1) lookup, no reduction in RAM or device concurrency.",
+  "tests": [
+    "Actual mapper all2048slots with non-monotonic traversal/reuse",
+    "Allocation/retype/map-table/map-page failures and address bounds",
+    "ASan/UBSan native cross-stack handoff",
+    "Clang display host suite",
+    "ARM64 kernel compile/link and safety gate",
+    "Mu ASL compile; option-off AML equals pre-change AML"
+  ],
+  "limitations": [
+    "No guest buffer content access test",
+    "No live DCP session takeover",
+    "No long-duration RAM stress or device regression claim"
+  ],
+  "receipts": {
+    "window.json": "b34ff78c8f45d63ed3f301afecd3d097f314af3ff495d5f0046208b8a01128e5",
+    "recovery.json": "b275a52dc19d54fe70e0e7c6524f27b01fa42a0160b8630a848d52ecc1f16f68",
+    "n1-held-reset.json": "947e4082b44fa5fe2cc673dce030b8add27ed005bba19194db7990943fe34743",
+    "boot/console.log": "f9f627af063b0af5336a37c2f31fe5cc39e24dfabee586b5311c170e1c738b79",
+    "boot/cdc1.log": "88d1028eed7f202cd95ecf8a48f5e6c9dcca71bf42f51de95f9bdc4a67d332ed"
+  },
+  "guest_abi": {
+    "ready_magic_offset": "0x90",
+    "ready_magic": "0x4443505700000001",
+    "profile": "0x6050",
+    "transport_alias": "0x61f08000",
+    "grant_table_offset": "0x2000",
+    "grant_record": [
+      "ipa",
+      "size",
+      "pte",
+      "reserved_zero"
+    ],
+    "cpu_mmio": [
+      "0x6e000000",
+      "0x6e008000",
+      "0x6e010000",
+      "0x6e020000"
+    ]
+  }
+}
