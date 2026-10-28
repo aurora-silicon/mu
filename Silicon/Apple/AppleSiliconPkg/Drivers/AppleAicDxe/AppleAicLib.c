@@ -32,7 +32,8 @@ VOID EFIAPI AppleAicV3SetDynamicOffsets(IN UINT32 Cap0Offset, IN UINT32 MaxNumIr
     mAicV3MaxNumIrqOffset = MaxNumIrqOffset;
 }
 
-// AIC3 relocates the capability registers; derive them from the live ADT.
+// An AICv3 register offset from the live ADT, or Fallback when the property
+// is absent or not one 32-bit word.
 UINT32 EFIAPI AppleAicCapabilityOffset (IN CONST CHAR8 *Name, IN UINT32 Fallback)
 {
     UINTN Size = 0;
@@ -115,7 +116,7 @@ UINT32 EFIAPI AppleAicGetNumInterrupts(
     UINT32 NumIrqs;
     if(mAicVersion == APPLE_AIC_VERSION_2)
     {
-        NumIrqs = MmioRead32(AicBase + AppleAicCapabilityOffset ("cap0-offset", AIC_V2_INFO_REG1)) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
+        NumIrqs = MmioRead32(AicBase + AIC_V2_INFO_REG1) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
     }
     else if (mAicVersion == APPLE_AIC_VERSION_1)
     {
@@ -145,7 +146,7 @@ UINT32 EFIAPI AppleAicGetMaxInterrupts(
     UINT32 MaxIrqs;
     if(mAicVersion == APPLE_AIC_VERSION_2)
     {
-        MaxIrqs = MmioRead32(AicBase + AppleAicCapabilityOffset ("maxnumirq-offset", AIC_V2_INFO_REG3)) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
+        MaxIrqs = MmioRead32(AicBase + AIC_V2_INFO_REG3) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
     }
     else if (mAicVersion == APPLE_AIC_VERSION_1)
     {

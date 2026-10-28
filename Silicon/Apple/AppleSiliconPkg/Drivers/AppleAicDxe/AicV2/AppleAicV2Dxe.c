@@ -276,13 +276,11 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     UINT32 V3Cap0Offset      = AIC_V2_INFO_REG1;
     UINT32 V3MaxNumIrqOffset = AIC_V2_INFO_REG3;
     if (mAicVersion == APPLE_AIC_VERSION_3) {
-        // AppleDTLib treats an absent property as a contract violation even
-        // when a caller supplies a fallback. Never ask an AICv1/v2 ADT for
-        // AICv3-only fields: J414s is AICv2 and intentionally has neither.
-        V3Cap0Offset = (UINT32)dt_node_u32(
-            InterruptControllerNode, "cap0-offset", AIC_V2_INFO_REG1);
-        V3MaxNumIrqOffset = (UINT32)dt_node_u32(
-            InterruptControllerNode, "maxnumirq-offset", AIC_V2_INFO_REG3);
+        // dt_node_u32()'s last argument is an array index, not a fallback.
+        // Never ask an AICv1/v2 ADT for AICv3-only fields: J414s is AICv2 and
+        // intentionally has neither.
+        V3Cap0Offset = AppleAicCapabilityOffset ("cap0-offset", AIC_V2_INFO_REG1);
+        V3MaxNumIrqOffset = AppleAicCapabilityOffset ("maxnumirq-offset", AIC_V2_INFO_REG3);
         AppleAicV3SetDynamicOffsets(V3Cap0Offset, V3MaxNumIrqOffset);
     }
 
@@ -296,8 +294,8 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         AicInfoStruct->NumCpuDies = 1;
     }
     else if(mAicVersion == APPLE_AIC_VERSION_2){
-        AicInfoStruct->MaxCpuDies = FIELD_GET(AIC_V2_INFO_REG3_MAX_DIE_COUNT_BITFIELD, MmioRead32(AicV2Base + AppleAicCapabilityOffset ("maxnumirq-offset", AIC_V2_INFO_REG3)));
-        AicInfoStruct->NumCpuDies = (FIELD_GET(AIC_V2_INFO_REG1_LAST_CPU_DIE_BITFIELD, MmioRead32(AicV2Base + AppleAicCapabilityOffset ("cap0-offset", AIC_V2_INFO_REG1)))) + 1;
+        AicInfoStruct->MaxCpuDies = FIELD_GET(AIC_V2_INFO_REG3_MAX_DIE_COUNT_BITFIELD, MmioRead32(AicV2Base + AIC_V2_INFO_REG3));
+        AicInfoStruct->NumCpuDies = (FIELD_GET(AIC_V2_INFO_REG1_LAST_CPU_DIE_BITFIELD, MmioRead32(AicV2Base + AIC_V2_INFO_REG1))) + 1;
     }
     else if(mAicVersion == APPLE_AIC_VERSION_3){
         // AICv3 shares the AICv2 INFO1/INFO3 die bitfields, read at the
@@ -387,7 +385,7 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         // extint-baseaddress). Its event register is a separate page named by
         // aic-iack-offset, exactly as on AICv2.
         StartOffset = mAicV2IrqCfgOffset =
-            (UINT64)dt_node_u32(InterruptControllerNode, "extint-baseaddress", AIC_V3_IRQ_CFG_REG);
+            AppleAicCapabilityOffset ("extint-baseaddress", AIC_V3_IRQ_CFG_REG);
         mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
     }
 
