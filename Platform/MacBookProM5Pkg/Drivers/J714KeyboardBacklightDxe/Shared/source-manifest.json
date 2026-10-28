@@ -1,0 +1,22 @@
+[
+  {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleKbdBacklight/AppleKbdBacklightCore.c",
+    "destination": "Shared/AppleKbdBacklightCore.c",
+    "sha256": "379f122fde4cb8e9d461b2d56680afc6a98d3221daf08cdbea99c7226f6eb377"
+  },
+  {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleKbdBacklight/AppleKbdBacklightCore.h",
+    "destination": "Shared/AppleKbdBacklightCore.h",
+    "sha256": "6f33b4f448d06b80f54b7950520bed395303d8b1b3c1842fba1fd87e8d9eebfd"
+  },
+  {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/ApplePmgr/ApplePmgrCore.c",
+    "destination": "Shared/ApplePmgrCore.c",
+    "sha256": "4c84cae4efbc884d86078b1409fa295ef5b52aecc7fbc177f89672a75b82f0d1"
+  },
+  {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/ApplePmgr/ApplePmgrCore.h",
+    "destination": "Shared/ApplePmgrCore.h",
+    "sha256": "ffb71302e12384c1d8f59b1e3f7fdcf7d325cf27a73cfb25dc5945ad2a82d3e9"
+  }
+]

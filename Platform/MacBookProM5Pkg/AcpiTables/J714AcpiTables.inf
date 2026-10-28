@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J714AcpiTables
+  FILE_GUID = fd77145d-448f-4a8d-b733-61267a97ba39
+  MODULE_TYPE = USER_DEFINED
+  VERSION_STRING = 1.0
+[Sources]
+  DSDT.asl
+  FADT.aslc
+  GTDT.aslc
+  # MADT.aslc (GICv3) removed: replaced by the native GIC-free MADT below so
+  # Windows does not instantiate a GICv3 shell. These native tables live in the
+  # SAME FFS (this INF's FILE_GUID) because J714AcpiDxe installs ONLY this GUID
+  # via LocateAndInstallAcpiFromFv; mu/ has no generic AcpiPlatformDxe, so a
+  # separate INF FFS would never be installed. (Reconcile note: the mu-acpi
+  # feat/native-aic-acpi branch used a standalone J714NativeAcpiTables.inf that
+  # relied on an auto-installer absent here.)
+  MADT_NativeAic.aslc
+  CSRT.aslc
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+[FixedPcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemRevision
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorRevision
+  gArmTokenSpaceGuid.PcdGicDistributorBase
+  gArmTokenSpaceGuid.PcdGicRedistributorsBase

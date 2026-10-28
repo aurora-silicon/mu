@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J714NativeFiqDxe
+  FILE_GUID = e3f0a4a1-bd6f-4c3a-8021-49e7b06a9e85
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J714NativeFiqEntry
+[Sources]
+  J714NativeFiqDxe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  MemoryAllocationLib
+  CacheMaintenanceLib
+  BaseMemoryLib
+  DebugLib
+[Guids]
+  gEfiEventExitBootServicesGuid
+[Depex]
+  TRUE

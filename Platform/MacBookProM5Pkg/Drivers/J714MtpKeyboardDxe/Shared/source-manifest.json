@@ -1,0 +1,91 @@
+{
+  "repository": "https://github.com/aurora-silicon/AuroraSilicon",
+  "commit": "64dbe33ed16b4351d88dd78e1b68a00b2773de97",
+  "changes": "Only local include paths in AppleRtkitRuntimeCoreM5.h; EDK compatibility headers are outside Shared. Firmware bytes are not included.",
+  "files": [
+    {
+      "file": "AppleAscCore.c",
+      "source": "drivers/AppleRtkit/AppleAscCore.c",
+      "source_sha256": "61d936b24177cc36f490eb59cf7d688dce3ede7e410c405edd5d8e26513fdc15",
+      "sha256": "61d936b24177cc36f490eb59cf7d688dce3ede7e410c405edd5d8e26513fdc15"
+    },
+    {
+      "file": "AppleAscCore.h",
+      "source": "drivers/AppleRtkit/AppleAscCore.h",
+      "source_sha256": "ff2c82e1164f38286a7023c9edf8dfa653158dd143ede698a12dce2101241625",
+      "sha256": "ff2c82e1164f38286a7023c9edf8dfa653158dd143ede698a12dce2101241625"
+    },
+    {
+      "file": "AppleDockChannel.c",
+      "source": "drivers/AppleMtpHid/AppleDockChannel.c",
+      "source_sha256": "701f65e19ba89753a705ece43ead902910108b196f84d9fa9aa8facf1b536160",
+      "sha256": "701f65e19ba89753a705ece43ead902910108b196f84d9fa9aa8facf1b536160"
+    },
+    {
+      "file": "AppleDockChannel.h",
+      "source": "drivers/AppleMtpHid/AppleDockChannel.h",
+      "source_sha256": "0ace116b9dc6b3c52e5882769d8d6125a21bfdc6f9e7c99802ebd16c21560a99",
+      "sha256": "0ace116b9dc6b3c52e5882769d8d6125a21bfdc6f9e7c99802ebd16c21560a99"
+    },
+    {
+      "file": "AppleMtpHid.c",
+      "source": "drivers/AppleMtpHid/AppleMtpHid.c",
+      "source_sha256": "0c985d691f4c1d616891e2a8d19bf1278d3b56263431014fe304ee2b129a3b9e",
+      "sha256": "0c985d691f4c1d616891e2a8d19bf1278d3b56263431014fe304ee2b129a3b9e"
+    },
+    {
+      "file": "AppleMtpHid.h",
+      "source": "drivers/AppleMtpHid/AppleMtpHid.h",
+      "source_sha256": "a92905ce93d8fecfd46cf02c63ac6a3d150273c9ff55844fe135f3b141be5a65",
+      "sha256": "a92905ce93d8fecfd46cf02c63ac6a3d150273c9ff55844fe135f3b141be5a65"
+    },
+    {
+      "file": "AppleMtpProtocol.c",
+      "source": "drivers/AppleMtpHid/AppleMtpProtocol.c",
+      "source_sha256": "5eecdb0441c4411d2ba1ee314ba370081bfd674c36941a2f8256c8df0a88e381",
+      "sha256": "5eecdb0441c4411d2ba1ee314ba370081bfd674c36941a2f8256c8df0a88e381"
+    },
+    {
+      "file": "AppleMtpProtocol.h",
+      "source": "drivers/AppleMtpHid/AppleMtpProtocol.h",
+      "source_sha256": "ee2287ac368bffaa483177eda5a20973e7bcc89532fb54634d520b8782fdb1b8",
+      "sha256": "ee2287ac368bffaa483177eda5a20973e7bcc89532fb54634d520b8782fdb1b8"
+    },
+    {
+      "file": "AppleMtpStream.c",
+      "source": "drivers/AppleMtpHid/AppleMtpStream.c",
+      "source_sha256": "5d4e38fb176beb224fe43efa57d9daca2df8a7a0c86a7069d6d9ed087bfba549",
+      "sha256": "5d4e38fb176beb224fe43efa57d9daca2df8a7a0c86a7069d6d9ed087bfba549"
+    },
+    {
+      "file": "AppleMtpStream.h",
+      "source": "drivers/AppleMtpHid/AppleMtpStream.h",
+      "source_sha256": "48ff2342e0fff7bd3727974ee7e7bac75703d26adb94ec4b0e842234f13396d0",
+      "sha256": "48ff2342e0fff7bd3727974ee7e7bac75703d26adb94ec4b0e842234f13396d0"
+    },
+    {
+      "file": "AppleRtkitCore.c",
+      "source": "drivers/AppleRtkit/AppleRtkitCore.c",
+      "source_sha256": "bdee44e597deb223fc6301134015f4f2d3a094615a2c3d7d95e1a5887238c16b",
+      "sha256": "bdee44e597deb223fc6301134015f4f2d3a094615a2c3d7d95e1a5887238c16b"
+    },
+    {
+      "file": "AppleRtkitCore.h",
+      "source": "drivers/AppleRtkit/AppleRtkitCore.h",
+      "source_sha256": "caf5a53e8849e61949630641ab56b67e41a4bb9f04ee8afdbd1c360a7a5ae357",
+      "sha256": "caf5a53e8849e61949630641ab56b67e41a4bb9f04ee8afdbd1c360a7a5ae357"
+    },
+    {
+      "file": "AppleRtkitRuntimeCoreM5.c",
+      "source": "targets/j714s/windows/drivers/AppleMtpHidM5/AppleRtkitRuntimeCoreM5.c",
+      "source_sha256": "f9bd5477ae23aedd7620f83e3270e384d6329217b7e427c91426e5f93dc40f6c",
+      "sha256": "f9bd5477ae23aedd7620f83e3270e384d6329217b7e427c91426e5f93dc40f6c"
+    },
+    {
+      "file": "AppleRtkitRuntimeCoreM5.h",
+      "source": "targets/j714s/windows/drivers/AppleMtpHidM5/AppleRtkitRuntimeCoreM5.h",
+      "source_sha256": "b8ace6f36faf9b74865e9c738038190403f16d9f8c5939dfd99324558c2d7f13",
+      "sha256": "88767cb5ec8d85add8e2a6df90a57c5a8f172d634bb1e3fb409e266bc5fb4736"
+    }
+  ]
+}
