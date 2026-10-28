@@ -32,6 +32,15 @@ VOID EFIAPI AppleAicV3SetDynamicOffsets(IN UINT32 Cap0Offset, IN UINT32 MaxNumIr
     mAicV3MaxNumIrqOffset = MaxNumIrqOffset;
 }
 
+// An AICv3 register offset from the live ADT, or Fallback when the property
+// is absent or not one 32-bit word.
+UINT32 EFIAPI AppleAicCapabilityOffset (IN CONST CHAR8 *Name, IN UINT32 Fallback)
+{
+    UINTN Size = 0;
+    UINT32 *Offset = dt_node_prop (dt_get ("aic"), Name, &Size);
+    return (Offset != NULL && Size == sizeof (UINT32)) ? *Offset : Fallback;
+}
+
 /**
  * @brief Returns the version of AIC on the platform.
  *

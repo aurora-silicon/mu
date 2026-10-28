@@ -1,0 +1,58 @@
+{
+  "AppleNvmeCore.c": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmeCore.c",
+    "sha256": "970cbb7fb6b1b406071a06bb75a8012dc31c97082392ebe3f79a0f39213ec908"
+  },
+  "AppleNvmeCore.h": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmeCore.h",
+    "sha256": "efe33b1263f000b8319c10dc17edb755b7e4081b129becdbd84e1d6fbf69aab8"
+  },
+  "AppleNvmeControllerCore.c": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmeControllerCore.c",
+    "sha256": "f5f04615b69ca9038f603789540c6ce709d8f58248faaf0509ab10f34582b07f"
+  },
+  "AppleNvmeControllerCore.h": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmeControllerCore.h",
+    "sha256": "d110047ba29228e6b5ff1e0f361141bb79cdaebf77360055e7d1504908a5c493"
+  },
+  "AppleNvmeBlockCore.c": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmeBlockCore.c",
+    "sha256": "24141047351e8893850f24c2db276b1ce2ad772a9eee40ac1cf85cb07231d0ec"
+  },
+  "AppleNvmeBlockCore.h": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmeBlockCore.h",
+    "sha256": "0c10905777dce0cb93307acf228683e3a432879c71803a82ac7fd241d7795a24"
+  },
+  "AppleNvmePrpCore.c": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmePrpCore.c",
+    "sha256": "be62aeebaed92e2064de29ba9efb32a5a91892a7526910e4b31ba3d09da041cd"
+  },
+  "AppleNvmePrpCore.h": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleNvme/AppleNvmePrpCore.h",
+    "sha256": "7c2e14d824c6ca3c0809b74807fedc16565424e1e0dde3769bfe42e6498c9eb4"
+  },
+  "AppleAscCore.c": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleRtkit/AppleAscCore.c",
+    "sha256": "6332b54753483c2a7283fd92e019d9b3e1668d39cab1048acc5d81cb6f79809a"
+  },
+  "AppleAscCore.h": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleRtkit/AppleAscCore.h",
+    "sha256": "039911d190195bb87d3072dc7e5413e38a62f7e341b117c327a09fbb3c1c896b"
+  },
+  "AppleRtkitCore.c": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleRtkit/AppleRtkitCore.c",
+    "sha256": "35d274bf3addbc82b2a467305ac5fcc3c2175a370a473cb1944b02c76ad87175"
+  },
+  "AppleRtkitCore.h": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleRtkit/AppleRtkitCore.h",
+    "sha256": "caf5a53e8849e61949630641ab56b67e41a4bb9f04ee8afdbd1c360a7a5ae357"
+  },
+  "AppleRtkitRuntimeCore.c": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleRtkit/AppleRtkitRuntimeCore.c",
+    "sha256": "7d222d7feb7d483d16d98465413fbca0f2f5693d2077c2cbb17902f97a991e68"
+  },
+  "AppleRtkitRuntimeCore.h": {
+    "source": "AuroraSilicon:targets/j714s/windows/drivers/AppleRtkit/AppleRtkitRuntimeCore.h",
+    "sha256": "605ec18b72a4ec42059219ccde7ac13ed6837eb37bc7c119e00dd3cbb5f7afb4"
+  }
+}

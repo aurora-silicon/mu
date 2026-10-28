@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J873BootProbe
+  FILE_GUID = F142B310-2026-4873-8930-167FA1E6A245
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 1.0
+  ENTRY_POINT = UefiMain
+[Sources]
+  J873BootProbe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  ArmLib
+  IoLib
+  PcdLib
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartBase

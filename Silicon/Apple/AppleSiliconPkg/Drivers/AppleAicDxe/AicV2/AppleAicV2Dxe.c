@@ -276,13 +276,11 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     UINT32 V3Cap0Offset      = AIC_V2_INFO_REG1;
     UINT32 V3MaxNumIrqOffset = AIC_V2_INFO_REG3;
     if (mAicVersion == APPLE_AIC_VERSION_3) {
-        // AppleDTLib treats an absent property as a contract violation even
-        // when a caller supplies a fallback. Never ask an AICv1/v2 ADT for
-        // AICv3-only fields: J414s is AICv2 and intentionally has neither.
-        V3Cap0Offset = (UINT32)dt_node_u32(
-            InterruptControllerNode, "cap0-offset", AIC_V2_INFO_REG1);
-        V3MaxNumIrqOffset = (UINT32)dt_node_u32(
-            InterruptControllerNode, "maxnumirq-offset", AIC_V2_INFO_REG3);
+        // dt_node_u32()'s last argument is an array index, not a fallback.
+        // Never ask an AICv1/v2 ADT for AICv3-only fields: J414s is AICv2 and
+        // intentionally has neither.
+        V3Cap0Offset = AppleAicCapabilityOffset ("cap0-offset", AIC_V2_INFO_REG1);
+        V3MaxNumIrqOffset = AppleAicCapabilityOffset ("maxnumirq-offset", AIC_V2_INFO_REG3);
         AppleAicV3SetDynamicOffsets(V3Cap0Offset, V3MaxNumIrqOffset);
     }
 
@@ -305,6 +303,17 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         // AICv2; revisit if a multi-die M3-class part reports otherwise.
         AicInfoStruct->MaxCpuDies = FIELD_GET(AIC_V2_INFO_REG3_MAX_DIE_COUNT_BITFIELD, MmioRead32(AicV2Base + V3MaxNumIrqOffset));
         AicInfoStruct->NumCpuDies = (FIELD_GET(AIC_V2_INFO_REG1_LAST_CPU_DIE_BITFIELD, MmioRead32(AicV2Base + V3Cap0Offset))) + 1;
+    }
+    AURORA_AIC_STAGE (0x15, AicInfoStruct->NumCpuDies, AicInfoStruct->MaxCpuDies, 0);
+    if ((AicInfoStruct->NumIrqs == 0) ||
+        (AicInfoStruct->NumIrqs > AicInfoStruct->MaxIrqs) ||
+        (AicInfoStruct->MaxIrqs > 4096)
+#if SILICON_PLATFORM == 8152
+        // Only the J873 single-die topology has been qualified on T8152.
+        || (AicInfoStruct->NumCpuDies != 1)
+#endif
+        ) {
+        return EFI_UNSUPPORTED;
     }
 
     
@@ -376,7 +385,7 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         // extint-baseaddress). Its event register is a separate page named by
         // aic-iack-offset, exactly as on AICv2.
         StartOffset = mAicV2IrqCfgOffset =
-            (UINT64)dt_node_u32(InterruptControllerNode, "extint-baseaddress", AIC_V3_IRQ_CFG_REG);
+            AppleAicCapabilityOffset ("extint-baseaddress", AIC_V3_IRQ_CFG_REG);
         mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
     }
 
@@ -612,7 +621,8 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
          * As with those, ack the interrupts if they come but don't act on them.
          * 
          */
-        if (PcdGet32 (PcdAppleSocIdentifier) != 0x8142) {
+        if ((PcdGet32 (PcdAppleSocIdentifier) != 0x8142) &&
+            (PcdGet32 (PcdAppleSocIdentifier) != 0x8152)) {
             PmcStatus = AppleAicV2ReadPmcControlRegister();
             AURORA_AIC_STAGE (0x47, PmcStatus, 0, 0);
             UncorePmcStatus = AppleAicV2ReadUncorePmcControlRegister();
@@ -634,7 +644,7 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
             // T8142 does not expose these Apple implementation-defined PMC
             // registers safely to EL1.  This driver has no PMC consumer yet,
             // so probing them only traps the DXE interrupt dispatcher.
-            AURORA_AIC_STAGE (0x4D, 0x8142, 0, 0);
+            AURORA_AIC_STAGE (0x4D, PcdGet32 (PcdAppleSocIdentifier), 0, 0);
         }
     }
 
@@ -817,6 +827,9 @@ EFI_STATUS AppleAicV2DxeInit(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Sys
     AURORA_AIC_STAGE (4, 0, 0, 0);
     Status = AppleAicV2CalculateRegisterOffsets();
     AURORA_AIC_STAGE (5, AicV2Base, AicInfoStruct->MaxIrqs, Status);
+    if (EFI_ERROR (Status)) {
+        return Status;
+    }
     AicV2NumInterrupts = AicInfoStruct->NumIrqs;
     AicV2MaxInterrupts = AicInfoStruct->MaxIrqs;
     

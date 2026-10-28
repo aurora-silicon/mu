@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+# T6050 / J714s native Apple AIC (v3) ACPI tables for the x1n1 Windows profile:
+#   * CSRT.aslc            - APPL/NTAS AIC3 Core System Resource Table.
+#   * MADT_NativeAic.aslc  - MADT with NO GICv3 distributor/redistributor.
+#
+# Built with RuleOverride=ACPITABLE (standard MdeModulePkg AcpiTableDxe path),
+# exactly like MacBookProM5Pkg/AcpiTables/J714AcpiTables.inf.  When this INF is
+# added to the J714 Windows FV, the platform's J714AcpiTables.inf MUST drop its
+# GICv3 MADT.aslc so only one MADT is installed.
+#
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = J714NativeAcpiTables
+  FILE_GUID                      = 4f142e92-a625-4b0f-95ba-80395b42ff6a
+  MODULE_TYPE                    = USER_DEFINED
+  VERSION_STRING                 = 1.0
+
+[Sources]
+  CSRT.aslc
+  MADT_NativeAic.aslc
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[FixedPcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemRevision
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorRevision

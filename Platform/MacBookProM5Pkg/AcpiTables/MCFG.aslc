@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <IndustryStandard/MemoryMappedConfigurationSpaceAccessTable.h>
+#include <Acpi/AcpiHeader.h>
+#pragma pack(1)
+typedef struct {
+  EFI_ACPI_MEMORY_MAPPED_CONFIGURATION_BASE_ADDRESS_TABLE_HEADER Header;
+  EFI_ACPI_MEMORY_MAPPED_ENHANCED_CONFIGURATION_SPACE_BASE_ADDRESS_ALLOCATION_STRUCTURE Window;
+} J714_MCFG;
+#pragma pack()
+J714_MCFG Mcfg = {
+  .Header = { .Header = __ACPI_HEADER (SIGNATURE_32 ('M','C','F','G'), J714_MCFG, 1) },
+  .Window = { .BaseAddress = 0x62000000, .PciSegmentGroupNumber = 0,
+              .StartBusNumber = 0, .EndBusNumber = 1 },
+};
+STATIC_ASSERT (sizeof (Mcfg) == 60, "one-window MCFG");
+VOID *CONST ReferenceAcpiTable = &Mcfg;

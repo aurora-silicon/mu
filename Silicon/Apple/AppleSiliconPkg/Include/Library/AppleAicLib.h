@@ -257,3 +257,5 @@ VOID EFIAPI AppleAicV3SetDynamicOffsets(IN UINT32 Cap0Offset, IN UINT32 MaxNumIr
 
 
 #endif //APPLEAIC_H_
+
+UINT32 EFIAPI AppleAicCapabilityOffset (IN CONST CHAR8 *Name, IN UINT32 Fallback);

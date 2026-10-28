@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+//
+// T6050 / J714s MADT for the x1n1 Windows profile.
+//
+// First milestone: a SINGLE boot CPU, per the x1n1 guest ABI contract
+// (WINDOWS_HANDOFF.md). The boot CPU is T6050 cpu0, MPIDR 0x80040000 (verified
+// from the J714s ADT). GICD is at 0xF00000000 and GICR at 0xF10000000 - the
+// IPAs x1n1 emulates from stage-2 aborts. Add the remaining 17 cores only after
+// a UEFI shell boots under x1n1.
+//
+// Like the hardware-proven j873 MADT, NO ITS structure is emitted: x1n1 does not
+// hook an ITS (the ABI notes an ITS IPA 0xF20000000 for documentation only).
+//
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+
+#pragma pack (1)
+typedef struct {
+  EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER Header;
+  EFI_ACPI_6_3_GIC_STRUCTURE Cpu[1];
+  EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE Distributor;
+  EFI_ACPI_6_4_GICR_STRUCTURE Redistributors;
+} J714_MADT;
+#pragma pack ()
+
+J714_MADT Madt = {
+  { __ACPI_HEADER (EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+                  J714_MADT, EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION),
+    0, 0 },
+  {
+    // GicId, AcpiCpuUid, Mpidr, Flags, ...
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT (
+      0, 0, 0x80040000, EFI_ACPI_6_3_GIC_ENABLED, 0, 0, 0, 0, 0, 0, 0, 0),
+  },
+  EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT (
+    0, FixedPcdGet64 (PcdGicDistributorBase), 0, 3),
+  // One redistributor frame span (0x20000) for the single boot CPU; GICR_TYPER.Last
+  // terminates discovery. Widen this when the other cores are added.
+  { EFI_ACPI_6_4_GICR, sizeof (EFI_ACPI_6_4_GICR_STRUCTURE), 0,
+    FixedPcdGet64 (PcdGicRedistributorsBase), 1 * 0x20000 },
+};
+VOID *CONST ReferenceAcpiTable = &Madt;

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J714BootProbe
+  FILE_GUID = 9b835c89-8c33-42c9-aec5-8ded0268ce70
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 1.0
+  ENTRY_POINT = UefiMain
+[Sources]
+  J714BootProbe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  ArmLib
+  IoLib
+  PcdLib
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartBase

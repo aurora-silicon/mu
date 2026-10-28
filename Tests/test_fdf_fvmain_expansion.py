@@ -39,6 +39,13 @@ REPO = Path(__file__).resolve().parents[1]
 INCLUDE = REPO / "Silicon/Apple/AppleSiliconPkg/AppleSiliconFvMain.fdf.inc"
 EXPECTED = Path(__file__).with_name("fdf_fvmain_expected.json")
 
+#
+# These keep the FvMain list their J714s/J873 hardware bring-up was qualified
+# with, behind their own build flags. Their shapes are still pinned below;
+# moving them onto the shared include is separate work.
+#
+OWN_FVMAIN = {"MacBookProM5.fdf", "MacMini2026.fdf"}
+
 
 #
 # Left symbolic when comparing. These name which package supplies a module, not
@@ -147,6 +154,8 @@ class FdfFvMainExpansionTests(unittest.TestCase):
 
     def test_the_include_is_actually_used(self):
         for fdf in sorted(REPO.glob("Platform/*Pkg/*.fdf")):
+            if fdf.name in OWN_FVMAIN:
+                continue
             with self.subTest(platform=fdf.name):
                 self.assertRegex(
                     fdf.read_text(encoding="utf-8"),
