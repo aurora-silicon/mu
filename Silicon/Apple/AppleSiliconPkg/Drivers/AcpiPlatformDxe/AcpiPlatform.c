@@ -2818,10 +2818,11 @@ Exit:
   hardware profile are derived from the live Apple Device Tree so one firmware
   binary does not bake in a board-specific MMIO map.
 
-  The three memory resources have a stable ABI with the Windows miniport:
+  The first three memory resources have a stable ABI with the Windows miniport:
     0: ASC CPU/mailbox aperture (mailbox registers are at +0x8000)
     1: ANS NVMe aperture (ADT reg[3])
     2: SART aperture
+  T8142 additionally requires resource 3: standard NVMe registers (ADT reg[9]).
 
   CHANGED 2026-07-30: NTAS2003 used to append four more resources -- the exact
   4-byte ps_ans2 / ps_apcie_st / ps_apcie_st_sys / ps_apcie_st1_sys PMGR words
@@ -2851,6 +2852,8 @@ AcpiPlatformInstallAppleAnsTable (
   UINT64                       CpuSize;
   UINT64                       NvmeBase;
   UINT64                       NvmeSize;
+  UINT64                       NvmeStandardBase;
+  UINT64                       NvmeStandardSize;
   UINT64                       SartBase;
   UINT64                       SartSize;
   UINT64                       PmgrResetBase;
@@ -2870,6 +2873,7 @@ AcpiPlatformInstallAppleAnsTable (
   UINTN                        PropertySize;
   UINTN                        InterruptsSize;
   BOOLEAN                      Legacy;
+  BOOLEAN                      SecureNvmeBar;
   CONST CHAR8                  *HardwareId;
   CONST CHAR8                  *InterruptContract;
   CONST CHAR8                  *PmgrDomainName;
@@ -2880,6 +2884,8 @@ AcpiPlatformInstallAppleAnsTable (
   PmgrApcieStBase = 0;
   PmgrApcieStSysBase = 0;
   PmgrApcieSt1SysBase = 0;
+  NvmeStandardBase = 0;
+  NvmeStandardSize = 0;
 
   //
   // Do not publish the ANS controller in a build whose FV has no
@@ -3219,6 +3225,41 @@ AcpiPlatformInstallAppleAnsTable (
     return EFI_DEVICE_ERROR;
   }
 
+  // Match the working AppleNANDStorageDxe selection. T8142's ANS reg[3]
+  // aperture does not contain standard CC/CSTS/AQA/ASQ/ACQ registers; reg[9]
+  // must be a separate fourth Windows resource. A zero-length ADT marker
+  // cannot serve as a reliable value-pointer test for this required BAR.
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
+  SecureNvmeBar = TRUE;
+#else
+  SecureNvmeBar = AppleAnsPropertyContains (AnsNode, "compatible", "t8142") ||
+                  AppleAnsPropertyContains (dt_get ("/"), "compatible", "j813");
+#endif
+  if (SecureNvmeBar) {
+    UINT64  OtherBase[3] = { CpuBase, NvmeBase, SartBase };
+    UINT64  OtherSize[3] = { CpuSize, NvmeSize, SartSize };
+    UINTN   Index;
+
+    if ((SartVersion != 3) ||
+        (dt_node_reg (AnsNode, 9, &NvmeStandardBase, &NvmeStandardSize) != 0) ||
+        (NvmeStandardBase == 0) ||
+        (((NvmeStandardBase | NvmeStandardSize) & 0xFFF) != 0) ||
+        !AppleAnsMmioRangeValid (NvmeStandardBase, NvmeStandardSize, APPLE_ANS_NVME_STANDARD_MIN_SIZE))
+    {
+      DEBUG ((DEBUG_ERROR, "AppleANS ACPI: invalid or missing T8142 secure NVMe reg[9]; ANS0 withheld\n"));
+      return EFI_DEVICE_ERROR;
+    }
+
+    for (Index = 0; Index < 3; Index++) {
+      if ((NvmeStandardBase <= OtherBase[Index] + OtherSize[Index] - 1) &&
+          (OtherBase[Index] <= NvmeStandardBase + NvmeStandardSize - 1))
+      {
+        DEBUG ((DEBUG_ERROR, "AppleANS ACPI: secure NVMe reg[9] overlaps resource %u; ANS0 withheld\n", (UINT32)Index));
+        return EFI_DEVICE_ERROR;
+      }
+    }
+  }
+
   Status = AmlCodeGenDefinitionBlock (
              "SSDT",
              APPLE_ANS_ACPI_OEM_ID,
@@ -3280,6 +3321,13 @@ AcpiPlatformInstallAppleAnsTable (
     goto Exit;
   }
 
+  if (SecureNvmeBar) {
+    Status = AppleAnsAddMemoryResource (CrsNode, NvmeStandardBase, NvmeStandardSize);
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+  }
+
   //
   // THE FOUR PMGR WORDS ARE NO LONGER _CRS RESOURCES (fixed 2026-07-30).
   //
@@ -3315,7 +3363,8 @@ AcpiPlatformInstallAppleAnsTable (
   // opposed to "grant this device exclusive ownership of these bytes".
   //
   // ABI NOTE: this changes NTAS2003's _CRS from seven memory resources to
-  // three.
+  // three on older chips. T8142's fourth range above is the separate standard
+  // NVMe register BAR, not one of the retired PMGR-word resource claims.
   //
   // UPDATED 2026-07-31: the "nothing consumes the old layout today" note that
   // used to sit here was true when written and stopped being true the moment
@@ -3411,6 +3460,9 @@ AcpiPlatformInstallAppleAnsTable (
                         &TableHandle
                         );
   if (!EFI_ERROR (Status)) {
+    if (SecureNvmeBar) {
+      DEBUG ((DEBUG_INFO, "AppleANS ACPI: resource[3] secure-standard=%Lx/%Lx\n", NvmeStandardBase, NvmeStandardSize));
+    }
     DEBUG ((
       DEBUG_INFO,
       "AppleANS ACPI: %a cpu=%lx/%lx nvme=%lx/%lx sart=%lx/%lx pmgr-ans2=%lx apcie-st=%lx st-sys=%lx st1-sys=%lx "
