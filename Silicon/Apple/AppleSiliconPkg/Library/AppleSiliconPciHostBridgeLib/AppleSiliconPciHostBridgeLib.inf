@@ -38,8 +38,10 @@
 
 [LibraryClasses]
   DebugLib
+  PcdLib
 
 [FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff
   gArmTokenSpaceGuid.PcdPciBusMin
   gArmTokenSpaceGuid.PcdPciBusMax
   gArmTokenSpaceGuid.PcdPciIoBase

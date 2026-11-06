@@ -19,6 +19,8 @@
 
  DefinitionBlock("DSDT.aml", "DSDT", 0x02, "Apple", "J813", 0x8142) {
     Scope(\_SB) {
+        // AcpiPlatformDxe sets this only for Aura's explicit no-USB policy.
+        Name (AUSD, Zero)
         //
         // Cluster low power states. On T8101/T8103, there are only 2 clusters, the P and E core clusters,
         // so should be easier to track
@@ -167,6 +169,9 @@
             }
 
             Method (_STA) {
+                If (AUSD) {
+                    Return (Zero)
+                }
                 Return (0xF)
             }
         }

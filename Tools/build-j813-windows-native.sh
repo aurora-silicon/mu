@@ -14,7 +14,7 @@ case "$profile" in
         ans_block_io=TRUE
         mtp_hid_build=FALSE
         ;;
-    internal-storage-windows)
+    internal-storage-windows|internal-storage-windows-n1)
         # internal-storage, plus the \_SB.ANS0 ACPI device Windows needs to bind
         # a storage driver.  Kept as a separate profile rather than flipping the
         # one above: that profile is the proven firmware-owned boot path, and
@@ -41,6 +41,8 @@ case "$profile" in
         ;;
 esac
 
+n1_bus=FALSE
+test "$profile" != internal-storage-windows-n1 || n1_bus=TRUE
 ans_acpi=${ans_acpi:-FALSE}
 if test "$ans" = true; then
     ans_enable=TRUE
@@ -60,6 +62,7 @@ test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64 || {
     exit 1
 }
 cd "$source_root"
+python3 Tools/check-j813-exception-base.py
 
 mu_python=${AURORADBG_MU_PYTHON:-$(command -v python3.12 || command -v python3)}
 venv=${AURORADBG_MU_NATIVE_VENV:-$source_root/.venv-native}
@@ -133,6 +136,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
     "BLD_*_NTASI_ANS_DXE_BRINGUP=$ans_dxe" \
     "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
     "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
+    "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
     "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1; then
     # Homebrew llvm-rc parses an absolute POSIX input path beginning with '/' as
     # an option. Complete the deterministic HII resource step from its output
@@ -151,6 +155,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
             "BLD_*_NTASI_ANS_DXE_BRINGUP=$ans_dxe" \
             "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
             "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
+            "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
             "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1 || {
             tail -80 "$log" >&2
             exit 1
@@ -171,13 +176,13 @@ clean=true
 test -z "$(git -C "$source_root" status --porcelain=v1 --untracked-files=no --ignore-submodules=none)" || clean=false
 manifest=$artifact_dir/manifest.json
 "$venv/bin/python" - "$manifest" "$commit" "$clean" "$profile" "$size" "$digest" \
-    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" <<'PY'
+    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" "$n1_bus" <<'PY'
 import json
 import pathlib
 import sys
 
 (path, commit, clean, profile, size, digest, ans, ans_dxe, ans_block_io,
- ans_preserve, ans_acpi) = sys.argv[1:]
+ ans_preserve, ans_acpi, n1_bus) = sys.argv[1:]
 enabled = lambda value: value == "TRUE"
 record = {
     "schema": "aurora.j813.mu-profile.v1",
@@ -191,6 +196,8 @@ record = {
         "ans_dxe": enabled(ans_dxe),
         "ans_block_io": enabled(ans_block_io),
         "ans_preserve": enabled(ans_preserve),
+        "n1_bus": enabled(n1_bus),
+        "n1_handoff": "aura,windows-n1-v1" if enabled(n1_bus) else None,
         "baseline_capabilities": {
             "usb3_deferred_pipe_switch_port_mask": 0,
             "usb_dwc3_reset_dart_handoff":
@@ -209,6 +216,7 @@ record = {
             "PcdAppleAnsPerformDxeBringUp": enabled(ans_dxe),
             "PcdAppleAnsPublishBlockIo": enabled(ans_block_io),
             "PcdAppleAnsPreserveForOs": enabled(ans_preserve),
+            "PcdAppleN1BusHandoff": enabled(n1_bus),
             "PcdAppleAnsPmgrResetBase": "0x380700300",
             "PcdAppleAnsPmgrApcieStBase": "0x380700410",
             "PcdAppleAnsPmgrApcieStSysBase": "0x380700520",

@@ -35,6 +35,8 @@
 
 #include <IndustryStandard/Acpi.h>
 #include <IndustryStandard/J414sWirelessHandoff.h>
+#include <IndustryStandard/AuraN1Handoff.h>
+#include <Library/IoLib.h>
 #include <Drivers/AppleAnsHardware.h>
 //
 // Moved out of this directory on 2026-07-30 so AppleNANDStorageDxe can share
@@ -3875,6 +3877,126 @@ AppleAcpiPlatformChecksum (
 //   return EFI_UNSUPPORTED;
 // }
 
+STATIC
+EFI_STATUS
+AppleApplyUsbDisabledPolicy (
+  IN OUT EFI_ACPI_COMMON_HEADER  **Table
+  )
+{
+  EFI_ACPI_DESCRIPTION_HEADER  *Header = (EFI_ACPI_DESCRIPTION_HEADER *)*Table;
+  EFI_ACPI_DESCRIPTION_HEADER  *Updated = NULL;
+  AML_ROOT_NODE_HANDLE          Root = NULL;
+  AML_NODE_HANDLE               Policy = NULL;
+  CONST VOID                   *Property;
+  size_t                        Length;
+  UINT32                        Disabled;
+  EFI_STATUS                    Status;
+
+  // Other platform tables retain their existing publication policy.
+  if ((Header->Signature != SIGNATURE_32 ('D', 'S', 'D', 'T')) ||
+      (CompareMem (&Header->OemTableId, "J813", 4) != 0))
+  {
+    return EFI_SUCCESS;
+  }
+
+  Property = dt_get_prop ("/chosen", "aura,windows-usb-disabled", &Length);
+  if (Property == NULL) {
+    return EFI_SUCCESS;
+  }
+  if (Length != sizeof (Disabled)) {
+    return EFI_COMPROMISED_DATA;
+  }
+  CopyMem (&Disabled, Property, sizeof (Disabled));
+  if (Disabled != 1) {
+    return EFI_COMPROMISED_DATA;
+  }
+
+  Status = AmlParseDefinitionBlock (Header, &Root);
+  if (EFI_ERROR (Status)) {
+    goto Done;
+  }
+  Status = AmlFindNode (Root, "\\_SB.AUSD", &Policy);
+  if (EFI_ERROR (Status) || (Policy == NULL)) {
+    Status = EFI_COMPROMISED_DATA;
+    goto Done;
+  }
+  Status = AmlNameOpUpdateInteger ((AML_OBJECT_NODE_HANDLE)Policy, 1);
+  if (EFI_ERROR (Status)) {
+    goto Done;
+  }
+  Status = AmlSerializeDefinitionBlock (Root, &Updated);
+  if (!EFI_ERROR (Status)) {
+    gBS->FreePool (*Table);
+    *Table = (EFI_ACPI_COMMON_HEADER *)Updated;
+    Updated = NULL;
+    DEBUG ((DEBUG_INFO, "Aura USB: explicit disabled policy; XHC0/XHC1 withheld\n"));
+  }
+
+Done:
+  if (Updated != NULL) {
+    gBS->FreePool (Updated);
+  }
+  if (Root != NULL) {
+    AmlDeleteTree (Root);
+  }
+  return Status;
+}
+
+STATIC
+BOOLEAN
+AppleN1TableAdmitted (
+  IN CONST EFI_ACPI_DESCRIPTION_HEADER  *Table,
+  IN UINTN                              Size
+  )
+{
+  CONST VOID             *Record;
+  CONST VOID             *Property;
+  size_t                  Length;
+  UINT32                  Chip;
+  UINT32                  Board;
+  struct aura_n1_reader   Reader = { NULL, AuraN1Read32 };
+  int                     Result;
+
+  if ((Size < sizeof (*Table)) ||
+      (CompareMem (&Table->OemTableId, AURA_N1_ACPI_TABLE_ID, 8) != 0))
+  {
+    return TRUE;
+  }
+
+  if (!FixedPcdGetBool (PcdAppleN1BusHandoff)) {
+    DEBUG ((DEBUG_INFO, "Aura N1: profile disabled; AURA8130 withheld\n"));
+    return FALSE;
+  }
+
+  // Property lookup and byte validation happen before the first MMIO read.
+  // Absence of the record never authorizes probing a powered-down controller.
+  Record = dt_get_prop ("/chosen", AURA_N1_HANDOFF_PROPERTY, &Length);
+  if ((Record == NULL) || (Length != AURA_N1_HANDOFF_BYTES)) {
+    DEBUG ((DEBUG_ERROR, "Aura N1: no valid-sized handoff; AURA8130 withheld\n"));
+    return FALSE;
+  }
+
+  Property = dt_get_prop ("/chosen", "chip-id", &Length);
+  if ((Property == NULL) || (Length != sizeof (Chip))) {
+    return FALSE;
+  }
+  CopyMem (&Chip, Property, sizeof (Chip));
+  Property = dt_get_prop ("/chosen", "board-id", &Length);
+  if ((Property == NULL) || (Length != sizeof (Board))) {
+    return FALSE;
+  }
+  CopyMem (&Board, Property, sizeof (Board));
+
+  Result = aura_n1_validate (Record, AURA_N1_HANDOFF_BYTES, Chip, Board, &Reader);
+  if (Result != 0) {
+    DEBUG ((DEBUG_ERROR, "Aura N1: handoff/readback rejected (%d); AURA8130 withheld\n", Result));
+    return FALSE;
+  }
+
+  DEBUG ((DEBUG_INFO, "Aura N1: cold ROM and clean SID0 verified; publishing AURA8130\n"));
+  return TRUE;
+}
+
 /**
   Entrypoint of Acpi Platform driver.
 
@@ -3953,6 +4075,20 @@ AcpiPlatformEntryPoint (
 
       TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
       ASSERT (Size >= TableSize);
+
+      if (!AppleN1TableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size)) {
+        gBS->FreePool (CurrentTable);
+        CurrentTable = NULL;
+        Instance++;
+        continue;
+      }
+      Status = AppleApplyUsbDisabledPolicy (&CurrentTable);
+      if (EFI_ERROR (Status)) {
+        DEBUG ((DEBUG_ERROR, "Aura USB: policy rejected; DSDT publication aborted: %r\n", Status));
+        gBS->FreePool (CurrentTable);
+        return EFI_ABORTED;
+      }
+      TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
 
       //
       // Checksum ACPI table

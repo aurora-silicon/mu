@@ -20,6 +20,7 @@
 #include <Library/DevicePathLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PciHostBridgeLib.h>
+#include <Library/PcdLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 
 #include <PiDxe.h>
@@ -152,6 +153,14 @@ CHAR16  *mPciHostBridgeLibAcpiAddressSpaceTypeStr[] = {
 //   None.
 //
 PCI_ROOT_BRIDGE * EFIAPI PciHostBridgeGetRootBridges(UINTN *Count) {
+  // The opt-in N1 profile reserves this controller for AURA8130. Do not let
+  // generic PCI enumeration change BARs, command bits or DMA ownership before
+  // AcpiPlatform validates Aura's handoff. A rejected handoff stays reserved.
+  if (FixedPcdGetBool (PcdAppleN1BusHandoff)) {
+    *Count = 0;
+    return NULL;
+  }
+
   *Count = 1;
   return &mRootBridge;
 }
@@ -168,7 +177,7 @@ VOID EFIAPI PciHostBridgeFreeRootBridges(PCI_ROOT_BRIDGE *Bridges, UINTN Count) 
   //
   // For now this is a no-op.
   //
-  ASSERT(Count == 1);
+  ASSERT ((Count == 1) || ((Count == 0) && (Bridges == NULL)));
   return;
 }
 

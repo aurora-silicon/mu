@@ -91,6 +91,8 @@
   # UART MMIO.  This is useful while bringing up a SoC whose resident m1n1 does
   # not yet trap the guest UART aperture safely.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartMmioEnabled|TRUE|BOOLEAN|0x00004725
+  # Opt-in only: require a validated Aura descriptor before exposing AURA8130.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff|FALSE|BOOLEAN|0x00004726
 
   # Stack stuff (128k stack by default)
   #Fallback stack base in case ModuleEntryPoint setup won't work.

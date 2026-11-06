@@ -68,7 +68,7 @@ STATIC VOID InitMmu(IN ARM_MEMORY_REGION_DESCRIPTOR *MemoryTable)
 }
 
 //borrowed from edk2-platforms:Armada7k8kMemoryInitPeiLib
-STATIC VOID ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN UINT32 ReservedRegionSize)
+STATIC BOOLEAN ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN UINT32 ReservedRegionSize)
 {
   EFI_RESOURCE_ATTRIBUTE_TYPE  ResourceAttributes;
   EFI_PHYSICAL_ADDRESS         ReservedRegionTop;
@@ -139,10 +139,64 @@ STATIC VOID ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN
         ReservedRegionBase,
         ReservedRegionSize);
 
-      break;
+      return TRUE;
     }
     NextHob.Raw = GET_NEXT_HOB (NextHob);
   }
+  return FALSE;
+}
+
+// EarlySetup's fixed copies remain live throughout DXE. They are not covered
+// by the relocated FD allocation or the source ADT's memory-map entry.
+STATIC EFI_STATUS
+ReserveBootHandoff (
+  IN EFI_PHYSICAL_ADDRESS SystemMemoryTop,
+  IN EFI_PHYSICAL_ADDRESS FdTop,
+  IN EFI_PHYSICAL_ADDRESS UefiMemoryBase,
+  IN UINT64               UefiMemorySize
+  )
+{
+  CONST struct boot_args *BootArgs;
+  UINT64                 Base;
+  UINT64                 AdtBase;
+  UINT64                 Top;
+  UINT64                 Size;
+
+  Base = FixedPcdGet64 (PcdBootArgsPointer);
+  AdtBase = FixedPcdGet64 (PcdAdtPointer);
+  if ((SystemMemoryTop < PcdGet64 (PcdSystemMemoryBase)) ||
+      (Base < PcdGet64 (PcdSystemMemoryBase)) || (Base >= SystemMemoryTop) ||
+      ((Base & EFI_PAGE_MASK) != 0) || ((AdtBase & EFI_PAGE_MASK) != 0) ||
+      (SystemMemoryTop - Base < sizeof (*BootArgs)) ||
+      (AdtBase < Base + sizeof (*BootArgs)) || (AdtBase >= SystemMemoryTop))
+  {
+    return EFI_COMPROMISED_DATA;
+  }
+
+  BootArgs = (CONST struct boot_args *)(UINTN)Base;
+  // Aura's bounded ADT contract is 4 MiB; page rounding cannot overflow after
+  // checking this length against the remaining physical address span.
+  if ((BootArgs->devtree_size == 0) || (BootArgs->devtree_size > 0x400000) ||
+      ((UINT64)BootArgs->devtree_size > SystemMemoryTop - AdtBase) ||
+      (AdtBase > MAX_UINT64 - BootArgs->devtree_size - EFI_PAGE_MASK))
+  {
+    return EFI_COMPROMISED_DATA;
+  }
+
+  Top = ALIGN_VALUE (AdtBase + BootArgs->devtree_size, EFI_PAGE_SIZE);
+  Size = Top - Base;
+  if ((Top > SystemMemoryTop) || (Size > MAX_UINT32) ||
+      ((Base < FdTop) && (PcdGet64 (PcdFdBaseAddress) < Top)) ||
+      (UefiMemorySize > MAX_UINT64 - UefiMemoryBase) ||
+      ((Base < UefiMemoryBase + UefiMemorySize) && (UefiMemoryBase < Top)) ||
+      !ReserveMemoryRegion (Base, (UINT32)Size))
+  {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: copied boot handoff conflicts with reserved memory\n"));
+    return EFI_COMPROMISED_DATA;
+  }
+
+  DEBUG ((DEBUG_INFO, "MemoryInitPeiLib: reserved copied boot handoff 0x%lx..0x%lx\n", Base, Top));
+  return EFI_SUCCESS;
 }
 
 
@@ -161,6 +215,7 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   UINT64                              AppendedReservationSize;
   EFI_PHYSICAL_ADDRESS                AppendedTop;
   NTASI_APPENDED_RAMDISK_LOCATION     AppendedLocation;
+  EFI_STATUS                         Status;
 
   // build up virtual memory map
   BuildVirtualMemoryMap(&MemoryTable);
@@ -390,6 +445,11 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   }
 
 
+
+  Status = ReserveBootHandoff (SystemMemoryTop, FdTop, UefiMemoryBase, UefiMemorySize);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   // Build Memory Allocation Hob
   InitMmu (MemoryTable);
