@@ -2,6 +2,17 @@
 #include "memory-peim-host.h"
 #include <Library/AppleDTLib.h>
 #include <AppendedRamdisk.h>
+#include <sys/mman.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
+#define MTP_BASE 0x10020000000ULL
+#define MTP_SIZE 0x200000ULL
+static dt_node_t chosen;
+static bool mtp_property, mtp_no_chosen;
+static UINT8 mtp_disabled[4];
+static size_t mtp_length;
 
 UINT64 PcdSystemMemoryBase, PcdSystemMemorySize, PcdFdBaseAddress, PcdFdSize;
 UINT64 PcdBootArgsPointer, PcdAdtPointer, PcdFrameBufferAddress, PcdFrameBufferSize;
@@ -38,9 +49,11 @@ RETURN_STATUS ArmConfigureMmu(ARM_MEMORY_REGION_DESCRIPTOR *table, void **base, 
 UINTN AsciiSPrint(char *str, UINTN size, const char *format, ...) {
   va_list args; va_start(args,format); int n=vsnprintf(str,size,format,args); va_end(args); return n;
 }
-dt_node_t *dt_get(const char *name) { (void)name; return NULL; }
+dt_node_t *dt_get(const char *name) { return !mtp_no_chosen && !strcmp(name,"/chosen") ? &chosen : NULL; }
 void *dt_node_prop(dt_node_t *node, const char *name, size_t *length) {
-  (void)node; (void)name; (void)length; abort();
+  assert(node == &chosen);
+  if (strcmp(name,"aura,windows-mtp-disabled") || !mtp_property) return NULL;
+  *length=mtp_length; return mtp_disabled;
 }
 void BuildMemoryTypeInformationHob(void) { abort(); }
 EFI_STATUS MemoryPeim(EFI_PHYSICAL_ADDRESS base, UINT64 size);
@@ -48,7 +61,29 @@ EFI_STATUS MemoryPeim(EFI_PHYSICAL_ADDRESS base, UINT64 size);
 int main(int argc, char **argv) {
   assert(argc == 2);
   const char *name=argv[1];
-  void *arena=aligned_alloc(4096, 64U*1024*1024);
+  bool mtp_case=!strncmp(name,"mtp-",4);
+  UINT64 hint=MTP_BASE-16U*1024*1024;
+  if (!strcmp(name,"mtp-outside-below")) hint=MTP_BASE+MTP_SIZE;
+  if (!strcmp(name,"mtp-outside-above")) hint=MTP_BASE-64U*1024*1024;
+  if (!strcmp(name,"mtp-partial-start")) hint=MTP_BASE+0x100000;
+  if (!strcmp(name,"mtp-partial-end")) hint=MTP_BASE-63U*1024*1024;
+  if (!strcmp(name,"mtp-at-base")) hint=MTP_BASE;
+  if (!strcmp(name,"mtp-at-end")) hint=MTP_BASE-62U*1024*1024;
+  void *arena;
+  if (!mtp_case) arena=aligned_alloc(4096,64U*1024*1024);
+  else {
+#ifdef __APPLE__
+    mach_vm_address_t address=hint;
+    kern_return_t status=mach_vm_allocate(mach_task_self(),&address,64U*1024*1024,VM_FLAGS_FIXED);
+    arena=status==KERN_SUCCESS ? (void *)(UINTN)address : MAP_FAILED;
+#else
+    arena=mmap((void *)(UINTN)hint,64U*1024*1024,PROT_READ|PROT_WRITE,
+               MAP_PRIVATE|MAP_ANON|MAP_FIXED_NOREPLACE,-1,0);
+#endif
+  }
+  if (mtp_case && arena != (void *)(UINTN)hint) {
+    fprintf(stderr,"cannot map isolated physical-contract fixture at requested address\n"); return 9;
+  }
   assert(arena); memset(arena,0,64U*1024*1024);
   UINT64 base=(UINTN)arena;
   PcdSystemMemoryBase=base; PcdSystemMemorySize=64U*1024*1024;
@@ -61,6 +96,25 @@ int main(int argc, char **argv) {
     PcdBootArgsPointer=base+PcdSystemMemorySize-0x84000;
     PcdAdtPointer=PcdBootArgsPointer+0x4000;
     uefi_base=base+40U*1024*1024; uefi_size=8U*1024*1024;
+  }
+  if (mtp_case) {
+    mtp_property=strcmp(name,"mtp-absent")!=0; mtp_length=4;
+    mtp_no_chosen=!strcmp(name,"mtp-no-chosen");
+    mtp_disabled[0]=!strcmp(name,"mtp-disabled") ? 1 : 0;
+    expected_ok=!strcmp(name,"mtp-active") || !strcmp(name,"mtp-disabled") ||
+      !strcmp(name,"mtp-absent") || !strcmp(name,"mtp-no-chosen") || !strcmp(name,"mtp-outside-below") ||
+      !strcmp(name,"mtp-outside-above") || !strcmp(name,"mtp-at-base") || !strcmp(name,"mtp-at-end");
+    if (!strcmp(name,"mtp-at-end")) {uefi_base=base+40U*1024*1024;uefi_size=8U*1024*1024;}
+    if (!strcmp(name,"mtp-invalid-length")) mtp_length=3;
+    if (!strcmp(name,"mtp-invalid-value")) mtp_disabled[0]=2;
+    if (!strcmp(name,"mtp-overlap-fd")) PcdFdBaseAddress=MTP_BASE;
+    if (!strcmp(name,"mtp-overlap-uefi")) {uefi_base=MTP_BASE;uefi_size=4U*1024*1024;}
+    if (!strcmp(name,"mtp-overlap-boot")) {PcdBootArgsPointer=MTP_BASE;PcdAdtPointer=MTP_BASE+0x4000;}
+    if (!strcmp(name,"mtp-overlap-hole")) {
+      BuildResourceDescriptorHob(EFI_RESOURCE_SYSTEM_MEMORY,63,base,MTP_BASE-base);
+      BuildResourceDescriptorHob(EFI_RESOURCE_MEMORY_RESERVED,0,MTP_BASE,0x1000);
+      BuildResourceDescriptorHob(EFI_RESOURCE_SYSTEM_MEMORY,63,MTP_BASE+0x1000,base+PcdSystemMemorySize-MTP_BASE-0x1000);
+    }
   }
   struct boot_args *ba=(void *)(UINTN)PcdBootArgsPointer;
   ba->devtree_size=0x80000;
@@ -86,11 +140,15 @@ int main(int argc, char **argv) {
   EFI_STATUS result=MemoryPeim(uefi_base,uefi_size);
   if (expected_ok) {
     if (result != EFI_SUCCESS || !installed_mmu) return 2;
-    bool reserved=false;
+    bool reserved=false, mtp_reserved=false, mtp_allocatable=false;
+    bool expect_mtp=mtp_case && (!mtp_property || mtp_disabled[0]==0) &&
+      MTP_BASE>=base && MTP_BASE+MTP_SIZE<=base+PcdSystemMemorySize;
     UINT64 total=0;
     for (size_t i=0;i<count;i++) {
       UINT64 end=hobs[i].PhysicalStart+hobs[i].ResourceLength;
       total+=hobs[i].ResourceLength;
+      if (hobs[i].ResourceType==EFI_RESOURCE_SYSTEM_MEMORY && hobs[i].PhysicalStart<MTP_BASE+MTP_SIZE && MTP_BASE<end) mtp_allocatable=true;
+      if (hobs[i].ResourceType==EFI_RESOURCE_MEMORY_RESERVED && hobs[i].PhysicalStart==MTP_BASE && end==MTP_BASE+MTP_SIZE) mtp_reserved=true;
       if (hobs[i].ResourceType == EFI_RESOURCE_SYSTEM_MEMORY &&
           hobs[i].PhysicalStart < scratch_end && scratch_start < end) {
         fprintf(stderr,"copied handoff remains allocatable in case %s\n",name); return 3;
@@ -98,11 +156,15 @@ int main(int argc, char **argv) {
       if (hobs[i].ResourceType == EFI_RESOURCE_MEMORY_RESERVED &&
           hobs[i].PhysicalStart == scratch_start && end == scratch_end) reserved=true;
     }
+    if (expect_mtp && (mtp_allocatable || !mtp_reserved)) {
+      fprintf(stderr,"active MTP staging or RTKit pool remains allocatable: %s\n",name); return 6;
+    }
+    if (!expect_mtp && mtp_reserved) return 7;
     if (!reserved || total != PcdSystemMemorySize || allocation_count != 1 ||
         allocation_base != PcdFdBaseAddress || allocation_size != PcdFdSize) return 4;
   } else if (result == EFI_SUCCESS || installed_mmu) {
     fprintf(stderr,"unsafe handoff accepted: %s\n",name); return 5;
   }
   printf("{\"case\":\"%s\",\"result\":\"passed\",\"resource_hobs\":%zu}\n",name,count);
-  free(arena); return 0;
+  if (mtp_case) munmap(arena,64U*1024*1024); else free(arena); return 0;
 }
