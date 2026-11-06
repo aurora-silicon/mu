@@ -3996,6 +3996,44 @@ Done:
 
 STATIC
 BOOLEAN
+AppleMtpTableAdmitted (
+  IN CONST EFI_ACPI_DESCRIPTION_HEADER  *Table,
+  IN UINTN                              Size
+  )
+{
+  CONST VOID  *Property;
+  size_t       Length;
+  UINT32       Disabled;
+
+  if (Size < sizeof (*Table)) {
+    return FALSE;
+  }
+  if ((Table->Signature != SIGNATURE_32 ('S', 'S', 'D', 'T')) ||
+      (CompareMem (&Table->OemTableId, "J813MTP", 8) != 0))
+  {
+    return TRUE;
+  }
+
+  Property = dt_get_prop ("/chosen", "aura,windows-mtp-disabled", &Length);
+  if (Property == NULL) {
+    // Legacy m1n1 provides the established handoff without an Aura marker.
+    return TRUE;
+  }
+  if (Length != sizeof (Disabled)) {
+    DEBUG ((DEBUG_ERROR, "Aura MTP: malformed handoff policy; MTP0 withheld\n"));
+    return FALSE;
+  }
+  CopyMem (&Disabled, Property, sizeof (Disabled));
+  if (Disabled != 0) {
+    DEBUG ((DEBUG_INFO, "Aura MTP: handoff unavailable (%u); MTP0 withheld\n", Disabled));
+    return FALSE;
+  }
+  DEBUG ((DEBUG_INFO, "Aura MTP: prepared handoff; publishing MTP0\n"));
+  return TRUE;
+}
+
+STATIC
+BOOLEAN
 AppleN1TableAdmitted (
   IN CONST EFI_ACPI_DESCRIPTION_HEADER  *Table,
   IN UINTN                              Size
@@ -4128,7 +4166,9 @@ AcpiPlatformEntryPoint (
       TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
       ASSERT (Size >= TableSize);
 
-      if (!AppleN1TableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size)) {
+      if (!AppleN1TableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size) ||
+          !AppleMtpTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size))
+      {
         gBS->FreePool (CurrentTable);
         CurrentTable = NULL;
         Instance++;
