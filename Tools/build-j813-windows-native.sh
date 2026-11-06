@@ -42,6 +42,10 @@ case "$profile" in
 esac
 
 n1_bus=FALSE
+aura_windows=FALSE
+case "$profile" in
+    internal-storage-windows|internal-storage-windows-n1) aura_windows=TRUE ;;
+esac
 test "$profile" != internal-storage-windows-n1 || n1_bus=TRUE
 ans_acpi=${ans_acpi:-FALSE}
 if test "$ans" = true; then
@@ -62,7 +66,9 @@ test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64 || {
     exit 1
 }
 cd "$source_root"
-python3 Tools/check-j813-exception-base.py
+if test "$aura_windows" = TRUE; then
+    python3 Tools/check-j813-exception-base.py
+fi
 
 mu_python=${AURORADBG_MU_PYTHON:-$(command -v python3.12 || command -v python3)}
 venv=${AURORADBG_MU_NATIVE_VENV:-$source_root/.venv-native}
@@ -137,6 +143,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
     "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
     "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
     "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
+    "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
     "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1; then
     # Homebrew llvm-rc parses an absolute POSIX input path beginning with '/' as
     # an option. Complete the deterministic HII resource step from its output
@@ -156,6 +163,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
             "BLD_*_NTASI_ANS_PUBLISH_BLOCK_IO=$ans_block_io" \
             "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
             "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
+            "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
             "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1 || {
             tail -80 "$log" >&2
             exit 1

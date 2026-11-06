@@ -31,6 +31,16 @@ must show the explicit exception-library override and compiled HVC calls. These
 checks do not establish target exception return, interrupt delivery, or Windows
 boot. Those need separately recorded J813 hardware runs.
 
+### Profile-isolation failure model
+
+Selecting the Aura exception library for the J813 UEFI-shell, internal-storage,
+or storage-probe profiles would silently change their hypervisor requirements.
+The new library must therefore default off and be selected explicitly only by
+the two Windows profiles. The pinned-input check must follow the same gate.
+Validation must inspect a legacy profile's actual build report for the original
+ArmExceptionLib, and both Windows reports for AuraArmExceptionLib. Other profile
+settings and runtime code must remain unchanged in this correction.
+
 ## Public inputs and overlay
 
 The exception entry and ordinary callback/fatal dispatch come from the pinned
