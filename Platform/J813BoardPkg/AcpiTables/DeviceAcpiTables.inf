@@ -23,6 +23,7 @@
   MTP.asl
   SMCG.asl
   N1.asl
+  CPUF.asl
 
 [Packages]
   ArmPkg/ArmPkg.dec
