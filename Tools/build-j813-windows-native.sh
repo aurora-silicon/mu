@@ -68,6 +68,7 @@ test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64 || {
 cd "$source_root"
 if test "$aura_windows" = TRUE; then
     python3 Tools/check-j813-exception-base.py
+    python3 Tools/check-j813-phase-policy.py
 fi
 
 mu_python=${AURORADBG_MU_PYTHON:-$(command -v python3.12 || command -v python3)}
