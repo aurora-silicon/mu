@@ -3674,6 +3674,40 @@ AcpiPlatformInstallAppleAnsTable (
     return EFI_DEVICE_ERROR;
   }
 
+  // Match the working AppleNANDStorageDxe selection. T8142's ANS reg[3]
+  // aperture does not contain standard CC/CSTS/AQA/ASQ/ACQ registers; reg[9]
+  // must be a separate fourth Windows resource. A zero-length ADT marker
+  // cannot serve as a reliable value-pointer test for this required BAR.
+  // Other SoCs keep the reg[9] presence test above; on T8142 the BAR is
+  // required, page aligned and disjoint from resources 0..2.
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
+  SecureNvmeBar = TRUE;
+  {
+    UINT64  OtherBase[3] = { CpuBase, NvmeBase, SartBase };
+    UINT64  OtherSize[3] = { CpuSize, NvmeSize, SartSize };
+    UINTN   Index;
+
+    if ((SartVersion != 3) ||
+        (dt_node_reg (AnsNode, 9, &NvmeStandardBase, &NvmeStandardSize) != 0) ||
+        (NvmeStandardBase == 0) ||
+        (((NvmeStandardBase | NvmeStandardSize) & 0xFFF) != 0) ||
+        !AppleAnsMmioRangeValid (NvmeStandardBase, NvmeStandardSize, APPLE_ANS_NVME_SECURE_MIN_SIZE))
+    {
+      DEBUG ((DEBUG_ERROR, "AppleANS ACPI: invalid or missing T8142 secure NVMe reg[9]; ANS0 withheld\n"));
+      return EFI_DEVICE_ERROR;
+    }
+
+    for (Index = 0; Index < 3; Index++) {
+      if ((NvmeStandardBase <= OtherBase[Index] + OtherSize[Index] - 1) &&
+          (OtherBase[Index] <= NvmeStandardBase + NvmeStandardSize - 1))
+      {
+        DEBUG ((DEBUG_ERROR, "AppleANS ACPI: secure NVMe reg[9] overlaps resource %u; ANS0 withheld\n", (UINT32)Index));
+        return EFI_DEVICE_ERROR;
+      }
+    }
+  }
+#endif
+
   Status = AmlCodeGenDefinitionBlock (
              "SSDT",
              APPLE_ANS_ACPI_OEM_ID,
@@ -3781,7 +3815,8 @@ AcpiPlatformInstallAppleAnsTable (
   // opposed to "grant this device exclusive ownership of these bytes".
   //
   // ABI NOTE: this changes NTAS2003's _CRS from seven memory resources to
-  // three.
+  // three on older chips. T8142's fourth range above is the separate standard
+  // NVMe register BAR, not one of the retired PMGR-word resource claims.
   //
   // UPDATED 2026-07-31: the "nothing consumes the old layout today" note that
   // used to sit here was true when written and stopped being true the moment
