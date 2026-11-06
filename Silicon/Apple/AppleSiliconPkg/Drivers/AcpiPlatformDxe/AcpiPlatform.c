@@ -3994,6 +3994,55 @@ Done:
   return Status;
 }
 
+// The dedicated J813 manual-DVFS owner is absent unless Aura explicitly
+// transfers ownership. Legacy and malformed markers never enable it.
+STATIC
+BOOLEAN
+AppleCpuFreqTableAdmitted (
+  IN CONST EFI_ACPI_DESCRIPTION_HEADER  *Table,
+  IN UINTN                              Size
+  )
+{
+  CONST VOID  *Property;
+  size_t       Length;
+  UINT32       Value;
+
+  if (Size < sizeof (*Table)) {
+    return FALSE;
+  }
+  if ((Table->Signature != SIGNATURE_32 ('S', 'S', 'D', 'T')) ||
+      (CompareMem (&Table->OemTableId, "J813CPUF", 8) != 0))
+  {
+    return TRUE;
+  }
+  Property = dt_get_prop ("/chosen", "aura,windows-cpufreq-v1", &Length);
+  if ((Property == NULL) || (Length != sizeof (Value))) {
+    return FALSE;
+  }
+  CopyMem (&Value, Property, sizeof (Value));
+  if (Value != 1) {
+    return FALSE;
+  }
+  Property = dt_get_prop ("/chosen", "chip-id", &Length);
+  if ((Property == NULL) || (Length != sizeof (Value))) {
+    return FALSE;
+  }
+  CopyMem (&Value, Property, sizeof (Value));
+  if (Value != 0x8142) {
+    return FALSE;
+  }
+  Property = dt_get_prop ("/chosen", "board-id", &Length);
+  if ((Property == NULL) || (Length != sizeof (Value))) {
+    return FALSE;
+  }
+  CopyMem (&Value, Property, sizeof (Value));
+  if (Value != 0x24) {
+    return FALSE;
+  }
+  DEBUG ((DEBUG_INFO, "Aura CPU frequency: J813 manual ownership; publishing AURA8142\n"));
+  return TRUE;
+}
+
 STATIC
 BOOLEAN
 AppleMtpTableAdmitted (
@@ -4166,6 +4215,10 @@ AcpiPlatformEntryPoint (
       TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
       ASSERT (Size >= TableSize);
 
+      if (!AppleCpuFreqTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size)) {
+        gBS->FreePool (CurrentTable);
+        continue;
+      }
       if (!AppleN1TableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size) ||
           !AppleMtpTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size))
       {
