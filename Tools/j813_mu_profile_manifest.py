@@ -45,3 +45,16 @@ PROFILES = {
         ),
     },
 }
+
+# Preserve the storage/boot policy; N1 publication needs the runtime Aura record.
+PROFILES["internal-storage-windows-n1"] = {
+    **PROFILES["internal-storage-windows"],
+    "n1_bus": True,
+    "n1_handoff": "aura,windows-n1-v1",
+    "profile_abi": "aurora.j813.windows-n1.v1",
+    "description": (
+        "Windows internal storage plus optional exclusive N1 bus publication; "
+        "requires Aura's matching cold-ROM/clean-DART handoff and Mu readback. "
+        "No handoff means no N1 device. Hardware qualification remains pending."
+    ),
+}

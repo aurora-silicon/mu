@@ -1,0 +1,41 @@
+## SPDX-License-Identifier: BSD-2-Clause-Patent
+## Windows-only event-boundary wrapper for the pinned public Mu phase driver.
+[Defines]
+  INF_VERSION = 0x00010017
+  BASE_NAME = AuraVarPolicyFoundationDxe
+  FILE_GUID = 8C7DB881-DA76-4486-8654-8152EE3470A3
+  VERSION_STRING = 1.0
+  MODULE_TYPE = DXE_DRIVER
+  ENTRY_POINT = MuVarPolicyFoundationDxeMain
+
+[Sources]
+  AuraVarPolicyFoundationDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MsCorePkg/MsCorePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  DebugLib
+  BaseLib
+  MemoryAllocationLib
+  UefiDriverEntryPoint
+  BaseMemoryLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  VariablePolicyHelperLib
+
+[Protocols]
+  gEdkiiVariablePolicyProtocolGuid
+
+[Guids]
+  gMuVarPolicyDxePhaseGuid
+  gMuVarPolicyWriteOnceStateVarGuid
+  gEfiEndOfDxeEventGroupGuid
+  gEfiEventReadyToBootGuid
+  gEfiEventBeforeExitBootServicesGuid
+
+[Depex]
+  gEfiVariableArchProtocolGuid AND
+  gEdkiiVariablePolicyProtocolGuid

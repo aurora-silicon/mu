@@ -35,6 +35,8 @@
 
 #include <IndustryStandard/Acpi.h>
 #include <IndustryStandard/J414sWirelessHandoff.h>
+#include <IndustryStandard/AuraN1Handoff.h>
+#include <Library/IoLib.h>
 #include <Drivers/AppleAnsHardware.h>
 //
 // Moved out of this directory on 2026-07-30 so AppleNANDStorageDxe can share
@@ -2816,10 +2818,11 @@ Exit:
   hardware profile are derived from the live Apple Device Tree so one firmware
   binary does not bake in a board-specific MMIO map.
 
-  The three memory resources have a stable ABI with the Windows miniport:
+  The first three memory resources have a stable ABI with the Windows miniport:
     0: ASC CPU/mailbox aperture (mailbox registers are at +0x8000)
     1: ANS NVMe aperture (ADT reg[3])
     2: SART aperture
+  T8142 additionally requires resource 3: standard NVMe registers (ADT reg[9]).
 
   CHANGED 2026-07-30: NTAS2003 used to append four more resources -- the exact
   4-byte ps_ans2 / ps_apcie_st / ps_apcie_st_sys / ps_apcie_st1_sys PMGR words
@@ -2849,6 +2852,8 @@ AcpiPlatformInstallAppleAnsTable (
   UINT64                       CpuSize;
   UINT64                       NvmeBase;
   UINT64                       NvmeSize;
+  UINT64                       NvmeStandardBase;
+  UINT64                       NvmeStandardSize;
   UINT64                       SartBase;
   UINT64                       SartSize;
   UINT64                       PmgrResetBase;
@@ -2868,6 +2873,7 @@ AcpiPlatformInstallAppleAnsTable (
   UINTN                        PropertySize;
   UINTN                        InterruptsSize;
   BOOLEAN                      Legacy;
+  BOOLEAN                      SecureNvmeBar;
   CONST CHAR8                  *HardwareId;
   CONST CHAR8                  *InterruptContract;
   CONST CHAR8                  *PmgrDomainName;
@@ -2878,6 +2884,8 @@ AcpiPlatformInstallAppleAnsTable (
   PmgrApcieStBase = 0;
   PmgrApcieStSysBase = 0;
   PmgrApcieSt1SysBase = 0;
+  NvmeStandardBase = 0;
+  NvmeStandardSize = 0;
 
   //
   // Do not publish the ANS controller in a build whose FV has no
@@ -3217,6 +3225,41 @@ AcpiPlatformInstallAppleAnsTable (
     return EFI_DEVICE_ERROR;
   }
 
+  // Match the working AppleNANDStorageDxe selection. T8142's ANS reg[3]
+  // aperture does not contain standard CC/CSTS/AQA/ASQ/ACQ registers; reg[9]
+  // must be a separate fourth Windows resource. A zero-length ADT marker
+  // cannot serve as a reliable value-pointer test for this required BAR.
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
+  SecureNvmeBar = TRUE;
+#else
+  SecureNvmeBar = AppleAnsPropertyContains (AnsNode, "compatible", "t8142") ||
+                  AppleAnsPropertyContains (dt_get ("/"), "compatible", "j813");
+#endif
+  if (SecureNvmeBar) {
+    UINT64  OtherBase[3] = { CpuBase, NvmeBase, SartBase };
+    UINT64  OtherSize[3] = { CpuSize, NvmeSize, SartSize };
+    UINTN   Index;
+
+    if ((SartVersion != 3) ||
+        (dt_node_reg (AnsNode, 9, &NvmeStandardBase, &NvmeStandardSize) != 0) ||
+        (NvmeStandardBase == 0) ||
+        (((NvmeStandardBase | NvmeStandardSize) & 0xFFF) != 0) ||
+        !AppleAnsMmioRangeValid (NvmeStandardBase, NvmeStandardSize, APPLE_ANS_NVME_STANDARD_MIN_SIZE))
+    {
+      DEBUG ((DEBUG_ERROR, "AppleANS ACPI: invalid or missing T8142 secure NVMe reg[9]; ANS0 withheld\n"));
+      return EFI_DEVICE_ERROR;
+    }
+
+    for (Index = 0; Index < 3; Index++) {
+      if ((NvmeStandardBase <= OtherBase[Index] + OtherSize[Index] - 1) &&
+          (OtherBase[Index] <= NvmeStandardBase + NvmeStandardSize - 1))
+      {
+        DEBUG ((DEBUG_ERROR, "AppleANS ACPI: secure NVMe reg[9] overlaps resource %u; ANS0 withheld\n", (UINT32)Index));
+        return EFI_DEVICE_ERROR;
+      }
+    }
+  }
+
   Status = AmlCodeGenDefinitionBlock (
              "SSDT",
              APPLE_ANS_ACPI_OEM_ID,
@@ -3278,6 +3321,13 @@ AcpiPlatformInstallAppleAnsTable (
     goto Exit;
   }
 
+  if (SecureNvmeBar) {
+    Status = AppleAnsAddMemoryResource (CrsNode, NvmeStandardBase, NvmeStandardSize);
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+  }
+
   //
   // THE FOUR PMGR WORDS ARE NO LONGER _CRS RESOURCES (fixed 2026-07-30).
   //
@@ -3313,7 +3363,8 @@ AcpiPlatformInstallAppleAnsTable (
   // opposed to "grant this device exclusive ownership of these bytes".
   //
   // ABI NOTE: this changes NTAS2003's _CRS from seven memory resources to
-  // three.
+  // three on older chips. T8142's fourth range above is the separate standard
+  // NVMe register BAR, not one of the retired PMGR-word resource claims.
   //
   // UPDATED 2026-07-31: the "nothing consumes the old layout today" note that
   // used to sit here was true when written and stopped being true the moment
@@ -3409,6 +3460,9 @@ AcpiPlatformInstallAppleAnsTable (
                         &TableHandle
                         );
   if (!EFI_ERROR (Status)) {
+    if (SecureNvmeBar) {
+      DEBUG ((DEBUG_INFO, "AppleANS ACPI: resource[3] secure-standard=%Lx/%Lx\n", NvmeStandardBase, NvmeStandardSize));
+    }
     DEBUG ((
       DEBUG_INFO,
       "AppleANS ACPI: %a cpu=%lx/%lx nvme=%lx/%lx sart=%lx/%lx pmgr-ans2=%lx apcie-st=%lx st-sys=%lx st1-sys=%lx "
@@ -3875,6 +3929,164 @@ AppleAcpiPlatformChecksum (
 //   return EFI_UNSUPPORTED;
 // }
 
+STATIC
+EFI_STATUS
+AppleApplyUsbDisabledPolicy (
+  IN OUT EFI_ACPI_COMMON_HEADER  **Table
+  )
+{
+  EFI_ACPI_DESCRIPTION_HEADER  *Header = (EFI_ACPI_DESCRIPTION_HEADER *)*Table;
+  EFI_ACPI_DESCRIPTION_HEADER  *Updated = NULL;
+  AML_ROOT_NODE_HANDLE          Root = NULL;
+  AML_NODE_HANDLE               Policy = NULL;
+  CONST VOID                   *Property;
+  size_t                        Length;
+  UINT32                        Disabled;
+  EFI_STATUS                    Status;
+
+  // Other platform tables retain their existing publication policy.
+  if ((Header->Signature != SIGNATURE_32 ('D', 'S', 'D', 'T')) ||
+      (CompareMem (&Header->OemTableId, "J813", 4) != 0))
+  {
+    return EFI_SUCCESS;
+  }
+
+  Property = dt_get_prop ("/chosen", "aura,windows-usb-disabled", &Length);
+  if (Property == NULL) {
+    return EFI_SUCCESS;
+  }
+  if (Length != sizeof (Disabled)) {
+    return EFI_COMPROMISED_DATA;
+  }
+  CopyMem (&Disabled, Property, sizeof (Disabled));
+  if (Disabled != 1) {
+    return EFI_COMPROMISED_DATA;
+  }
+
+  Status = AmlParseDefinitionBlock (Header, &Root);
+  if (EFI_ERROR (Status)) {
+    goto Done;
+  }
+  Status = AmlFindNode (Root, "\\_SB.AUSD", &Policy);
+  if (EFI_ERROR (Status) || (Policy == NULL)) {
+    Status = EFI_COMPROMISED_DATA;
+    goto Done;
+  }
+  Status = AmlNameOpUpdateInteger ((AML_OBJECT_NODE_HANDLE)Policy, 1);
+  if (EFI_ERROR (Status)) {
+    goto Done;
+  }
+  Status = AmlSerializeDefinitionBlock (Root, &Updated);
+  if (!EFI_ERROR (Status)) {
+    gBS->FreePool (*Table);
+    *Table = (EFI_ACPI_COMMON_HEADER *)Updated;
+    Updated = NULL;
+    DEBUG ((DEBUG_INFO, "Aura USB: explicit disabled policy; XHC0/XHC1 withheld\n"));
+  }
+
+Done:
+  if (Updated != NULL) {
+    gBS->FreePool (Updated);
+  }
+  if (Root != NULL) {
+    AmlDeleteTree (Root);
+  }
+  return Status;
+}
+
+STATIC
+BOOLEAN
+AppleMtpTableAdmitted (
+  IN CONST EFI_ACPI_DESCRIPTION_HEADER  *Table,
+  IN UINTN                              Size
+  )
+{
+  CONST VOID  *Property;
+  size_t       Length;
+  UINT32       Disabled;
+
+  if (Size < sizeof (*Table)) {
+    return FALSE;
+  }
+  if ((Table->Signature != SIGNATURE_32 ('S', 'S', 'D', 'T')) ||
+      (CompareMem (&Table->OemTableId, "J813MTP", 8) != 0))
+  {
+    return TRUE;
+  }
+
+  Property = dt_get_prop ("/chosen", "aura,windows-mtp-disabled", &Length);
+  if (Property == NULL) {
+    // Legacy m1n1 provides the established handoff without an Aura marker.
+    return TRUE;
+  }
+  if (Length != sizeof (Disabled)) {
+    DEBUG ((DEBUG_ERROR, "Aura MTP: malformed handoff policy; MTP0 withheld\n"));
+    return FALSE;
+  }
+  CopyMem (&Disabled, Property, sizeof (Disabled));
+  if (Disabled != 0) {
+    DEBUG ((DEBUG_INFO, "Aura MTP: handoff unavailable (%u); MTP0 withheld\n", Disabled));
+    return FALSE;
+  }
+  DEBUG ((DEBUG_INFO, "Aura MTP: prepared handoff; publishing MTP0\n"));
+  return TRUE;
+}
+
+STATIC
+BOOLEAN
+AppleN1TableAdmitted (
+  IN CONST EFI_ACPI_DESCRIPTION_HEADER  *Table,
+  IN UINTN                              Size
+  )
+{
+  CONST VOID             *Record;
+  CONST VOID             *Property;
+  size_t                  Length;
+  UINT32                  Chip;
+  UINT32                  Board;
+  struct aura_n1_reader   Reader = { NULL, AuraN1Read32 };
+  int                     Result;
+
+  if ((Size < sizeof (*Table)) ||
+      (CompareMem (&Table->OemTableId, AURA_N1_ACPI_TABLE_ID, 8) != 0))
+  {
+    return TRUE;
+  }
+
+  if (!FixedPcdGetBool (PcdAppleN1BusHandoff)) {
+    DEBUG ((DEBUG_INFO, "Aura N1: profile disabled; AURA8130 withheld\n"));
+    return FALSE;
+  }
+
+  // Property lookup and byte validation happen before the first MMIO read.
+  // Absence of the record never authorizes probing a powered-down controller.
+  Record = dt_get_prop ("/chosen", AURA_N1_HANDOFF_PROPERTY, &Length);
+  if ((Record == NULL) || (Length != AURA_N1_HANDOFF_BYTES)) {
+    DEBUG ((DEBUG_ERROR, "Aura N1: no valid-sized handoff; AURA8130 withheld\n"));
+    return FALSE;
+  }
+
+  Property = dt_get_prop ("/chosen", "chip-id", &Length);
+  if ((Property == NULL) || (Length != sizeof (Chip))) {
+    return FALSE;
+  }
+  CopyMem (&Chip, Property, sizeof (Chip));
+  Property = dt_get_prop ("/chosen", "board-id", &Length);
+  if ((Property == NULL) || (Length != sizeof (Board))) {
+    return FALSE;
+  }
+  CopyMem (&Board, Property, sizeof (Board));
+
+  Result = aura_n1_validate (Record, AURA_N1_HANDOFF_BYTES, Chip, Board, &Reader);
+  if (Result != 0) {
+    DEBUG ((DEBUG_ERROR, "Aura N1: handoff/readback rejected (%d); AURA8130 withheld\n", Result));
+    return FALSE;
+  }
+
+  DEBUG ((DEBUG_INFO, "Aura N1: cold ROM and clean SID0 verified; publishing AURA8130\n"));
+  return TRUE;
+}
+
 /**
   Entrypoint of Acpi Platform driver.
 
@@ -3953,6 +4165,22 @@ AcpiPlatformEntryPoint (
 
       TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
       ASSERT (Size >= TableSize);
+
+      if (!AppleN1TableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size) ||
+          !AppleMtpTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size))
+      {
+        gBS->FreePool (CurrentTable);
+        CurrentTable = NULL;
+        Instance++;
+        continue;
+      }
+      Status = AppleApplyUsbDisabledPolicy (&CurrentTable);
+      if (EFI_ERROR (Status)) {
+        DEBUG ((DEBUG_ERROR, "Aura USB: policy rejected; DSDT publication aborted: %r\n", Status));
+        gBS->FreePool (CurrentTable);
+        return EFI_ABORTED;
+      }
+      TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
 
       //
       // Checksum ACPI table
