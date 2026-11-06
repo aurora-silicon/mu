@@ -22,6 +22,7 @@
   DSDT.asl
   MTP.asl
   SMCG.asl
+  N1.asl
 
 [Packages]
   ArmPkg/ArmPkg.dec

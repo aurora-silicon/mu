@@ -1,0 +1,31 @@
+## SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = AuraArmExceptionLib
+  FILE_GUID = 54ab5f36-f934-4f48-8c35-8f468facb3ad
+  MODULE_TYPE = BASE
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = CpuExceptionHandlerLib
+
+[Sources.AARCH64]
+  AuraArmExceptionLib.c
+  AuraExceptionForward.c
+  AuraAArch64Exception.c
+  AuraExceptionSupport.S | GCC
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  ArmLib
+  ArmHvcLib
+  BaseLib
+  SynchronizationLib
+  BaseMemoryLib
+  CacheMaintenanceLib
+  DebugLib
+  DefaultExceptionHandlerLib
+  MemoryAllocationLib

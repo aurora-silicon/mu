@@ -50,6 +50,8 @@
   DEFINE NTASI_ANS_DXE_BRINGUP = FALSE
   DEFINE NTASI_ANS_PUBLISH_BLOCK_IO = FALSE
   DEFINE NTASI_ANS_PRESERVE_FOR_OS = FALSE
+  # Runtime Aura descriptor/readback is also mandatory; this only permits it.
+  DEFINE NTASI_ENABLE_N1_BUS = FALSE
   # Enabling the storage features disables the interactive MTP survey. Its
   # eight-second delay loop depends on the guest counter path and can dominate
   # or stall supervised T8142 boots before ANS is dispatched.
@@ -82,6 +84,7 @@
 
 
 [PcdsFixedAtBuild.common]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff|$(NTASI_ENABLE_N1_BUS)
   #
   # Do not reset when the MemoryTypeInformation variable changes.
   #
@@ -253,3 +256,6 @@ AppleSiliconPkg/Application/StorageProbe/StorageProbe.inf
 #
 [PcdsFixedAtBuild.common]
   gAppleSiliconPkgTokenSpaceGuid.PcdConsoleScaleDivisor|1
+
+[LibraryClasses.AARCH64]
+  CpuExceptionHandlerLib|AppleSiliconPkg/Library/AuraArmExceptionLib/AuraArmExceptionLib.inf

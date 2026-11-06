@@ -25,6 +25,8 @@
 [Sources]
   AcpiPlatform.c
   NtasiGpuReservationGuard.h
+  AuraN1Handoff.c
+  AuraN1Read.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -34,6 +36,7 @@
   DynamicTablesPkg/DynamicTablesPkg.dec
 
 [LibraryClasses]
+  ArmHvcLib
   UefiLib
   PcdLib
   DebugLib
@@ -87,6 +90,7 @@
   # PcdSystemMemorySize's ceiling from a stale hardcoded constant. See
   # NtasiDerivePhysicalDramWindow() in AcpiPlatform.c.
   gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer              ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff             ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableBase ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableSize ## CONSUMES
 

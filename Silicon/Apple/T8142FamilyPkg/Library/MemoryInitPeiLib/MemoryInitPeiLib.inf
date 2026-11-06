@@ -44,6 +44,8 @@
   gEmbeddedTokenSpaceGuid.PcdPrePiProduceMemoryTypeInformationHob
 
 [FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
   gArmTokenSpaceGuid.PcdFdSize
 
   gAppleSiliconPkgTokenSpaceGuid.PcdSystemMemoryUefiRegionSize
