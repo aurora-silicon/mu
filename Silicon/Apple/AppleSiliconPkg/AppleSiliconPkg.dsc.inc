@@ -626,7 +626,15 @@
   #AppleSiliconPkg/Driver/SecureBootProvisioningDxe/SecureBootProvisioningDxe.inf
 !endif
 
+!ifdef NTASI_AURA_WINDOWS
+!if $(NTASI_AURA_WINDOWS) == TRUE
+  AppleSiliconPkg/Drivers/AuraVarPolicyFoundationDxe/AuraVarPolicyFoundationDxe.inf
+!else
   MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.inf
+!endif
+!else
+  MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.inf
+!endif
 
   #
   # DWC3 bringup module
