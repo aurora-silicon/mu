@@ -11,6 +11,8 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
+#include <Protocol/AcpiTable.h>
+#include <Protocol/AcpiSystemDescriptionTable.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -28,9 +30,17 @@ static UINT64 expected_boot_dest, expected_adt_dest;
 static struct boot_args copied_args;
 static void *copied_adt;
 static unsigned copy_calls;
+static const char *acpi_output;
+static unsigned installed_report_count;
+static unsigned char installed_report[724];
+static int existing_report, repeat_report, install_failure;
+static int sdt_unavailable, sdt_error, sdt_endless;
+static int ready_report_duplicate, ready_report_tamper, ready_report_missing;
+EFI_GUID gEfiAcpiSdtProtocolGuid = EFI_ACPI_SDT_PROTOCOL_GUID;
 BOOLEAN EarlySetup(VOID *, UINT64 *, UINT64 *, VOID *, VOID *);
 EFI_STATUS ReserveG17Handoff(UINT64, UINT64);
 EFI_STATUS AuraG17VerifyPreservation(VOID);
+EFI_STATUS AuraG17PublishReport(EFI_ACPI_TABLE_PROTOCOL *);
 
 VOID EFIAPI DebugPrint(UINTN Level, CONST CHAR8 *Format, ...) { (void)Level; (void)Format; }
 BOOLEAN EFIAPI DebugPrintEnabled(VOID) { return FALSE; }
@@ -127,7 +137,34 @@ static EFI_STATUS EFIAPI get_map(UINTN *size, EFI_MEMORY_DESCRIPTOR *map, UINTN 
   }
   *size=n*sizeof(*map); return capacity<*size || !map ? EFI_BUFFER_TOO_SMALL : EFI_SUCCESS;
 }
-static EFI_BOOT_SERVICES services={.GetMemoryMap=get_map};
+static EFI_STATUS EFIAPI get_acpi(UINTN index, EFI_ACPI_SDT_HEADER **table,
+                                EFI_ACPI_TABLE_VERSION *version, UINTN *key)
+{
+  static EFI_ACPI_SDT_HEADER preexisting = {.Signature=SIGNATURE_32('A','G','1','7')};
+  static EFI_ACPI_SDT_HEADER unrelated = {.Signature=SIGNATURE_32('T','E','S','T')};
+  *version=EFI_ACPI_TABLE_VERSION_2_0;*key=index;
+  if(sdt_error)return EFI_DEVICE_ERROR;
+  if(sdt_endless){*table=&unrelated;return EFI_SUCCESS;}
+  if(index==0 && existing_report){*table=&preexisting;return EFI_SUCCESS;}
+  if(index==(existing_report?1u:0u) && installed_report_count){*table=(void *)installed_report;return EFI_SUCCESS;}
+  return EFI_NOT_FOUND;
+}
+static EFI_ACPI_SDT_PROTOCOL sdt={.GetAcpiTable=get_acpi};
+static EFI_STATUS EFIAPI locate_protocol(EFI_GUID *guid, VOID *registration, VOID **interface)
+{
+  (void)registration;
+  if(sdt_unavailable || memcmp(guid,&gEfiAcpiSdtProtocolGuid,sizeof(*guid)))return EFI_NOT_FOUND;
+  *interface=&sdt;return EFI_SUCCESS;
+}
+static EFI_STATUS EFIAPI install_acpi(EFI_ACPI_TABLE_PROTOCOL *self, VOID *table, UINTN size, UINTN *key)
+{
+  (void)self;assert(size==sizeof(installed_report));
+  if(install_failure)return EFI_OUT_OF_RESOURCES;
+  assert(installed_report_count==0);memcpy(installed_report,table,size);++installed_report_count;*key=1;
+  return EFI_SUCCESS;
+}
+static EFI_ACPI_TABLE_PROTOCOL acpi={.InstallAcpiTable=install_acpi};
+static EFI_BOOT_SERVICES services={.GetMemoryMap=get_map,.LocateProtocol=locate_protocol};
 EFI_BOOT_SERVICES *gBS=&services;
 EFI_STATUS EFIAPI EfiCreateEventReadyToBootEx(EFI_TPL tpl, EFI_EVENT_NOTIFY notify,
                                             VOID *context, EFI_EVENT *event)
@@ -184,6 +221,16 @@ int main(int argc,char **argv)
   ((EFI_HOB_GENERIC_HEADER *)hobs.bytes)->HobType=EFI_HOB_TYPE_END_OF_HOB_LIST;
   BuildResourceDescriptorHob(EFI_RESOURCE_SYSTEM_MEMORY,0,args.phys_base,args.mem_size);
   for(i=6;i<(unsigned)argc;++i){
+    if(!strcmp(argv[i],"--acpi-output") && i+1<(unsigned)argc){acpi_output=argv[++i];continue;}
+    if(!strcmp(argv[i],"--existing-report-table")){existing_report=1;continue;}
+    if(!strcmp(argv[i],"--repeat-report-publication")){repeat_report=1;continue;}
+    if(!strcmp(argv[i],"--report-install-failure")){install_failure=1;continue;}
+    if(!strcmp(argv[i],"--report-sdt-unavailable")){sdt_unavailable=1;continue;}
+    if(!strcmp(argv[i],"--report-sdt-error")){sdt_error=1;continue;}
+    if(!strcmp(argv[i],"--report-sdt-endless")){sdt_endless=1;continue;}
+    if(!strcmp(argv[i],"--ready-report-duplicate")){ready_report_duplicate=1;continue;}
+    if(!strcmp(argv[i],"--ready-report-tamper")){ready_report_tamper=1;continue;}
+    if(!strcmp(argv[i],"--ready-report-missing")){ready_report_missing=1;continue;}
     if(!strcmp(argv[i],"--bootargs") || !strcmp(argv[i],"--bootargs-sha256")){++i;continue;}
     if(!strcmp(argv[i],"--map-fault")){map_fault=1;continue;}
     if(!strcmp(argv[i],"--ready-map-fault")){ready_map_fault=1;continue;}
@@ -210,8 +257,15 @@ int main(int argc,char **argv)
   if(EFI_ERROR(status)){fprintf(stderr,"PEI rejected\n");free(copied_adt);free(adt);return 20;}
   status=AuraG17VerifyPreservation();
   if(EFI_ERROR(status)){fprintf(stderr,"DXE rejected\n");free(copied_adt);free(adt);return 21;}
+  status=AuraG17PublishReport(&acpi);
+  if(EFI_ERROR(status)){fprintf(stderr,"report publication rejected\n");free(copied_adt);free(adt);return 23;}
+  if(repeat_report && EFI_ERROR(AuraG17PublishReport(&acpi))){free(copied_adt);free(adt);return 24;}
   if(ready_map_fault)map_fault=1;
+  if(ready_report_duplicate)existing_report=1;
+  if(ready_report_tamper)installed_report[700]^=1;
+  if(ready_report_missing)installed_report_count=0;
   if(ready)ready(NULL,NULL);
+  if(acpi_output){f=fopen(acpi_output,"wb");assert(f);if(installed_report_count)assert(fwrite(installed_report,1,sizeof(installed_report),f)==sizeof(installed_report));fclose(f);}
   record=AuraG17Record(&record_size);out=fopen(argv[5],"w");if(!out){free(adt);return 2;}
   fprintf(out,"{\"schema\":\"mu.g17.exclusions.v1\",\"hardware_touched\":false,\"marker_present\":%s,\"early_copy_calls\":2,\"early_pei_dxe_ready_to_boot_passed\":true,\"regions\":[",record?"true":"false");
   if(record)for(i=0;i<AURA_G17_REGIONS;++i){aura_g17_region(record,i,&r);fprintf(out,"%s{\"tag\":%u,\"classification\":%u,\"base\":%llu,\"size\":%llu}",i?",":"",r.tag,r.classification,(unsigned long long)r.base,(unsigned long long)r.size);}
@@ -233,5 +287,5 @@ int main(int argc,char **argv)
         (unsigned long long)map[i].PhysicalStart,(unsigned long long)map[i].NumberOfPages);
     free(map);
   }
-  fprintf(out,"]}\n");fclose(out);free(copied_adt);free(adt);return 0;
+  fprintf(out,"],\"report_table_count\":%u,\"report_table_bytes\":%u}\n",installed_report_count,installed_report_count?(unsigned)sizeof(installed_report):0);fclose(out);free(copied_adt);free(adt);return 0;
 }

@@ -8,6 +8,7 @@
 [Sources]
   AuraG17Preservation.c
   AuraG17Firmware.c
+  AuraG17Report.c
 [Packages]
   MdePkg/MdePkg.dec
   ArmPkg/ArmPkg.dec

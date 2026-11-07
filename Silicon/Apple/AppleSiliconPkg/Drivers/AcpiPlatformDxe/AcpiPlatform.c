@@ -38,6 +38,7 @@
 #include <IndustryStandard/AuraN1Handoff.h>
 #include <Library/BaseLib.h>
 EFI_STATUS AuraG17VerifyPreservation (VOID);
+EFI_STATUS AuraG17PublishReport (EFI_ACPI_TABLE_PROTOCOL *Acpi);
 #include <Library/IoLib.h>
 #include <Drivers/AppleAnsHardware.h>
 //
@@ -4193,6 +4194,12 @@ AcpiPlatformEntryPoint (
   //
   // Locate the firmware volume protocol
   //
+  Status = AuraG17PublishReport (AcpiTable);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "Aura G17: diagnostic report publication failed: %r; stopping\n", Status));
+    CpuDeadLoop ();
+  }
+
   DEBUG((DEBUG_ERROR, "%a: Locating device specific ACPI tables\n", __FUNCTION__));
   Status = LocateFvInstanceWithDeviceTables (&FwVol);
   if (EFI_ERROR (Status)) {
