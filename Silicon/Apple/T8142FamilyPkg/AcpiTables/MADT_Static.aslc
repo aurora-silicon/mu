@@ -9,8 +9,9 @@
  *     This is only a temporary implementation until dynamic allocations in
  *     AcpiPlatformDxe are implemented.
  *
- *     10 cores: 6 E-cores then 4 P-cores. The ACPI processor UIDs here MUST
- *     match the ones PPTT.aslc assigns (E = 0..5, P = 6..9).
+ *     10 cores: 6 E-cores and 4 P-cores, with the bootstrap P-core first.
+ *     The ACPI processor UIDs here MUST match the ones PPTT.aslc assigns
+ *     (E = 0..5, P = 6..9).
  *
  *     Apple silicon has no GIC; the GIC these entries describe is the one m1n1
  *     emulates for us (see hv_vgic.c), at PcdGicDistributorBase /
@@ -29,6 +30,7 @@
 #include <Library/PcdLib.h>
 #include <IndustryStandard/Acpi63.h>
 #include <Acpi/AcpiHeader.h>
+#include "T8142J813Topology.h"
 
 #define ITS_COUNT 1
 
@@ -128,14 +130,14 @@ MULTIPLE_APIC_DESCRIPTION_TABLE Madt = {
     // cpu@0..cpu@5 (Aff2=0, Aff1=0, Aff0=0..5) and P-cores are cpu@10100..cpu@10103
     // (Aff2=1, Aff1=1, Aff0=0..3). See docs/T8132-VS-T8142.md.
     //
-    // Efficiency is set to 1 for E-cores and 0 for P-cores so the OS can tell the
-    // asymmetric clusters apart (lower value == higher performance).
+    // E-cores have the lower power-efficiency class; P-cores have the higher
+    // class. Windows SYSTEM_CPU_SET_INFORMATION uses the same polarity.
     //
 
     // ---- Bootstrap CPU: must be first (see note above) ----
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 0 == ADT cpu6, the core firmware runs on
         6, 6, GET_MPIDR(0, 1, 1, 0), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 0, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_P_EFFICIENCY_CLASS, 0),
 
     // ---- Cluster 0: 6 E-cores ("sawtooth") ----
     //
@@ -156,35 +158,35 @@ MULTIPLE_APIC_DESCRIPTION_TABLE Madt = {
     //
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 0
         0, 0, GET_MPIDR(0, 0, 0, 0), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 1, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_E_EFFICIENCY_CLASS, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 1
         1, 1, GET_MPIDR(0, 0, 0, 1), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 1, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_E_EFFICIENCY_CLASS, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 2
         2, 2, GET_MPIDR(0, 0, 0, 2), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 1, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_E_EFFICIENCY_CLASS, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 3
         3, 3, GET_MPIDR(0, 0, 0, 3), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 1, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_E_EFFICIENCY_CLASS, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 4
         4, 4, GET_MPIDR(0, 0, 0, 4), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 1, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_E_EFFICIENCY_CLASS, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 5
         5, 5, GET_MPIDR(0, 0, 0, 5), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 1, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_E_EFFICIENCY_CLASS, 0),
 
     // ---- Cluster 1: 4 P-cores ("everest") ----
     // P-core 0 is not repeated here; it is the bootstrap entry at the top of the
     // list, where 5.2.12.14 requires it.
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 1
         7, 7, GET_MPIDR(0, 1, 1, 1), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 0, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_P_EFFICIENCY_CLASS, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 2
         8, 8, GET_MPIDR(0, 1, 1, 2), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 0, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_P_EFFICIENCY_CLASS, 0),
     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 3
         9, 9, GET_MPIDR(0, 1, 1, 3), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
-        0, 0, 25, 0 /* GicRBase */, 0, 0),
+        0, 0, 25, 0 /* GicRBase */, T8142_J813_P_EFFICIENCY_CLASS, 0),
 },
 EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT(0, FixedPcdGet64 (PcdGicDistributorBase), 0, 3),
 // Format: EFI_ACPI_6_3_GIC_MSI_FRAME_INIT(GicMsiFrameId, PhysicalBaseAddress, Flags, SPICount, SPIBase)
