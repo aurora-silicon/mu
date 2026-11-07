@@ -24,6 +24,7 @@
 [Sources]
   AcpiPlatform.c
   NtasiGpuReservationGuard.h
+  AuraG17Preservation.c
   AuraN1Handoff.c
   AuraN1Read.c
 
@@ -35,6 +36,8 @@
   DynamicTablesPkg/DynamicTablesPkg.dec
 
 [LibraryClasses]
+  AuraG17PreservationLib
+  BaseLib
   ArmHvcLib
   UefiLib
   PcdLib

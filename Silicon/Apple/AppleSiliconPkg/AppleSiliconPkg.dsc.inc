@@ -265,6 +265,7 @@
   #DebugAgentTimerLib|EmbeddedPkg/Library/DebugAgentTimerLibNull/DebugAgentTimerLibNull.inf
 
   # Apple Device Tree (ADT) access library
+  AuraG17PreservationLib|AppleSiliconPkg/Library/AuraG17PreservationLib/AuraG17PreservationLib.inf
   AppleDTLib|AppleSiliconPkg/Library/AppleDTLib/AppleDTLib.inf
   AcpiHelperLib|DynamicTablesPkg/Library/Common/AcpiHelperLib/AcpiHelperLib.inf
   AmlLib|DynamicTablesPkg/Library/Common/AmlLib/AmlLib.inf

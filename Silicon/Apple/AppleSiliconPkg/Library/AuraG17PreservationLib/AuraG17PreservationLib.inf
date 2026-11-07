@@ -1,0 +1,26 @@
+## SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = AuraG17PreservationLib
+  FILE_GUID = 16d9f617-793c-4200-8077-372a8c1bcc86
+  MODULE_TYPE = BASE
+  LIBRARY_CLASS = AuraG17PreservationLib
+[Sources]
+  AuraG17Preservation.c
+  AuraG17Firmware.c
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+[LibraryClasses]
+  AppleDTLib
+  PcdLib
+[Pcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer
+  gArmTokenSpaceGuid.PcdFdBaseAddress
+  gArmTokenSpaceGuid.PcdSystemMemoryBase
+  gArmTokenSpaceGuid.PcdSystemMemorySize
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdFdSize
+  gAppleSiliconPkgTokenSpaceGuid.PcdSystemMemoryUefiRegionSize
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
