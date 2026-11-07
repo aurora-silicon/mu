@@ -1,0 +1,457 @@
+{
+  "schema": 1,
+  "result": "physical-windows-readback-passed",
+  "host_date": "2026-11-06",
+  "target": "J813 / T8142 / board 0x24",
+  "boot_path": "Aura -> Mu -> NVMe Windows",
+  "aura_commit": "8758b16598b4413d511512bfc150b7eb0fd2128a",
+  "mu_commit": "113c98c399f57470fc70a1edca45c782f36a2f76",
+  "firmware_sha256": "de09007eec9031a1d788da7d63b865307f03973f38805c027a45c1054b0160fd",
+  "profile_sha256": "d2aabc3fc493940da62d5fdf76e66cc4f127f1a16ec2adae6dd181664209ebd7",
+  "installed_madt_sha256": "ca68bd6f5242d387dc3d0408a67885493fdea2aa57e6797f60a3c4fe0fdcdf34",
+  "previous_installed_madt_sha256": "47382dbf9f4a9d0dc94f7779e6501e572a3f6108418c696cb7ff60fb12995892",
+  "installed_madt_hex": "415049437403000005aa4170706c65004150504c45454649428100004150504c0100000000000000000000000b500000060000000600000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000001010000000000010000000b500000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000000000000000000000000000b500000010000000100000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000100000000000000000000000b500000020000000200000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000200000000000000000000000b500000030000000300000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000300000000000000000000000b500000040000000400000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000400000000000000000000000b500000050000000500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000500000000000000000000000b500000070000000700000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000101010000000000010000000b500000080000000800000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000201010000000000010000000b500000090000000900000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000301010000000000010000000c18000000000000000000000f00000000000000030000000e100000000000100f00000000001400",
+  "previous_installed_madt_hex": "415049437403000005a84170706c65004150504c45454649428100004150504c0100000000000000000000000b500000060000000600000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000001010000000000000000000b500000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000000000000000000010000000b500000010000000100000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000100000000000000010000000b500000020000000200000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000200000000000000010000000b500000030000000300000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000300000000000000010000000b500000040000000400000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000400000000000000010000000b500000050000000500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000500000000000000010000000b500000070000000700000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000101010000000000000000000b500000080000000800000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000201010000000000000000000b500000090000000900000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000001900000000000000000000000301010000000000000000000c18000000000000000000000f00000000000000030000000e100000000000100f00000000001400",
+  "changed_installed_offsets": [
+    9,
+    120,
+    200,
+    280,
+    360,
+    440,
+    520,
+    600,
+    680,
+    760,
+    840
+  ],
+  "changed_class_bytes": 10,
+  "other_changed_bytes": "ACPI checksum only",
+  "processor_join": "Windows group/number -> affinity-pinned architectural MPIDR -> MADT UID; never list position",
+  "processors": [
+    {
+      "group": 0,
+      "number": 0,
+      "index": 0,
+      "mpidr_raw": 2147549440,
+      "mpidr": 65792,
+      "uid": 6,
+      "core_type": "P",
+      "madt_efficiency_class": 1,
+      "windows_cpu_set": {
+        "Id": 256,
+        "Group": 0,
+        "LogicalProcessor": 0,
+        "Core": 0,
+        "LastLevelCache": 0,
+        "EfficiencyClass": 1,
+        "Flags": 0,
+        "SchedulingClass": 1
+      }
+    },
+    {
+      "group": 0,
+      "number": 1,
+      "index": 1,
+      "mpidr_raw": 2147483648,
+      "mpidr": 0,
+      "uid": 0,
+      "core_type": "E",
+      "madt_efficiency_class": 0,
+      "windows_cpu_set": {
+        "Id": 257,
+        "Group": 0,
+        "LogicalProcessor": 1,
+        "Core": 1,
+        "LastLevelCache": 1,
+        "EfficiencyClass": 0,
+        "Flags": 0,
+        "SchedulingClass": 0
+      }
+    },
+    {
+      "group": 0,
+      "number": 2,
+      "index": 2,
+      "mpidr_raw": 2147483649,
+      "mpidr": 1,
+      "uid": 1,
+      "core_type": "E",
+      "madt_efficiency_class": 0,
+      "windows_cpu_set": {
+        "Id": 258,
+        "Group": 0,
+        "LogicalProcessor": 2,
+        "Core": 2,
+        "LastLevelCache": 2,
+        "EfficiencyClass": 0,
+        "Flags": 0,
+        "SchedulingClass": 0
+      }
+    },
+    {
+      "group": 0,
+      "number": 3,
+      "index": 3,
+      "mpidr_raw": 2147483650,
+      "mpidr": 2,
+      "uid": 2,
+      "core_type": "E",
+      "madt_efficiency_class": 0,
+      "windows_cpu_set": {
+        "Id": 259,
+        "Group": 0,
+        "LogicalProcessor": 3,
+        "Core": 3,
+        "LastLevelCache": 3,
+        "EfficiencyClass": 0,
+        "Flags": 0,
+        "SchedulingClass": 0
+      }
+    },
+    {
+      "group": 0,
+      "number": 4,
+      "index": 4,
+      "mpidr_raw": 2147483651,
+      "mpidr": 3,
+      "uid": 3,
+      "core_type": "E",
+      "madt_efficiency_class": 0,
+      "windows_cpu_set": {
+        "Id": 260,
+        "Group": 0,
+        "LogicalProcessor": 4,
+        "Core": 4,
+        "LastLevelCache": 4,
+        "EfficiencyClass": 0,
+        "Flags": 0,
+        "SchedulingClass": 0
+      }
+    },
+    {
+      "group": 0,
+      "number": 5,
+      "index": 5,
+      "mpidr_raw": 2147483652,
+      "mpidr": 4,
+      "uid": 4,
+      "core_type": "E",
+      "madt_efficiency_class": 0,
+      "windows_cpu_set": {
+        "Id": 261,
+        "Group": 0,
+        "LogicalProcessor": 5,
+        "Core": 5,
+        "LastLevelCache": 5,
+        "EfficiencyClass": 0,
+        "Flags": 1,
+        "SchedulingClass": 0
+      }
+    },
+    {
+      "group": 0,
+      "number": 6,
+      "index": 6,
+      "mpidr_raw": 2147483653,
+      "mpidr": 5,
+      "uid": 5,
+      "core_type": "E",
+      "madt_efficiency_class": 0,
+      "windows_cpu_set": {
+        "Id": 262,
+        "Group": 0,
+        "LogicalProcessor": 6,
+        "Core": 6,
+        "LastLevelCache": 6,
+        "EfficiencyClass": 0,
+        "Flags": 1,
+        "SchedulingClass": 0
+      }
+    },
+    {
+      "group": 0,
+      "number": 7,
+      "index": 7,
+      "mpidr_raw": 2147549441,
+      "mpidr": 65793,
+      "uid": 7,
+      "core_type": "P",
+      "madt_efficiency_class": 1,
+      "windows_cpu_set": {
+        "Id": 263,
+        "Group": 0,
+        "LogicalProcessor": 7,
+        "Core": 7,
+        "LastLevelCache": 7,
+        "EfficiencyClass": 1,
+        "Flags": 1,
+        "SchedulingClass": 1
+      }
+    },
+    {
+      "group": 0,
+      "number": 8,
+      "index": 8,
+      "mpidr_raw": 2147549442,
+      "mpidr": 65794,
+      "uid": 8,
+      "core_type": "P",
+      "madt_efficiency_class": 1,
+      "windows_cpu_set": {
+        "Id": 264,
+        "Group": 0,
+        "LogicalProcessor": 8,
+        "Core": 8,
+        "LastLevelCache": 8,
+        "EfficiencyClass": 1,
+        "Flags": 1,
+        "SchedulingClass": 1
+      }
+    },
+    {
+      "group": 0,
+      "number": 9,
+      "index": 9,
+      "mpidr_raw": 2147549443,
+      "mpidr": 65795,
+      "uid": 9,
+      "core_type": "P",
+      "madt_efficiency_class": 1,
+      "windows_cpu_set": {
+        "Id": 265,
+        "Group": 0,
+        "LogicalProcessor": 9,
+        "Core": 9,
+        "LastLevelCache": 9,
+        "EfficiencyClass": 1,
+        "Flags": 1,
+        "SchedulingClass": 1
+      }
+    }
+  ],
+  "previous_windows_cpu_sets": [
+    {
+      "Id": 256,
+      "Group": 0,
+      "LogicalProcessor": 0,
+      "Core": 0,
+      "LastLevelCache": 0,
+      "EfficiencyClass": 0,
+      "Flags": 0,
+      "SchedulingClass": 0
+    },
+    {
+      "Id": 257,
+      "Group": 0,
+      "LogicalProcessor": 1,
+      "Core": 1,
+      "LastLevelCache": 1,
+      "EfficiencyClass": 1,
+      "Flags": 1,
+      "SchedulingClass": 1
+    },
+    {
+      "Id": 258,
+      "Group": 0,
+      "LogicalProcessor": 2,
+      "Core": 2,
+      "LastLevelCache": 2,
+      "EfficiencyClass": 1,
+      "Flags": 1,
+      "SchedulingClass": 1
+    },
+    {
+      "Id": 259,
+      "Group": 0,
+      "LogicalProcessor": 3,
+      "Core": 3,
+      "LastLevelCache": 3,
+      "EfficiencyClass": 1,
+      "Flags": 1,
+      "SchedulingClass": 1
+    },
+    {
+      "Id": 260,
+      "Group": 0,
+      "LogicalProcessor": 4,
+      "Core": 4,
+      "LastLevelCache": 4,
+      "EfficiencyClass": 1,
+      "Flags": 1,
+      "SchedulingClass": 1
+    },
+    {
+      "Id": 261,
+      "Group": 0,
+      "LogicalProcessor": 5,
+      "Core": 5,
+      "LastLevelCache": 5,
+      "EfficiencyClass": 1,
+      "Flags": 1,
+      "SchedulingClass": 1
+    },
+    {
+      "Id": 262,
+      "Group": 0,
+      "LogicalProcessor": 6,
+      "Core": 6,
+      "LastLevelCache": 6,
+      "EfficiencyClass": 1,
+      "Flags": 1,
+      "SchedulingClass": 1
+    },
+    {
+      "Id": 263,
+      "Group": 0,
+      "LogicalProcessor": 7,
+      "Core": 7,
+      "LastLevelCache": 7,
+      "EfficiencyClass": 0,
+      "Flags": 0,
+      "SchedulingClass": 0
+    },
+    {
+      "Id": 264,
+      "Group": 0,
+      "LogicalProcessor": 8,
+      "Core": 8,
+      "LastLevelCache": 8,
+      "EfficiencyClass": 0,
+      "Flags": 0,
+      "SchedulingClass": 0
+    },
+    {
+      "Id": 265,
+      "Group": 0,
+      "LogicalProcessor": 9,
+      "Core": 9,
+      "LastLevelCache": 9,
+      "EfficiencyClass": 0,
+      "Flags": 0,
+      "SchedulingClass": 0
+    }
+  ],
+  "cpu_driver": {
+    "version": "0.2.0.3",
+    "state": "Running",
+    "problem_code": 0,
+    "installed_sha256": "6d7979d17162a8fd69429b0ebbab8b64b6092c059b0c0d77b917e07e1ae402f0"
+  },
+  "frequency_brackets": {
+    "before": {
+      "phase": "before",
+      "commanded_only": true,
+      "clusters": [
+        {
+          "id": 0,
+          "boot_level": 2,
+          "level": 2,
+          "commanded_khz": 972000,
+          "ceiling_khz": 972000,
+          "command": 4194562,
+          "flags": 1,
+          "opp_khz": [
+            300000,
+            972000
+          ]
+        },
+        {
+          "id": 1,
+          "boot_level": 10,
+          "level": 10,
+          "commanded_khz": 3516000,
+          "ceiling_khz": 3516000,
+          "command": 4194570,
+          "flags": 1,
+          "opp_khz": [
+            300000,
+            1308000,
+            1608000,
+            1932000,
+            2220000,
+            2508000,
+            2820000,
+            3072000,
+            3300000,
+            3516000
+          ]
+        }
+      ]
+    },
+    "after": {
+      "phase": "before",
+      "commanded_only": true,
+      "clusters": [
+        {
+          "id": 0,
+          "boot_level": 2,
+          "level": 2,
+          "commanded_khz": 972000,
+          "ceiling_khz": 972000,
+          "command": 4194562,
+          "flags": 1,
+          "opp_khz": [
+            300000,
+            972000
+          ]
+        },
+        {
+          "id": 1,
+          "boot_level": 10,
+          "level": 10,
+          "commanded_khz": 3516000,
+          "ceiling_khz": 3516000,
+          "command": 4194570,
+          "flags": 1,
+          "opp_khz": [
+            300000,
+            1308000,
+            1608000,
+            1932000,
+            2220000,
+            2508000,
+            2820000,
+            3072000,
+            3300000,
+            3516000
+          ]
+        }
+      ]
+    },
+    "unchanged": true,
+    "set_calls_this_boot": 0
+  },
+  "transport": {
+    "sole_reader_preserved": true,
+    "current_port": true,
+    "manual_user_commands": false,
+    "first_query": "Completed later than the original host response timeout; CRC-verified from retained capture without replay; original failure receipt retained.",
+    "topology_and_cpu_sets": "Complete CRC-verified replies using final-ACK-aware response wait."
+  },
+  "claims": {
+    "firmware_classes_correct": true,
+    "windows_classes_correct": true,
+    "automatic_frequency_policy": false,
+    "measured_scheduler_improvement": false,
+    "measured_power_savings": false,
+    "absolute_measured_frequency": false
+  },
+  "input_sha256": {
+    "launch-binding.json": "4d55ffd3f3d17fa02a8adccac91c80b031f3ac9b9eacc95c762d035bbd04706f",
+    "profile.json": "d2aabc3fc493940da62d5fdf76e66cc4f127f1a16ec2adae6dd181664209ebd7",
+    "comparison-plan.json": "58c42d80fc04bd8bc90fb63ac3016231f8f3fd0a3a2eaa66db7d9c34e1579d8e",
+    "cpu-query/receipt.json": "76c6232052ac1aaabfec8c2df582d5e1bd52b6b593cf0bb40e7968a45fc5b9fe",
+    "cpu-query/late-response/receipt.json": "ef49c4ebb05b0836891b6aabf1d4eb97af5fa688445ab5f2b925172fb1eb0729",
+    "cpu-query/late-response/response.txt": "0c967fda7585a715983ee4a290fb7395c4cf21cbb75b612e5e4655c060563b0f",
+    "cpu-query/late-response/wire.bin": "2122e297d5da5f6fa392b067e54c3979af0e3e06d23ed14d6fb86286960213b2",
+    "topology/receipt.json": "d0a7711ee8b78323a702873daafeb302d7d11d5ba9b94a644f1041dc828b8289",
+    "topology/response.txt": "61b612c19b01513f6d00002827e179cb07cfd78e789752a1615a508c62b6a17b",
+    "cpu-sets/receipt.json": "d681e1898095904f2517068aee03fffef757c3a57d89082f8f2edbe3a1ffb7fe",
+    "cpu-sets/response.txt": "7b33b7436b8969f5a092d6368295cbce6ea750920c9b017995f782dbd4254aa4",
+    "previous-windows-cpu-sets.json": "d0ee835a6fe8955689b230080e73c92cb3544e34586333ee9c6f46f9edff10eb",
+    "sidecar-v2-binding.json": "84e8d2cd0992b0d8fa7adddcf29fa7d023c597695cc027066c8e75cc28ff25af",
+    "qualification-failure-model.md": "e01e7d44621077d5dcb9ab1ade772a5298e02a302ef029b54adb43182e2cb6bc"
+  },
+  "builder_sha256": "f5b727bfa251773fa476a4d11c2f19a0a347ee7bfca017be756993a2bab187d4"
+}
