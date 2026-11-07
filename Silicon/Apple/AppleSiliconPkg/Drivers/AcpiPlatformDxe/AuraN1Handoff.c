@@ -60,7 +60,10 @@ int aura_n1_validate(const void *record, size_t size, uint32_t chip,
         if (!i && !(value & 2)) return -3;
     }
     READ(UINT64_C(0x1cb0100010), value);
-    if (value != 0x80000000 && value != 0x80000004) return -3;
+    /* PREFETCH bit3 does not change the owned address or memory type bits2:1.
+     * Keep the fixed non-cacheable _CRS and reject I/O/unsupported BAR types. */
+    if ((value & ~15u) != 0x80000000 || (value & 1) ||
+        ((value & 6) != 0 && (value & 6) != 4)) return -3;
     if (value & 4) {
         READ(UINT64_C(0x1cb0100014), value);
         if (value) return -3;

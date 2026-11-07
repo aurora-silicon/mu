@@ -26,8 +26,16 @@ static int read32(void *context,uint64_t address,uint32_t *value) {
     case UINT64_C(0x1cb0100004):
     case UINT64_C(0x1cb0101004):
     case UINT64_C(0x1cb0102004): *value=!strcmp(m->fault,"bme")?6:2; break;
-    case UINT64_C(0x1cb0100010): *value=!strcmp(m->fault,"bar")?0x90000004:0x80000004; break;
-    case UINT64_C(0x1cb0100014): *value=!strcmp(m->fault,"bar-high")?1:0; break;
+    case UINT64_C(0x1cb0100010):
+        *value=!strcmp(m->fault,"bar")?0x90000004:0x80000004;
+        if(!strcmp(m->fault,"prefetch64") || !strcmp(m->fault,"prefetch-high"))*value=0x8000000c;
+        if(!strcmp(m->fault,"prefetch32"))*value=0x80000008;
+        if(!strcmp(m->fault,"bar-io"))*value=0x8000000d;
+        if(!strcmp(m->fault,"bar-below1m"))*value=0x8000000a;
+        if(!strcmp(m->fault,"bar-reserved"))*value=0x8000000e;
+        break;
+    case UINT64_C(0x1cb0100014):
+        *value=(!strcmp(m->fault,"bar-high") || !strcmp(m->fault,"prefetch-high"))?1:0; break;
     case UINT64_C(0xb80008000): *value=!strcmp(m->fault,"rom")?2:0; break;
     case UINT64_C(0x488000000): *value=!strcmp(m->fault,"geometry")?0:14u<<24; break;
     case UINT64_C(0x488000008): *value=42u<<24|40u<<16|0x203; break;
@@ -74,7 +82,8 @@ int main(int argc,char **argv) {
     if(!strcmp(model.fault,"stream")){put16(record+30,1);metadata=1;}
     if(!strcmp(model.fault,"resource")){record[33]++;metadata=1;}
     result=aura_n1_validate(record,size,chip,board,&reader);
-    CHECK((result==0)==(!strcmp(model.fault,"success") || !strcmp(model.fault,"radios-present")));
+    CHECK((result==0)==(!strcmp(model.fault,"success") || !strcmp(model.fault,"radios-present") ||
+                       !strcmp(model.fault,"prefetch64") || !strcmp(model.fault,"prefetch32")));
     if(metadata)CHECK(model.reads==0);
     if(!strcmp(model.fault,"link-down"))CHECK(model.reads==1);
     printf("{\"case\":\"%s\",\"result\":\"passed\",\"admitted\":%s,\"reads\":%u}\n",model.fault,result==0?"true":"false",model.reads);

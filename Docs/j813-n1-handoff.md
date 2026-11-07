@@ -114,3 +114,17 @@ exactly one owner, the driver-start/reset trace, and firmware/source hashes.
 Test the default profile first, then the opt-in profile with absent/rejected
 and valid handoffs. Do not merge the N1 path until the affected hardware has
 passed that sequence.
+
+## Captured prefetchable BAR failure model
+
+Before correcting admission: candidate03 captured Control BAR0 low 0x0000000c.
+Its 64-bit memory type and PREFETCH capability are independent fields in public
+Linux 3a0da31's pci_regs.h. Aura must preserve bit3 when assigning the fixed bus
+address, yielding 0x8000000c; Mu's current exact 0/4 value predicate would reject
+that valid handoff. Add captured 64-bit and synthetic 32-bit prefetchable cases
+through the real descriptor/guarded-census admission before editing production.
+Keep rejection of I/O, below 1 MiB and reserved types, a nonzero 64-bit upper word,
+and any changed fixed address. Keep all identity, stream, BME, ROM and DART
+checks. No _CRS, cacheability or root-window change is justified: Linux permits
+prefetchable resources in a nonprefetchable memory window. This replay remains
+offline evidence; the captured BAR's physical probe size is still unknown.

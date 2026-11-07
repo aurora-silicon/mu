@@ -29,7 +29,7 @@ SOURCES = [
     SILICON / "Include/IndustryStandard/AuraN1Handoff.h",
     Path("Platform/MacBookAir2026Pkg/AcpiTables/N1.asl"),
 ]
-CASES = """success radios-present missing truncated version flags identity stream
+CASES = """success prefetch64 prefetch32 bar-io bar-below1m bar-reserved prefetch-high radios-present missing truncated version flags identity stream
 resource read-failure link-down root-id control-id bme bar bar-high rom geometry
 protected live-tcr live-ttbr""".split()
 
