@@ -5,6 +5,9 @@
  */
 
 #include <Uefi.h>
+#include <Library/BaseLib.h>
+#include <Library/AuraG17PreservationLib.h>
+#include <Library/PcdLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugAgentLib.h>
 #include <Library/DebugLib.h>
@@ -32,9 +35,19 @@ EarlySetup (
   struct boot_args *BootArgs = (struct boot_args *)BootArgsAddr;
   VOID             *AdtSource;
 
+  // Source validation and G17 admission precede both fixed copies and the
+  // later assembly stack clear. EarlySetup's FALSE return is not a halt.
+  if ((UINTN)BootArgs->devtree < BootArgs->virt_base ||
+      (UINTN)BootArgs->devtree - BootArgs->virt_base > MAX_UINT64 - BootArgs->phys_base)
+    CpuDeadLoop ();
   AdtSource = (VOID *)((UINTN)BootArgs->devtree -
                        (UINTN)BootArgs->virt_base +
                        (UINTN)BootArgs->phys_base);
+
+  if (!AuraG17EarlyCheck (BootArgs, AdtSource, (UINTN)PcdBootArgsDest, (UINTN)PcdAdtDest)) {
+    DEBUG ((DEBUG_ERROR, "Aura G17: early memory admission failed; stopping before copies/stack clear\n"));
+    CpuDeadLoop ();
+  }
 
   DEBUG ((
     DEBUG_ERROR,

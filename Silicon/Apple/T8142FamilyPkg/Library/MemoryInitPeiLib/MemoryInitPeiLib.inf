@@ -18,6 +18,8 @@
 
 [Sources]
   MemoryInitPeiLib.c
+  MemoryReservation.h
+  AuraG17Pei.c
 
 
 [Packages]
@@ -30,6 +32,7 @@
   AppleSiliconPkg/AppleSiliconPkg.dec
 
 [LibraryClasses]
+  AuraG17PreservationLib
   DebugLib
   HobLib
   ArmMmuLib

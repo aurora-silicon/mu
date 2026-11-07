@@ -209,3 +209,6 @@
   #
   gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount|1|UINT32|0x00004406
   gAppleSiliconPkgTokenSpaceGuid.PcdClusterCount|1|UINT32|0x00004407
+
+[LibraryClasses]
+  AuraG17PreservationLib|Include/Library/AuraG17PreservationLib.h

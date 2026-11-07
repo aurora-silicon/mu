@@ -33,7 +33,7 @@ def main():
     for name in headers:
         dest=include/name; dest.parent.mkdir(parents=True,exist_ok=True)
         dest.write_text('#include "memory-peim-host.h"\n')
-    files=(SOURCE, Path("Tests/e2e/memory-peim-host.h"), Path("Tests/e2e/memory-peim-host.c"),
+    files=(SOURCE, Path("Silicon/Apple/T8142FamilyPkg/Library/MemoryInitPeiLib/MemoryReservation.h"), Path("Tests/e2e/memory-peim-host.h"), Path("Tests/e2e/memory-peim-host.c"),
            Path("Tests/e2e/memory-peim.py"), Path("Docs/windows-boot-handoff-memory.md"), Path("Docs/windows-mtp-memory.md"),
            Path("Silicon/Apple/AppleSiliconPkg/Include/Library/AppleDTLib.h"),
            Path("Silicon/Apple/AppleSiliconPkg/Include/AppendedRamdisk.h"),

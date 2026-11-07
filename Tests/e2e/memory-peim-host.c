@@ -168,3 +168,8 @@ int main(int argc, char **argv) {
   printf("{\"case\":\"%s\",\"result\":\"passed\",\"resource_hobs\":%zu}\n",name,count);
   if (mtp_case) munmap(arena,64U*1024*1024); else free(arena); return 0;
 }
+
+/* These pre-existing boot/MTP fixtures have no G17 opt-in property. The G17
+ * artifact consumer separately runs real PEI/DXE G17 code with actual ADTs. */
+EFI_STATUS ReserveG17Handoff(UINT64 UefiBase, UINT64 UefiSize)
+{ (void)UefiBase; (void)UefiSize; return EFI_SUCCESS; }

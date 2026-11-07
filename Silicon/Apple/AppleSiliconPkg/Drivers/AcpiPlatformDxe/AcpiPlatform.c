@@ -36,6 +36,8 @@
 #include <IndustryStandard/Acpi.h>
 #include <IndustryStandard/J414sWirelessHandoff.h>
 #include <IndustryStandard/AuraN1Handoff.h>
+#include <Library/BaseLib.h>
+EFI_STATUS AuraG17VerifyPreservation (VOID);
 #include <Library/IoLib.h>
 #include <Drivers/AppleAnsHardware.h>
 //
@@ -4170,6 +4172,12 @@ AcpiPlatformEntryPoint (
   TableHandle  = 0;
 
   DEBUG((DEBUG_ERROR, "%a: AcpiPlatform driver started\n", __FUNCTION__));
+
+  Status = AuraG17VerifyPreservation ();
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "Aura G17: DXE exclusion verification failed: %r; stopping\n", Status));
+    CpuDeadLoop ();
+  }
 
   //
   // Find the AcpiTable protocol

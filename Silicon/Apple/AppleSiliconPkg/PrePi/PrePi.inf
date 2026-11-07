@@ -27,6 +27,7 @@
   AppleSiliconPkg/AppleSiliconPkg.dec
 
 [LibraryClasses]
+  AuraG17PreservationLib
   ArmLib
   ArmMmuLib
   BaseLib
