@@ -14,8 +14,10 @@ sources = ['Tools/g17-preservation-e2e/consumer.c',
            'Silicon/Apple/AppleSiliconPkg/Library/AppleDTLib/AppleDTLib.c',
            'Silicon/Apple/AppleSiliconPkg/Library/AuraG17PreservationLib/AuraG17Preservation.c',
            'Silicon/Apple/AppleSiliconPkg/Library/AuraG17PreservationLib/AuraG17Firmware.c',
+           'Silicon/Apple/AppleSiliconPkg/Library/AuraG17PreservationLib/AuraG17Report.c',
            'Silicon/Apple/T8142FamilyPkg/Library/MemoryInitPeiLib/AuraG17Pei.c',
-           'Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/AuraG17Preservation.c']
+           'Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/AuraG17Preservation.c',
+           'Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/AuraG17Report.c']
 command = ['clang', '-std=c17', '-fshort-wchar', '-g', '-Wall', '-Wextra', '-Wno-unused-parameter',
            '-fsanitize=address,undefined']
 for inc in includes: command += ['-I', str(ROOT/inc)]

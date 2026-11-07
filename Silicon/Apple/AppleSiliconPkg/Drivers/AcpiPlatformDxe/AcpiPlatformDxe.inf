@@ -25,6 +25,7 @@
   AcpiPlatform.c
   NtasiGpuReservationGuard.h
   AuraG17Preservation.c
+  AuraG17Report.c
   AuraN1Handoff.c
   AuraN1Read.c
 
@@ -63,6 +64,7 @@
 
 [Protocols]
   gEfiAcpiTableProtocolGuid                     ## CONSUMES
+  gEfiAcpiSdtProtocolGuid                       ## SOMETIMES_CONSUMES
   gEfiFirmwareVolume2ProtocolGuid               ## CONSUMES
 
 [Pcd]

@@ -10,6 +10,7 @@
 #include <Library/UefiLib.h>
 
 STATIC EFI_GUID mG17Guid = AURA_G17_HOB_GUID;
+EFI_STATUS AuraG17VerifyPublishedReport (VOID);
 
 STATIC EFI_STATUS
 VerifyMap (CONST VOID *Record)
@@ -89,8 +90,8 @@ VerifyMap (CONST VOID *Record)
   return Status;
 }
 
-STATIC EFI_STATUS
-VerifyPreservation (VOID)
+EFI_STATUS
+AuraG17VerifyCurrentPreservation (VOID)
 {
   CONST VOID *Record;
   VOID *Hob, *Next;
@@ -114,7 +115,8 @@ VerifyReadyToBoot (EFI_EVENT Event, VOID *Context)
   EFI_STATUS Status;
   (VOID)Event;
   (VOID)Context;
-  Status = VerifyPreservation ();
+  Status = AuraG17VerifyCurrentPreservation ();
+  if (!EFI_ERROR (Status)) Status = AuraG17VerifyPublishedReport ();
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "Aura G17: ReadyToBoot exclusion verification failed: %r; stopping\n", Status));
     CpuDeadLoop ();
@@ -128,7 +130,7 @@ AuraG17VerifyPreservation (VOID)
   EFI_STATUS Status;
   EFI_EVENT Event;
   UINTN Length;
-  Status = VerifyPreservation ();
+  Status = AuraG17VerifyCurrentPreservation ();
   if (EFI_ERROR (Status) || AuraG17Record (&Length) == NULL) return Status;
   Status = EfiCreateEventReadyToBootEx (TPL_CALLBACK, VerifyReadyToBoot, NULL, &Event);
   if (!EFI_ERROR (Status))
