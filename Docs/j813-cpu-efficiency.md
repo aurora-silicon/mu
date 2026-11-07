@@ -70,6 +70,67 @@ against the unchanged baseline without `--expect-unfixed` must fail.
 `--expect-unfixed` explicitly records the reproduced defect for the baseline;
 it never reports the correction as passed.
 
-Before hardware qualification, read back the installed MADT and Windows CPU
-sets and verify the corrected six E-core / four P-core classes. A successful
-build and byte comparison do not prove a scheduling or power improvement.
+For each new firmware candidate, repeat the installed-MADT and Windows CPU-set
+readback below. A successful build and byte comparison alone do not prove
+hardware behavior or a scheduling or power improvement.
+
+## Physical Windows readback: 2026-11-06
+
+The corrected firmware booted J813 through Aura → Mu → NVMe Windows on the
+existing CDC port. The installed 884-byte MADT exactly matches the independently
+calculated expected table (SHA-256
+`ca68bd6f5242d387dc3d0408a67885493fdea2aa57e6797f60a3c4fe0fdcdf34`).
+Compared with the prior physical table, only the ten GICC class bytes and the
+installed ACPI checksum differ.
+
+Windows `GetSystemCpuSetInformation` now reports class 0 for the six E-cores
+(group 0, processors 1–6) and class 1 for the four P-cores (0, 7–9). Each processor
+was joined by its affinity-pinned architectural MPIDR to a unique MADT UID;
+the association was not inferred from class values or list position. The
+installed CPU driver remained Running with Code 0, and frequency records
+bracketing the identity read were identical (E2/P10). This boot issued no
+frequency SET calls.
+
+The [physical receipt](validation/j813-cpu-efficiency-windows-20261106.json)
+contains both raw MADTs, all CPU-set and identity records, exact changed offsets,
+firmware/source/input hashes and the unchanged frequency brackets. The initial
+read-only query outlasted the host's initial response timeout; its complete
+CRC-valid response was recovered from the original capture without resending the
+request. Subsequent requests passed with an ACK-aware bounded response wait.
+
+To verify the published artifact independently from this checkout:
+
+```sh
+python3 - <<'PYVERIFY'
+import hashlib, json, struct
+from pathlib import Path
+p = Path('Docs/validation/j813-cpu-efficiency-windows-20261106.json')
+r = json.loads(p.read_text())
+a = bytes.fromhex(r['previous_installed_madt_hex'])
+b = bytes.fromhex(r['installed_madt_hex'])
+assert len(a) == len(b) == 884 and sum(a) % 256 == sum(b) % 256 == 0
+assert hashlib.sha256(b).hexdigest() == r['installed_madt_sha256']
+assert [i for i, (x, y) in enumerate(zip(a, b)) if x != y] == r['changed_installed_offsets']
+entries = {}
+offset = 44
+while offset < len(b):
+    kind, size = b[offset:offset + 2]
+    assert size >= 2 and offset + size <= len(b)
+    if kind == 11:
+        uid = struct.unpack_from('<I', b, offset + 8)[0]
+        assert size == 80 and uid not in entries
+        entries[uid] = (struct.unpack_from('<Q', b, offset + 68)[0], b[offset + 76])
+    offset += size
+assert len(entries) == len(r['processors']) == 10
+for cpu in r['processors']:
+    expected = int(cpu['uid'] >= 6)
+    assert entries[cpu['uid']] == (cpu['mpidr'], expected)
+    assert cpu['windows_cpu_set']['EfficiencyClass'] == expected
+assert r['frequency_brackets']['before'] == r['frequency_brackets']['after']
+print('Captured firmware-to-Windows efficiency readback verified')
+PYVERIFY
+```
+
+This proves corrected firmware and Windows CPU-set classes on this physical
+boot. It does not measure scheduling improvement, energy savings or absolute
+clock frequency, and it does not implement automatic Windows frequency policy.
