@@ -9,7 +9,7 @@
   AIC3 payload as transcribed bytes -- as T602XFamilyPkg's does, and for the
   same reason: a byte stream whose length, checksum and three nested
   sub-lengths all move together is safer transcribed whole than assembled from
-  correlated edits.  These #defines therefore do NOT build the table.  They
+  correlated edits.  These AIC3 #defines therefore do NOT build the table.  They
   exist so that CSRT.aslc can STATIC_ASSERT the bytes it carries against named
   constants, turning "someone regenerated the table for a different SoC" from
   a silent boot failure into a build failure.
@@ -35,13 +35,10 @@
 #define T8142_J813_TOPOLOGY_H_
 
 //
-// Processor topology.  Two asymmetric clusters, ten cores.  MADT_Static.aslc
-// and PPTT.aslc still spell these out independently -- this header does not
-// yet feed them, and deliberately does not change them, because rewiring the
-// two tables that decide whether the machine boots is not part of bringing up
-// the interrupt controller.  The one define with a consumer today is
-// T8142_J813_CPU_COUNT, which CSRT.aslc checks against the CPU count encoded
-// in the AIC3 payload (see below).
+// Processor topology.  Two asymmetric clusters, ten cores. MADT_Static.aslc
+// uses the power-efficiency classes below. CPU ordering, UIDs and MPIDRs
+// remain explicit in MADT_Static.aslc and PPTT.aslc. CSRT.aslc checks
+// T8142_J813_CPU_COUNT against the count in its AIC3 payload (see below).
 //
 #define T8142_J813_CPU_COUNT                10
 #define T8142_J813_CLUSTER_COUNT             2
@@ -60,18 +57,12 @@
 #define T8142_J813_BOOT_CPU_UID              6
 
 //
-// NOTE, NOT A TYPO, AND NOT FIXED HERE.  ACPI 6.3 defines a LOWER Processor
-// Power Efficiency Class as MORE efficient, so E-cores should be 0 and
-// P-cores 1 -- which is what T6020J414sTopology.h does.  J813's MADT emits
-// the opposite (E = 1, P = 0), justifying it as "lower value == higher
-// performance".  These defines describe what the MADT actually emits, because
-// a header that disagreed with the table would be worse than the
-// inconsistency it papers over.  Correcting the polarity is a scheduler-
-// visible change and must be its own experiment, not a side effect of the
-// AIC3 work.
+// ACPI 6.5 Table 5.36 defines lower Processor Power Efficiency Classes as
+// more efficient. Windows SYSTEM_CPU_SET_INFORMATION uses the same polarity.
+// These relative classes do not specify frequencies or a performance ratio.
 //
-#define T8142_J813_E_EFFICIENCY_CLASS        1
-#define T8142_J813_P_EFFICIENCY_CLASS        0
+#define T8142_J813_E_EFFICIENCY_CLASS        0
+#define T8142_J813_P_EFFICIENCY_CLASS        1
 
 //
 // Architected timer GSIVs.  Unlike T6020's 26/27/29/30 these are arbitrary:
