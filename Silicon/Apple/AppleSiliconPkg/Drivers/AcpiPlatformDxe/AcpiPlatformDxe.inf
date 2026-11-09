@@ -27,6 +27,8 @@
   NtasiGpuReservationGuard.h
   AuraN1Handoff.c
   AuraN1Read.c
+  AuraG17GpuDevice.c
+  AuraG17GpuDevice.h
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -91,6 +93,7 @@
   # NtasiDerivePhysicalDramWindow() in AcpiPlatform.c.
   gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer              ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff             ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleG17GpuProbe              ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableBase ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableSize ## CONSUMES
 

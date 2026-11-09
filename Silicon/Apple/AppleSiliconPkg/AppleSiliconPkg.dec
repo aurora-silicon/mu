@@ -109,6 +109,9 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartMmioEnabled|TRUE|BOOLEAN|0x00004725
   # Opt-in only: require a validated Aura descriptor before exposing AURA8130.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff|FALSE|BOOLEAN|0x00004726
+  # J813 G17 GPU boot-probe images only: permits the AURA8170 SSDT (GPU.asl),
+  # which is still withheld unless the iBoot GPU regions validate at runtime.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleG17GpuProbe|FALSE|BOOLEAN|0x00004727
 
   # Stack stuff (128k stack by default)
   #Fallback stack base in case ModuleEntryPoint setup won't work.

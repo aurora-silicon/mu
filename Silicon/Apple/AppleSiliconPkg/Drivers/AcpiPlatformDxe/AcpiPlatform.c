@@ -50,6 +50,7 @@
 //
 #include <Drivers/AppleAnsPmgrDomain.h>
 #include <Drivers/NtasiMemoryMapDump.h>
+#include "AuraG17GpuDevice.h"
 
 #define APPLE_ANS_ACPI_OEM_ID        "NTASP "
 #define APPLE_ANS_ACPI_OEM_TABLE_ID  "APPLEANS"
@@ -4784,7 +4785,8 @@ AcpiPlatformEntryPoint (
         continue;
       }
       if (!AppleN1TableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size) ||
-          !AppleMtpTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size))
+          !AppleMtpTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size) ||
+          !AppleG17GpuTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size))
       {
         gBS->FreePool (CurrentTable);
         CurrentTable = NULL;

@@ -24,6 +24,7 @@
   SMCG.asl
   N1.asl
   CPUF.asl
+  GPU.asl
 
 [Packages]
   ArmPkg/ArmPkg.dec
