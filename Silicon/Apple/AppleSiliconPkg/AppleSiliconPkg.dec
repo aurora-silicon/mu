@@ -112,6 +112,9 @@
   # J813 G17 GPU boot-probe images only: permits the AURA8170 SSDT (GPU.asl),
   # which is still withheld unless the iBoot GPU regions validate at runtime.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleG17GpuProbe|FALSE|BOOLEAN|0x00004727
+  # J813 standalone AppleDisplay images only: permits the AURA8180 SSDT
+  # (DISP.asl), still withheld unless the machine is a J813 with ADT dcp/disp0.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813DisplayDevice|FALSE|BOOLEAN|0x00004728
 
   # Stack stuff (128k stack by default)
   #Fallback stack base in case ModuleEntryPoint setup won't work.

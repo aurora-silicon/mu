@@ -29,6 +29,8 @@
   AuraN1Read.c
   AuraG17GpuDevice.c
   AuraG17GpuDevice.h
+  AuraJ813DisplayDevice.c
+  AuraJ813DisplayDevice.h
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -94,6 +96,7 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer              ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff             ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleG17GpuProbe              ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813DisplayDevice        ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableBase ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableSize ## CONSUMES
 

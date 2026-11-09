@@ -55,6 +55,8 @@
   DEFINE NTASI_AURA_WINDOWS = FALSE
   # Publishes the J813 G17 GPU device for the AppleAgxWddm boot probe.
   DEFINE NTASI_G17_GPU_PROBE = FALSE
+  # Publishes the J813 DCP device for the standalone AppleDisplay driver.
+  DEFINE NTASI_J813_DISPLAY_DEVICE = FALSE
   # Enabling the storage features disables the interactive MTP survey. Its
   # eight-second delay loop depends on the guest counter path and can dominate
   # or stall supervised T8142 boots before ANS is dispatched.
@@ -89,6 +91,7 @@
 [PcdsFixedAtBuild.common]
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleN1BusHandoff|$(NTASI_ENABLE_N1_BUS)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleG17GpuProbe|$(NTASI_G17_GPU_PROBE)
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813DisplayDevice|$(NTASI_J813_DISPLAY_DEVICE)
   #
   # Do not reset when the MemoryTypeInformation variable changes.
   #

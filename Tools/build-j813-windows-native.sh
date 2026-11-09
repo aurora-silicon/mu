@@ -14,7 +14,7 @@ case "$profile" in
         ans_block_io=TRUE
         mtp_hid_build=FALSE
         ;;
-    internal-storage-windows|internal-storage-windows-n1|internal-storage-windows-n1-gpu)
+    internal-storage-windows|internal-storage-windows-n1|internal-storage-windows-n1-gpu|internal-storage-windows-n1-gpu-disp)
         # internal-storage, plus the \_SB.ANS0 ACPI device Windows needs to bind
         # a storage driver.  Kept as a separate profile rather than flipping the
         # one above: that profile is the proven firmware-owned boot path, and
@@ -44,14 +44,21 @@ esac
 n1_bus=FALSE
 aura_windows=FALSE
 case "$profile" in
-    internal-storage-windows|internal-storage-windows-n1|internal-storage-windows-n1-gpu) aura_windows=TRUE ;;
+    internal-storage-windows|internal-storage-windows-n1|internal-storage-windows-n1-gpu|internal-storage-windows-n1-gpu-disp) aura_windows=TRUE ;;
 esac
 test "$profile" != internal-storage-windows-n1 || n1_bus=TRUE
 # The GPU probe image is the N1 image plus the J813 G17 GPU device (AURA8170).
 g17_gpu=FALSE
+j813_disp=FALSE
 if test "$profile" = internal-storage-windows-n1-gpu; then
     n1_bus=TRUE
     g17_gpu=TRUE
+fi
+# The display image is the GPU probe image plus the J813 DCP device (AURA8180).
+if test "$profile" = internal-storage-windows-n1-gpu-disp; then
+    n1_bus=TRUE
+    g17_gpu=TRUE
+    j813_disp=TRUE
 fi
 ans_acpi=${ans_acpi:-FALSE}
 if test "$ans" = true; then
@@ -151,6 +158,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
     "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
     "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
     "BLD_*_NTASI_G17_GPU_PROBE=$g17_gpu" \
+    "BLD_*_NTASI_J813_DISPLAY_DEVICE=$j813_disp" \
     "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
     "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1; then
     # Homebrew llvm-rc parses an absolute POSIX input path beginning with '/' as
@@ -172,6 +180,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
             "BLD_*_NTASI_ANS_PRESERVE_FOR_OS=$ans_preserve" \
             "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
             "BLD_*_NTASI_G17_GPU_PROBE=$g17_gpu" \
+            "BLD_*_NTASI_J813_DISPLAY_DEVICE=$j813_disp" \
             "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
             "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1 || {
             tail -80 "$log" >&2
@@ -193,13 +202,13 @@ clean=true
 test -z "$(git -C "$source_root" status --porcelain=v1 --untracked-files=no --ignore-submodules=none)" || clean=false
 manifest=$artifact_dir/manifest.json
 "$venv/bin/python" - "$manifest" "$commit" "$clean" "$profile" "$size" "$digest" \
-    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" "$n1_bus" "$g17_gpu" <<'PY'
+    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" "$n1_bus" "$g17_gpu" "$j813_disp" <<'PY'
 import json
 import pathlib
 import sys
 
 (path, commit, clean, profile, size, digest, ans, ans_dxe, ans_block_io,
- ans_preserve, ans_acpi, n1_bus, g17_gpu) = sys.argv[1:]
+ ans_preserve, ans_acpi, n1_bus, g17_gpu, j813_disp) = sys.argv[1:]
 enabled = lambda value: value == "TRUE"
 record = {
     "schema": "aurora.j813.mu-profile.v1",
@@ -216,6 +225,7 @@ record = {
         "n1_bus": enabled(n1_bus),
         "n1_handoff": "aura,windows-n1-v1" if enabled(n1_bus) else None,
         "g17_gpu_device": "AURA8170" if enabled(g17_gpu) else None,
+        "j813_display_device": "AURA8180" if enabled(j813_disp) else None,
         "baseline_capabilities": {
             "usb3_deferred_pipe_switch_port_mask": 0,
             "usb_dwc3_reset_dart_handoff":
@@ -236,6 +246,7 @@ record = {
             "PcdAppleAnsPreserveForOs": enabled(ans_preserve),
             "PcdAppleN1BusHandoff": enabled(n1_bus),
             "PcdAppleG17GpuProbe": enabled(g17_gpu),
+            "PcdAppleJ813DisplayDevice": enabled(j813_disp),
             "PcdAppleAnsPmgrResetBase": "0x380700300",
             "PcdAppleAnsPmgrApcieStBase": "0x380700410",
             "PcdAppleAnsPmgrApcieStSysBase": "0x380700520",
