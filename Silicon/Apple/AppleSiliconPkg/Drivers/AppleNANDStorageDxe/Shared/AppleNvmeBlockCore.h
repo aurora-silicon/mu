@@ -6,6 +6,7 @@
 #include "AppleNvmeCore.h"
 
 #define NTASI_ANS_IDENTIFY_DATA_SIZE 4096u
+#define NTASI_ANS_READ_BATCH_MAX_BYTES (2u * NTASI_ANS_DATA_ALIGN)
 #define NTASI_ANS_ADMIN_CMD_IDENTIFY 0x06u
 #define NTASI_ANS_IDENTIFY_CNS_NAMESPACE 0x00u
 
@@ -37,8 +38,8 @@ typedef int (*ntasi_ans_block_execute_fn)(
 /*
  * Firmware-friendly block device. The DMA buffer is a reusable bounce buffer:
  * EFI callers do not need to supply aligned or physically contiguous memory.
- * The first implementation intentionally submits one logical block at a time,
- * matching the simplest proven ANS path while retaining spec-correct NLB.
+ * Default reads submit one logical block at a time. Explicit read batching
+ * uses at most two owned NVMe pages; PRP2 is a direct second-page address.
  */
 struct ntasi_ans_block_device {
     ntasi_ans_block_execute_fn execute;
@@ -46,6 +47,7 @@ struct ntasi_ans_block_device {
     uint8_t *dma_buffer;
     uint64_t dma_address;
     size_t dma_size;
+    size_t read_batch_bytes;
     struct ntasi_ans_namespace media;
     bool identified;
 };
@@ -68,6 +70,10 @@ int ntasi_ans_block_device_init(struct ntasi_ans_block_device *device,
 
 int ntasi_ans_block_identify(struct ntasi_ans_block_device *device,
                              uint32_t nsid);
+
+/* Opt in only after identify and only with the full owned DMA capacity. */
+int ntasi_ans_block_set_read_batch(struct ntasi_ans_block_device *device,
+                                  size_t batch_bytes);
 
 int ntasi_ans_block_read(struct ntasi_ans_block_device *device,
                          uint64_t lba,

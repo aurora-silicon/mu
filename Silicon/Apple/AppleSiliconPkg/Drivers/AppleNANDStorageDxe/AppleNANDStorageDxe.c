@@ -296,6 +296,7 @@ typedef struct {
   VOID                              *IoCompletions;
   VOID                              *IoTcbs;
   VOID                              *Bounce;
+  UINTN                             BounceSize;
   APPLE_ANS_PAGE_ALLOCATION         Allocations[APPLE_ANS_MAX_ALLOCATIONS];
   UINTN                             AllocationCount;
   EFI_BLOCK_IO_MEDIA                Media;
@@ -1697,7 +1698,13 @@ AllocateControllerMemory (
                          );
   }
 
-  Device->Bounce = AllocateQueueMemory (Device, "bounce", NTASI_ANS_DATA_ALIGN);
+  Device->BounceSize = NTASI_ANS_DATA_ALIGN;
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
+  if (Device->NvmeHw == &ntasi_ans_hw_t8142) {
+    Device->BounceSize = NTASI_ANS_READ_BATCH_MAX_BYTES;
+  }
+#endif
+  Device->Bounce = AllocateQueueMemory (Device, "bounce", Device->BounceSize);
   if ((Device->AdminCommands == NULL) ||
       (Device->AdminCompletions == NULL) ||
       (Device->IoCommands == NULL) ||
@@ -3510,7 +3517,7 @@ AppleNANDStorageDxeInitialize (
              Device,
              Device->Bounce,
              (UINT64)(UINTN)Device->Bounce,
-             NTASI_ANS_DATA_ALIGN
+             Device->BounceSize
              );
   if (Result == 0) {
     Result = ntasi_ans_block_identify (
@@ -3518,6 +3525,11 @@ AppleNANDStorageDxeInitialize (
                APPLE_ANS_NAMESPACE_ID
                );
   }
+#if defined (SILICON_PLATFORM) && (SILICON_PLATFORM == 8142)
+  if ((Result == 0) && (Device->NvmeHw == &ntasi_ans_hw_t8142)) {
+    Result = ntasi_ans_block_set_read_batch (&Device->BlockDevice, Device->BounceSize);
+  }
+#endif
   if (Result != 0) {
     ANS_DEBUG ((DEBUG_ERROR, "AppleANS: stage \"%a\" failed: %d\n", Stage, Result));
     Status = EFI_DEVICE_ERROR;

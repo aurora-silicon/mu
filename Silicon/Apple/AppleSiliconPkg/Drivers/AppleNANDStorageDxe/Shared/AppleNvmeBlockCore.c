@@ -110,6 +110,7 @@ int ntasi_ans_block_identify(struct ntasi_ans_block_device *device,
         return NTASI_ANS_BLOCK_ERR_ARGUMENT;
 
     device->identified = false;
+    device->read_batch_bytes = 0;
     memset(device->dma_buffer, 0, NTASI_ANS_IDENTIFY_DATA_SIZE);
     ntasi_ans_cmd_identify_namespace(&command, nsid, device->dma_address);
     status = device->execute(device->opaque, true, &command,
@@ -126,6 +127,29 @@ int ntasi_ans_block_identify(struct ntasi_ans_block_device *device,
 
     device->media = media;
     device->identified = true;
+    return NTASI_ANS_BLOCK_OK;
+}
+
+int ntasi_ans_block_set_read_batch(struct ntasi_ans_block_device *device,
+                                  size_t batch_bytes)
+{
+    uint32_t block_size;
+
+    if (device == NULL || !device->identified || device->execute == NULL ||
+        device->dma_buffer == NULL)
+        return NTASI_ANS_BLOCK_ERR_ARGUMENT;
+    block_size = device->media.block_size;
+    if (block_size < 512u || block_size > NTASI_ANS_DATA_ALIGN ||
+        (block_size & (block_size - 1u)) != 0 ||
+        batch_bytes == 0 || batch_bytes > NTASI_ANS_READ_BATCH_MAX_BYTES ||
+        batch_bytes > device->dma_size ||
+        batch_bytes % NTASI_ANS_DATA_ALIGN != 0 ||
+        batch_bytes % block_size != 0)
+        return NTASI_ANS_BLOCK_ERR_BUFFER;
+    if ((device->dma_address & (NTASI_ANS_DATA_ALIGN - 1u)) != 0 ||
+        device->dma_address > UINT64_MAX - (batch_bytes - 1u))
+        return NTASI_ANS_BLOCK_ERR_ALIGNMENT;
+    device->read_batch_bytes = batch_bytes;
     return NTASI_ANS_BLOCK_OK;
 }
 
@@ -154,20 +178,31 @@ int ntasi_ans_block_read(struct ntasi_ans_block_device *device,
         block_count > device->media.block_count - lba)
         return NTASI_ANS_BLOCK_ERR_RANGE;
 
-    for (index = 0; index < block_count; ++index) {
+    for (index = 0; index < block_count;) {
         struct ntasi_ans_sqe command;
+        uint64_t blocks = device->read_batch_bytes == 0 ? 1u :
+            device->read_batch_bytes / device->media.block_size;
+        size_t bytes;
+        uint64_t prp2;
         int status;
 
-        memset(device->dma_buffer, 0, device->media.block_size);
-        /* NVMe NLB is zero-based: cdw12 == 0 transfers one logical block. */
+        if (blocks > block_count - index)
+            blocks = block_count - index;
+        bytes = (size_t)blocks * device->media.block_size;
+        prp2 = bytes > NTASI_ANS_DATA_ALIGN ?
+            device->dma_address + NTASI_ANS_DATA_ALIGN : 0;
+        memset(device->dma_buffer, 0, bytes);
+        /* NVMe NLB is zero-based; at most two direct pages, never a PRP list. */
         ntasi_ans_cmd_rw(&command, NTASI_ANS_CMD_READ, device->media.nsid,
-                         lba + index, 0, device->dma_address, 0);
+                         lba + index, (uint32_t)(blocks - 1u),
+                         device->dma_address, prp2);
         status = device->execute(device->opaque, false, &command,
                                  NTASI_ANS_DMA_FROM_DEVICE, NULL);
         if (status != 0)
             return status;
         memcpy(output + (size_t)index * device->media.block_size,
-               device->dma_buffer, device->media.block_size);
+               device->dma_buffer, bytes);
+        index += blocks;
     }
     return NTASI_ANS_BLOCK_OK;
 }
