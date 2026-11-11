@@ -67,7 +67,10 @@ AppleJ813DisplayTableAdmitted (
     return TRUE;
   }
 
-  if (!FixedPcdGetBool (PcdAppleJ813DisplayDevice)) {
+  /* Selection, not successful GPU publication: failure cannot republish a
+   * second owner. BasicDisplay retains the POST framebuffer. */
+  if (FixedPcdGetBool (PcdAppleJ813UnifiedDisplay) ||
+      !FixedPcdGetBool (PcdAppleJ813DisplayDevice)) {
     return FALSE;
   }
 

@@ -116,6 +116,9 @@
   # (DISP.asl), still withheld unless the machine is a J813 with ADT dcp/disp0.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813DisplayDevice|FALSE|BOOLEAN|0x00004728
 
+  # Exclusive J813 unified GPU+panel resource owner; candidate, default closed.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813UnifiedDisplay|FALSE|BOOLEAN|0x00004729
+
   # Stack stuff (128k stack by default)
   #Fallback stack base in case ModuleEntryPoint setup won't work.
   gAppleSiliconPkgTokenSpaceGuid.PcdSecPhaseStackBase|0x0|UINT64|0x0000440b

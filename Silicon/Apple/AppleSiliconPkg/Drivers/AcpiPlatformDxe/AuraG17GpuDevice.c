@@ -166,18 +166,32 @@ AppleG17GpuTableAdmitted (
   UINT32  Value;
   UINTN   Index;
   UINTN   Other;
+  BOOLEAN Unified;
+  size_t  PropertyLength;
 
   if ((Size < sizeof (*Table)) || (Table->Length > Size)) {
     return FALSE;
   }
 
-  if ((Table->Signature != SIGNATURE_32 ('S', 'S', 'D', 'T')) ||
-      (CompareMem (&Table->OemTableId, "AURA817G", 8) != 0))
-  {
+  if (Table->Signature != SIGNATURE_32 ('S', 'S', 'D', 'T')) {
     return TRUE;
   }
 
-  if (!FixedPcdGetBool (PcdAppleG17GpuProbe)) {
+  Unified = CompareMem (&Table->OemTableId, "AURA817F", 8) == 0;
+  if (!Unified && (CompareMem (&Table->OemTableId, "AURA817G", 8) != 0)) {
+    return TRUE;
+  }
+  /* A requested unified image never publishes either legacy device, even
+   * when a subsequent new-table/ADT/region admission fails. */
+  if (Unified != FixedPcdGetBool (PcdAppleJ813UnifiedDisplay) ||
+      (!Unified && !FixedPcdGetBool (PcdAppleG17GpuProbe))) {
+    return FALSE;
+  }
+  if (Unified &&
+      ((dt_get_prop ("/arm-io/dcp", "compatible", &PropertyLength) == NULL) ||
+       (PropertyLength == 0) ||
+       (dt_get_prop ("/arm-io/disp0", "compatible", &PropertyLength) == NULL) ||
+       (PropertyLength == 0))) {
     return FALSE;
   }
 
@@ -237,6 +251,7 @@ AppleG17GpuTableAdmitted (
     }
   }
 
-  DEBUG ((DEBUG_INFO, "Aura G17 GPU: J813 probe image; publishing AURA8170\n"));
+  DEBUG ((DEBUG_INFO, "Aura G17 GPU: J813 %a resource owner\n",
+          Unified ? "unified AURA8171" : "render AURA8170"));
   return TRUE;
 }
