@@ -2,6 +2,9 @@
 #include <AArch64/AsmMacroLib.h>
 #include <AArch64.h>
 #include <Library/ArmLib.h>
+#if defined(J804_M1)
+#include <J804M1.h>
+#endif
 
 .text
 .align 3
@@ -76,6 +79,14 @@ _ModuleEntrySetupStack:
   ldr   x2, [x2]
   sub   x2, x2, #1
   add   x1, x1, x2      // x1 = SystemMemoryTop = PcdSystemMemoryBase + PcdSystemMemorySize
+
+#if defined(J804_M1)
+  // Backstop for the EarlySetup checks: never place the stack or UEFI region
+  // above the J804 RAM top limit, whatever path set the memory PCDs.
+  MOV64 (x9, J804_M1_RAM_TOP_LIMIT - 1)
+  cmp   x1, x9
+  b.hi  .LJ804M1Halt
+#endif
 
   //calculate top of FD image
   ldr   x2, =PcdGet64 (PcdFdBaseAddress)
@@ -201,7 +212,13 @@ ASM_PFX(DiscoverDramFromDt):
   ldr   w8, .LArm64LinuxMagic
   ldr   w9, [x1, #0x38]
   cmp   w8, w9
+#if defined(J804_M1)
+  // Without the Linux header the image is not relocated and EarlySetup does
+  // not run, so the memory PCDs would keep their J873 defaults.
+  bne   .LJ804M1Halt
+#else
   bne   .Lout
+#endif
 
   //
   //
@@ -250,10 +267,24 @@ ASM_PFX(DiscoverDramFromDt):
   MOV64 (x4, FixedPcdGet64(PcdAdtPointer))
 
   bl    EarlySetup
+#if defined(J804_M1)
+  // EarlySetup stops with a panel error block itself; never continue on FALSE.
+  cbz   x0, .LJ804M1Halt
+#else
   cbz   x0, .Lout
+#endif
 
 .Lout:
   ret    x28
+
+#if defined(J804_M1)
+// J804 M1 fatal stop before the stack exists. A branch-to-self loop: no WFI at
+// native EL2 and no memory written outside the image.
+.LJ804M1Halt:
+  MU_CHECKPOINT 0xEE
+0:
+  b     0b
+#endif
 
 .LArm64LinuxMagic:
   .byte   0x41, 0x52, 0x4d, 0x64

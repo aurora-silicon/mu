@@ -1,7 +1,8 @@
 /*
  * Host test for the J804 M1 reservation code in T8152FamilyPkg
  * MemoryInitPeiLib (the J804_M1 block, compiled unchanged against small
- * shims) and for J804M1AdtIsJ804, run against a saved J804 device tree.
+ * shims), for J804M1AdtIsJ804 and for the PrePi UEFI-region check
+ * (J804M1UefiRegion/J804M1RegionIsClear), run against a saved J804 device tree.
  *
  * The device tree is read into memory from the path given on the command
  * line; the file is never written. chainload.py --raw packing is emulated in
@@ -190,6 +191,16 @@ static int RunReserve (UINT64 RamTop)
   return gHostLastError;
 }
 
+/* PrePi EarlySetup's UEFI-region check (J804M1.h), with the J804 M1 FD
+   size, UEFI region size and boot_args/ADT copy addresses. */
+static BOOLEAN PrePiRegionClear (UINT64 RamTop, J804_M1_REGION_CHECK *c)
+{
+  UINT64 rb, rt;
+  J804M1UefiRegion (gHostRamBase, RamTop, gHostFdBase, 0x1E00000, 0x8000000, &rb, &rt);
+  return J804M1RegionIsClear (gHostRamBase, RamTop, rb, rt, gHostFdBase, 0x1E00000,
+                              0x10220000000ULL, 0x10220004000ULL, c);
+}
+
 int main (int argc, char **argv)
 {
   FILE *f; long size; void *adt; size_t len; UINTN i;
@@ -254,6 +265,43 @@ int main (int argc, char **argv)
   printf ("untrimmed RAM top: stop code %d (UEFI region overlap)\n", stop);
   CHECK (0x105cd600000ULL > J804_M1_RAM_TOP_LIMIT, "EarlySetup limit would not catch the untrimmed top");
 
+  /* 3b. PrePi UEFI-region check: the trimmed top passes, lower tops whose
+     UEFI region lies on carve-outs and the untrimmed top are refused, and
+     every top PrePi accepts also passes MemoryInitPeiLib (no later stop). */
+  {
+    J804_M1_REGION_CHECK c;
+    static const UINT64 bad[] = { 0x10140000000ULL, 0x105cd600000ULL, 0x10220100000ULL };
+    CHECK (PrePiRegionClear (J804_M1_RAM_TOP_LIMIT, &c), "PrePi refuses the trimmed top (%s 0x%llx..0x%llx)",
+           c.HitKey ? c.HitKey : "no map", c.HitBase, c.HitTop);
+    for (i = 0; i < ARRAY_SIZE (bad); i++) {
+      BOOLEAN ok = PrePiRegionClear (bad[i], &c);
+      CHECK (!ok && c.HitKey != NULL, "PrePi accepts RAM top 0x%llx", bad[i]);
+      printf ("PrePi RAM top 0x%llx: refused, UEFI region 0x%llx..0x%llx hits %s 0x%llx..0x%llx\n",
+              bad[i], bad[i] - 0x8000000, bad[i], c.HitKey ? c.HitKey : "?", c.HitBase, c.HitTop);
+    }
+    UINT64 top, lo = gHostFdBase + 0x1E00000 + 0x8000000;
+    unsigned accepted = 0, refused = 0, laterStop = 0, stricter = 0;
+    for (top = J804_M1_RAM_TOP_LIMIT; top >= lo; top -= 0x200000) {
+      if (PrePiRegionClear (top, &c)) {
+        accepted++;
+        stop = RunReserve (top);
+        if (stop != -1) { laterStop++; CHECK (0, "PrePi accepts top 0x%llx but MemoryInitPeiLib stops with %d", top, stop); }
+      } else {
+        refused++;
+        if (RunReserve (top) == -1) {
+          stricter++;
+          /* Expected only for the ADT copy, which this harness's
+             MemoryInitPeiLib run sees at its host buffer instead. */
+          CHECK (c.HitKey && !strcmp (c.HitKey, "ADT copy"), "PrePi refuses top 0x%llx for %s, MemoryInitPeiLib does not",
+                 top, c.HitKey ? c.HitKey : "no map");
+        }
+      }
+    }
+    printf ("PrePi RAM top sweep 0x%llx..0x%llx (2 MiB steps): %u accepted, %u refused; "
+            "accepted-then-stopped %u; refused-but-MemoryInitPeiLib-ok %u\n",
+            lo, (UINT64)J804_M1_RAM_TOP_LIMIT, accepted, refused, laterStop, stricter);
+  }
+
   /* 4. No carve-out map -> stop code 3. */
   {
     dt_node_t *cm = dt_get ("/chosen/carveout-memory-map");
@@ -261,6 +309,10 @@ int main (int argc, char **argv)
     char save = nm[0];
     nm[0] = 'X';
     stop = RunReserve (J804_M1_RAM_TOP_LIMIT);
+    {
+      J804_M1_REGION_CHECK c;
+      CHECK (!PrePiRegionClear (J804_M1_RAM_TOP_LIMIT, &c) && c.HitKey == NULL, "PrePi accepts a tree without a carve-out map");
+    }
     nm[0] = save;
     CHECK (stop == J804_M1_ERROR_NO_CARVEOUT_MAP, "missing carve-out map: stop code %d", stop);
     printf ("missing carve-out map: stop code %d\n", stop);

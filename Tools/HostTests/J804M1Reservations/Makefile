@@ -6,7 +6,7 @@ MU ?= ../../..
 LIB := $(MU)/Silicon/Apple/T8152FamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
 CFLAGS := -std=gnu11 -O1 -g -Wall -Wno-unused-function -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
   -Ishim -I$(MU)/Silicon/Apple/AppleSiliconPkg/Include
-j804m1_reserve_test: j804m1_reserve_test.c gen/j804_block.c dtlib.c
+j804m1_reserve_test: j804m1_reserve_test.c gen/j804_block.c dtlib.c $(MU)/Silicon/Apple/AppleSiliconPkg/Include/J804M1.h
 	cc $(CFLAGS) -o $@ j804m1_reserve_test.c dtlib.c
 gen/j804_block.c: $(LIB)
 	mkdir -p gen

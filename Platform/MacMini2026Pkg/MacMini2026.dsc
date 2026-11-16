@@ -55,6 +55,8 @@
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152
 !if $(J804_M1) == TRUE
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1
+  # PrePi's ModuleEntryPoint.S has J804_M1 stops too.
+  GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1
 !endif
 !if $(J873_WINDOWS) == TRUE
   # This existing ArmExceptionLib option preserves the full-width EL1 stack
