@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Check a MacMini2026/J804 M1 FD build and write its hand-over manifest.
+
+Host-only. Checks:
+  * FD layout: exactly 0x1E00000 bytes, arm64 Image header magic at 0x38,
+    image_size at 0x10 equal to the file size, an FV signature at 0x8028.
+  * No build-host paths in any PE of the build output or in the uncompressed
+    FVMAIN (the FD itself is LZMA-compressed, so it is not scanned directly).
+Writes MANIFEST.txt and manifest.json next to the FD:
+  sha256, POSIX cksum, size, git commit and dirty state, marker strings found
+  in the PE files, the FVMAIN and FVMAIN_COMPACT file GUID/type/name lists,
+  and the startup.nsh that the FV carries.
+Exit status is non-zero if any check fails.
+"""
+import argparse
+import hashlib
+import json
+import pathlib
+import struct
+import subprocess
+import sys
+import uuid
+
+FD_SIZE = 0x1E00000
+
+# Strings that must never appear in a shipped binary.
+PATH_PATTERNS = [b'/Users/', b'/private/tmp', b'/private/var', b'/Volumes/',
+                 b'/home/', b'/var/folders/']
+
+# Marker strings looked up in the PE files (ASCII and UTF-16LE).
+MARKERS = {
+    'common': [
+        'J873-MU-005',
+        'J873_PROBE_READY',
+        'J873_PROBE_DONE',
+        'timer reflection disabled',
+    ],
+    'j804-m1': [
+        'J804-MU-M1-001',
+        'J804_M1: untrimmed RAM top',
+        'J804_M1: reserved',
+        'J804_M1: chainload firmware block',
+        'J804_M1_CHECKPOINT_DXE',
+    ],
+}
+
+FFS_TYPES = {
+    0x01: 'RAW', 0x02: 'FREEFORM', 0x03: 'SEC', 0x04: 'PEI_CORE',
+    0x05: 'DXE_CORE', 0x06: 'PEIM', 0x07: 'DRIVER', 0x08: 'COMBINED',
+    0x09: 'APPLICATION', 0x0A: 'MM', 0x0B: 'FV_IMAGE', 0x0C: 'COMBINED_MM_DXE',
+    0x0D: 'MM_CORE', 0x0E: 'MM_STANDALONE', 0x0F: 'MM_CORE_STANDALONE',
+    0xF0: 'PAD',
+}
+SECTION_UI = 0x15
+SECTION_RAW = 0x19
+
+
+def guid_str(raw):
+    return str(uuid.UUID(bytes_le=bytes(raw))).upper()
+
+
+def parse_sections(data):
+    sections = []
+    off = 0
+    while off + 4 <= len(data):
+        size = data[off] | (data[off + 1] << 8) | (data[off + 2] << 16)
+        stype = data[off + 3]
+        hdr = 4
+        if size == 0xFFFFFF:
+            size = struct.unpack_from('<I', data, off + 4)[0]
+            hdr = 8
+        if size < hdr:
+            break
+        sections.append((stype, data[off + hdr:off + size]))
+        off = (off + size + 3) & ~3
+    return sections
+
+
+def parse_fv(fv):
+    if fv[0x28:0x2C] != b'_FVH':
+        raise ValueError('no _FVH signature')
+    fv_len = struct.unpack_from('<Q', fv, 0x20)[0]
+    hdr_len = struct.unpack_from('<H', fv, 0x30)[0]
+    ext_off = struct.unpack_from('<H', fv, 0x34)[0]
+    off = hdr_len
+    if ext_off:
+        ext_size = struct.unpack_from('<I', fv, ext_off + 16)[0]
+        off = ext_off + ext_size
+    off = (off + 7) & ~7
+    files = []
+    while off + 0x18 <= min(fv_len, len(fv)):
+        name = fv[off:off + 16]
+        if name == b'\xff' * 16:
+            break
+        ftype = fv[off + 0x12]
+        attrs = fv[off + 0x13]
+        size = fv[off + 0x14] | (fv[off + 0x15] << 8) | (fv[off + 0x16] << 16)
+        hdr = 0x18
+        if attrs & 0x01:
+            size = struct.unpack_from('<Q', fv, off + 0x18)[0]
+            hdr = 0x20
+        if size < hdr:
+            break
+        body = fv[off + hdr:off + size]
+        ui = ''
+        raw = None
+        if ftype != 0xF0:
+            for stype, sdata in parse_sections(body):
+                if stype == SECTION_UI:
+                    ui = sdata.decode('utf-16-le', 'replace').rstrip('\0')
+                elif stype == SECTION_RAW and raw is None:
+                    raw = sdata
+        files.append(dict(guid=guid_str(name),
+                          type=FFS_TYPES.get(ftype, hex(ftype)),
+                          name=ui, size=size, raw=raw))
+        off = (off + size + 7) & ~7
+    return files
+
+
+def posix_cksum(path):
+    out = subprocess.check_output(['cksum', str(path)], text=True).split()
+    return int(out[0]), int(out[1])
+
+
+def find_strings(blob, needle):
+    return needle.encode() in blob or needle.encode('utf-16-le') in blob
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--source-root', required=True, type=pathlib.Path)
+    ap.add_argument('--build-dir', required=True, type=pathlib.Path)
+    ap.add_argument('--fd', required=True, type=pathlib.Path)
+    ap.add_argument('--profile', required=True)
+    ap.add_argument('--out', required=True, type=pathlib.Path)
+    args = ap.parse_args()
+    failures = []
+
+    data = args.fd.read_bytes()
+    if len(data) != FD_SIZE:
+        failures.append(f'FD size 0x{len(data):x} != 0x{FD_SIZE:x}')
+    if data[0x38:0x3C] != b'ARM\x64':
+        failures.append('FD has no arm64 Image magic at 0x38')
+    if struct.unpack_from('<Q', data, 0x10)[0] != len(data):
+        failures.append('FD image_size at 0x10 does not match the file size')
+    if data[0x8028:0x802C] != b'_FVH':
+        failures.append('FD has no FV at 0x8000')
+    crc, csize = posix_cksum(args.fd)
+
+    # Every PE the build produced, plus the uncompressed FVMAIN.
+    pes = sorted(set(args.build_dir.joinpath('AARCH64').rglob('*.efi')) |
+                 set(args.build_dir.joinpath('AARCH64').rglob('*.dll')))
+    fvmain_path = args.build_dir / 'FV' / 'FVMAIN.Fv'
+    scanned = pes + [fvmain_path]
+    leaks = []
+    for path in scanned:
+        # clang targeting windows-msvc may emit __FILE__ with backslashes;
+        # folding them also folds the UTF-16 form (0x5C 0x00 -> 0x2F 0x00).
+        blob = path.read_bytes().replace(b'\\', b'/')
+        for pat in PATH_PATTERNS:
+            if pat in blob or pat.decode().encode('utf-16-le') in blob:
+                leaks.append(f'{path.relative_to(args.build_dir)}: {pat.decode()}')
+    if leaks:
+        failures.append(f'{len(leaks)} build-host paths in PE files')
+
+    # Markers, by the module that carries them (top-level .efi copies only).
+    top = sorted(args.build_dir.joinpath('AARCH64').glob('*.efi'))
+    wanted = list(MARKERS['common'])
+    if args.profile == 'j804-m1':
+        wanted += MARKERS['j804-m1']
+    markers = {}
+    for marker in wanted:
+        markers[marker] = [p.name for p in top if find_strings(p.read_bytes(), marker)]
+    if args.profile == 'j804-m1':
+        for marker in MARKERS['j804-m1']:
+            if not markers[marker]:
+                failures.append(f'marker {marker!r} not found in any PE')
+
+    fvmain = parse_fv(fvmain_path.read_bytes())
+    compact = parse_fv(data[0x8000:])
+    startup = [f for f in fvmain if f['name'] == 'startup.nsh']
+    startup_text = None
+    if len(startup) != 1 or startup[0]['raw'] is None:
+        failures.append('FVMAIN does not carry exactly one startup.nsh RAW file')
+    else:
+        startup_text = startup[0]['raw'].decode('utf-8', 'replace')
+        if args.profile == 'j804-m1' and 'J804_MU_FIRMWARE_READY' not in startup_text:
+            failures.append('startup.nsh does not print J804_MU_FIRMWARE_READY')
+
+    root = args.source_root
+    commit = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'],
+                                     text=True).strip()
+    status = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain'],
+                                     text=True).splitlines()
+
+    record = dict(
+        schema='wm6.mu-fd-manifest.v1',
+        profile=profile_name(args.profile),
+        status='BUILT_NOT_HARDWARE_TESTED',
+        fd=dict(name=args.fd.name, size=len(data),
+                sha256=hashlib.sha256(data).hexdigest(),
+                cksum=crc, cksum_size=csize),
+        source_commit=commit,
+        source_status=status,
+        pe_files_scanned=len(scanned),
+        path_leaks=leaks,
+        markers=markers,
+        startup_nsh=startup_text,
+        fvmain_compact=[{k: v for k, v in f.items() if k != 'raw'} for f in compact],
+        fvmain=[{k: v for k, v in f.items() if k != 'raw'} for f in fvmain],
+        failures=failures,
+    )
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
+
+    lines = [
+        f'profile        {record["profile"]}',
+        f'status         {record["status"]} (built on the host only)',
+        f'fd             {args.fd.name}',
+        f'size           {len(data)} (0x{len(data):x})',
+        f'sha256         {record["fd"]["sha256"]}',
+        f'cksum          {crc} {csize}',
+        f'source commit  {commit}',
+        'source status  ' + ('; '.join(s.strip() for s in status) or 'clean'),
+        f'path check     {len(scanned)} PE/FV files scanned, '
+        f'{len(leaks)} build-host paths found',
+        '',
+        'markers (strings in the PE files):',
+    ]
+    for marker, where in markers.items():
+        lines.append(f'  {marker:36} {", ".join(where) if where else "NOT FOUND"}')
+    lines += ['', 'startup.nsh (FVMAIN RAW file):']
+    lines += ['  ' + line for line in (startup_text or '').splitlines()]
+    lines += ['', 'FVMAIN_COMPACT files (GUID, type, UI name):']
+    lines += [f'  {f["guid"]}  {f["type"]:12} {f["name"]}' for f in compact]
+    lines += ['', f'FVMAIN files ({len(fvmain)}; GUID, type, UI name):']
+    lines += [f'  {f["guid"]}  {f["type"]:12} {f["name"]}' for f in fvmain]
+    if failures:
+        lines += ['', 'FAILURES:'] + ['  ' + f for f in failures]
+    (args.out / 'MANIFEST.txt').write_text('\n'.join(lines) + '\n')
+
+    tag = 'J804_M1_BUILT' if args.profile == 'j804-m1' else 'J873_BASELINE_BUILT'
+    if failures:
+        for f in failures:
+            print('FAIL:', f, file=sys.stderr)
+        for leak in leaks[:20]:
+            print('  leak:', leak, file=sys.stderr)
+        sys.exit(1)
+    print(tag, record['fd']['sha256'])
+
+
+def profile_name(profile):
+    return {'j804-m1': 'J804 M1 (J873 native + M1 changes)',
+            'j873-native-baseline': 'J873 native baseline (J804_M1=FALSE)'}.get(profile, profile)
+
+
+if __name__ == '__main__':
+    main()

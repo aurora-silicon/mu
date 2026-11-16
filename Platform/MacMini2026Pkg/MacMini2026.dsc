@@ -23,6 +23,18 @@
 !endif
 
 [BuildOptions.common]
+  # Keep the build host's directory layout out of the binaries. Each PE's
+  # CodeView record names only its PDB file instead of the absolute PDB path,
+  # and, when the build script passes the checkout root as SOURCE_PREFIX_MAP,
+  # __FILE__ in ASSERT/DEBUG strings becomes relative to that root.
+  # lld still emits a CodeView PDB signature that changes on every link, even
+  # with /Brepro, so GenFw -z zeroes the debug directory data (CodeView record
+  # and time stamps) in each .efi. Repeated builds in one path then match.
+  GCC:*_CLANGPDB_*_DLINK_FLAGS = /PDBALTPATH:%_PDB% /Brepro
+  GCC:*_CLANGPDB_*_GENFW_FLAGS = -z
+!ifdef SOURCE_PREFIX_MAP
+  GCC:*_CLANGPDB_*_CC_FLAGS = -ffile-prefix-map=$(SOURCE_PREFIX_MAP)/=
+!endif
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152
 !if $(J873_WINDOWS) == TRUE
   # This existing ArmExceptionLib option preserves the full-width EL1 stack
