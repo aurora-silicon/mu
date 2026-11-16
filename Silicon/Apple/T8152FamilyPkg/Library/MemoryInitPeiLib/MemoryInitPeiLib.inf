@@ -35,6 +35,9 @@
   ArmMmuLib
   AppleDTLib
   PrintLib
+  BaseLib
+  BaseMemoryLib
+  PanelCheckpointLib
 
 [Guids]
   gEfiMemoryTypeInformationGuid

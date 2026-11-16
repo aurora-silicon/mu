@@ -29,6 +29,12 @@
 
 #include <AppendedRamdisk.h>
 
+#if defined(J804_M1)
+#include <J804M1.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/PanelCheckpointLib.h>
+#endif
+
 //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
 // J873 physical apertures measured from its ADT.
 
@@ -67,6 +73,7 @@ STATIC VOID InitMmu(IN ARM_MEMORY_REGION_DESCRIPTOR *MemoryTable)
     }
 }
 
+#if !defined(J804_M1)
 //borrowed from edk2-platforms:Armada7k8kMemoryInitPeiLib
 STATIC VOID ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN UINT32 ReservedRegionSize)
 {
@@ -144,6 +151,508 @@ STATIC VOID ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN
     NextHob.Raw = GET_NEXT_HOB (NextHob);
   }
 }
+#endif
+
+
+#if defined(J804_M1)
+//
+// J804 M1 reservations, built from the device tree this library already reads.
+//
+// Every range below is clipped to Mu's RAM, rounded outward to whole pages,
+// collected, sorted and merged, and only then punched out of the system
+// memory HOBs, so overlapping and adjacent ranges are handled once:
+//   * every /chosen/carveout-memory-map entry that overlaps RAM, except
+//     region-id-24, which is the usable DRAM range itself;
+//   * every /chosen/memory-map entry in RAM (SEPFW, SEPPatches, uStuff,
+//     TrustCache, DeviceTree, preoslog, BootArgs, RTBuddySeg, ...);
+//   * the firmware block chainload.py packs directly after the FD (see
+//     J804M1AddChainloadBlock);
+//   * all of region-id-353 (through the carve-out rule; it holds the loader,
+//     its heap and the original boot blobs);
+//   * as before: the boot_args copy, the 2 MiB ADT copy, each cpu's
+//     cpm-impl-reg range and an appended ramdisk.
+// The FD itself is cut out of every range: it keeps its own system memory HOB
+// and its boot services data allocation. A range that reaches the UEFI region
+// and stack at the RAM top stops the boot with a panel error block.
+//
+#define J804_M1_MAX_RANGES  256
+
+//
+// chainload.py places the boot blobs and boot_args after the image, each
+// start rounded up to 16 KiB (aura proxyclient utils.align), and rewrites the
+// matching /chosen/memory-map entries to the new addresses.
+//
+#define J804_M1_CHAINLOAD_ALIGN  0x4000
+
+typedef struct {
+  UINT64    Base;
+  UINT64    Top;
+} J804_M1_RANGE;
+
+typedef struct {
+  UINT64     RamBase;
+  UINT64     RamTop;
+  UINT64     FdBase;
+  UINT64     FdTop;
+  UINTN      Count;
+  BOOLEAN    Overflow;
+  BOOLEAN    SawLoaderRegion;
+} J804_M1_STATE;
+
+STATIC J804_M1_RANGE  mJ804M1Ranges[J804_M1_MAX_RANGES];
+STATIC J804_M1_STATE  mJ804M1;
+
+//
+// Device tree values are only 4-byte aligned and this runs with the MMU off,
+// so read 64-bit cells as two 32-bit halves.
+//
+STATIC
+UINT64
+J804M1ReadCell64 (
+  IN CONST VOID  *Value
+  )
+{
+  CONST volatile UINT32  *Words;
+
+  Words = (CONST volatile UINT32 *)Value;
+  return (UINT64)Words[0] | ((UINT64)Words[1] << 32);
+}
+
+STATIC
+VOID
+J804M1Append (
+  IN UINT64  Base,
+  IN UINT64  Top
+  )
+{
+  if (Base >= Top) {
+    return;
+  }
+
+  if (mJ804M1.Count >= J804_M1_MAX_RANGES) {
+    mJ804M1.Overflow = TRUE;
+    return;
+  }
+
+  mJ804M1Ranges[mJ804M1.Count].Base = Base;
+  mJ804M1Ranges[mJ804M1.Count].Top  = Top;
+  mJ804M1.Count++;
+}
+
+STATIC
+VOID
+J804M1AddRange (
+  IN UINT64       Base,
+  IN UINT64       Size,
+  IN CONST CHAR8  *Label
+  )
+{
+  UINT64  Top;
+
+  if ((Size == 0) || (Base == MAX_UINT64) || (Size == MAX_UINT64)) {
+    return;
+  }
+
+  Top = Base + Size;
+  if (Top < Base) {
+    Top = MAX_UINT64;
+  }
+
+  // Clip to RAM; ranges wholly outside it (MMIO, other DRAM) are not ours.
+  if ((Top <= mJ804M1.RamBase) || (Base >= mJ804M1.RamTop)) {
+    return;
+  }
+
+  if (Base < mJ804M1.RamBase) {
+    Base = mJ804M1.RamBase;
+  }
+
+  if (Top > mJ804M1.RamTop) {
+    Top = mJ804M1.RamTop;
+  }
+
+  // Round outward to whole pages, then clip again.
+  Base = Base & ~(UINT64)EFI_PAGE_MASK;
+  Top  = (Top + EFI_PAGE_MASK) & ~(UINT64)EFI_PAGE_MASK;
+  if (Base < mJ804M1.RamBase) {
+    Base = mJ804M1.RamBase;
+  }
+
+  if (Top > mJ804M1.RamTop) {
+    Top = mJ804M1.RamTop;
+  }
+
+  DEBUG ((DEBUG_INFO, "J804_M1: reserve %a 0x%lx..0x%lx\n", Label, Base, Top));
+
+  // The FD keeps its own HOBs; reserve whatever lies on either side of it.
+  if ((Base < mJ804M1.FdTop) && (Top > mJ804M1.FdBase)) {
+    J804M1Append (Base, mJ804M1.FdBase);
+    J804M1Append (mJ804M1.FdTop, Top);
+  } else {
+    J804M1Append (Base, Top);
+  }
+}
+
+STATIC
+int
+J804M1CarveoutCallback (
+  IN VOID         *Context,
+  IN dt_node_t    *Node,
+  IN int          Depth,
+  IN CONST CHAR8  *Key,
+  IN VOID         *Value,
+  IN size_t       Length
+  )
+{
+  UINT64  Base;
+  UINT64  Size;
+
+  if ((AsciiStrnCmp (Key, "region-id-", 10) != 0) || (Length < 2 * sizeof (UINT64))) {
+    return 0;
+  }
+
+  if (AsciiStrnCmp (Key, J804_M1_USABLE_RANGE_REGION, DT_KEY_LEN) == 0) {
+    return 0;
+  }
+
+  Base = J804M1ReadCell64 (Value);
+  Size = J804M1ReadCell64 ((CONST UINT8 *)Value + sizeof (UINT64));
+
+  //
+  // A carve-out that spans all of Mu's RAM is a description of the usable
+  // range, not a hole in it (region-id-24 on the saved J804 tree).
+  //
+  if ((Base <= mJ804M1.RamBase) && (Base + Size >= mJ804M1.RamTop) && (Size != 0)) {
+    DEBUG ((DEBUG_WARN, "J804_M1: %a spans all RAM, treated as the usable range\n", Key));
+    return 0;
+  }
+
+  if (AsciiStrnCmp (Key, J804_M1_LOADER_REGION, DT_KEY_LEN) == 0) {
+    mJ804M1.SawLoaderRegion = TRUE;
+  }
+
+  J804M1AddRange (Base, Size, Key);
+  return 0;
+}
+
+STATIC
+int
+J804M1MemoryMapCallback (
+  IN VOID         *Context,
+  IN dt_node_t    *Node,
+  IN int          Depth,
+  IN CONST CHAR8  *Key,
+  IN VOID         *Value,
+  IN size_t       Length
+  )
+{
+  if (Length < 2 * sizeof (UINT64)) {
+    return 0;     // "name", phandles and flags
+  }
+
+  J804M1AddRange (
+    J804M1ReadCell64 (Value),
+    J804M1ReadCell64 ((CONST UINT8 *)Value + sizeof (UINT64)),
+    Key
+    );
+  return 0;
+}
+
+typedef struct {
+  UINT64     Cursor;
+  UINT64     NextTop;
+  BOOLEAN    Found;
+} J804_M1_CHAIN;
+
+STATIC
+int
+J804M1ChainCallback (
+  IN VOID         *Context,
+  IN dt_node_t    *Node,
+  IN int          Depth,
+  IN CONST CHAR8  *Key,
+  IN VOID         *Value,
+  IN size_t       Length
+  )
+{
+  J804_M1_CHAIN  *Chain;
+  UINT64         Base;
+  UINT64         Size;
+
+  Chain = Context;
+  if (Length < 2 * sizeof (UINT64)) {
+    return 0;
+  }
+
+  Base = J804M1ReadCell64 (Value);
+  Size = J804M1ReadCell64 ((CONST UINT8 *)Value + sizeof (UINT64));
+  if ((Size == 0) || (Base == MAX_UINT64) || (Size == MAX_UINT64) ||
+      (Base + Size < Base))
+  {
+    return 0;
+  }
+
+  if ((Base >= Chain->Cursor) && (Base <= Chain->Cursor + J804_M1_CHAINLOAD_ALIGN)) {
+    if (!Chain->Found || (Base + Size > Chain->NextTop)) {
+      Chain->NextTop = Base + Size;
+    }
+
+    Chain->Found = TRUE;
+  }
+
+  return 0;
+}
+
+//
+// chainload.py --raw packs the boot blobs and boot_args (its "firmware
+// block") right behind the image: the first at the next 16 KiB boundary after
+// the image plus 4 bytes, each later one at the next 16 KiB boundary after the
+// previous, and it rewrites their /chosen/memory-map entries to point there.
+// Mu cannot see the block's size directly, so follow that chain from the FD
+// top (or the end of an appended ramdisk) through the memory map and reserve
+// the whole span, including the padding between blobs. Each blob is also
+// reserved on its own by the memory-map rule, so a broken chain only loses
+// the padding.
+//
+STATIC
+VOID
+J804M1AddChainloadBlock (
+  IN dt_node_t  *MemoryMap,
+  IN UINT64     Start
+  )
+{
+  J804_M1_CHAIN  Chain;
+  UINTN          Steps;
+
+  Chain.Cursor = Start;
+  for (Steps = 0; Steps < 64; Steps++) {
+    Chain.Found   = FALSE;
+    Chain.NextTop = 0;
+    dt_parse (MemoryMap, -1, NULL, NULL, NULL, J804M1ChainCallback, &Chain);
+    if (!Chain.Found || (Chain.NextTop <= Chain.Cursor)) {
+      break;
+    }
+
+    Chain.Cursor = Chain.NextTop;
+  }
+
+  if (Chain.Cursor == Start) {
+    DEBUG ((DEBUG_WARN, "J804_M1: chainload firmware block not found after 0x%lx\n", Start));
+    return;
+  }
+
+  DEBUG ((
+    DEBUG_INFO,
+    "J804_M1: chainload firmware block 0x%lx..0x%lx (%u steps)\n",
+    Start,
+    Chain.Cursor,
+    (UINT32)Steps
+    ));
+  J804M1AddRange (Start, Chain.Cursor - Start, "chainload firmware block");
+}
+
+//
+// Punch [Base, Top) out of every system memory HOB it touches, however the
+// earlier holes have split them.
+//
+STATIC
+VOID
+J804M1PunchHole (
+  IN UINT64  Base,
+  IN UINT64  Top
+  )
+{
+  EFI_PEI_HOB_POINTERS         Hob;
+  EFI_HOB_RESOURCE_DESCRIPTOR  *Resource;
+  EFI_RESOURCE_ATTRIBUTE_TYPE  Attributes;
+  UINT64                       Start;
+  UINT64                       End;
+  UINT64                       CutBase;
+  UINT64                       CutTop;
+
+  for (Hob.Raw = GetNextHob (EFI_HOB_TYPE_RESOURCE_DESCRIPTOR, GetHobList ());
+       Hob.Raw != NULL;
+       Hob.Raw = GetNextHob (EFI_HOB_TYPE_RESOURCE_DESCRIPTOR, GET_NEXT_HOB (Hob)))
+  {
+    Resource = Hob.ResourceDescriptor;
+    if (Resource->ResourceType != EFI_RESOURCE_SYSTEM_MEMORY) {
+      continue;
+    }
+
+    Start = Resource->PhysicalStart;
+    End   = Start + Resource->ResourceLength;
+    if ((End <= Base) || (Start >= Top) || (End == Start)) {
+      continue;
+    }
+
+    CutBase    = MAX (Start, Base);
+    CutTop     = MIN (End, Top);
+    Attributes = Resource->ResourceAttribute;
+
+    if ((CutBase == Start) && (CutTop == End)) {
+      Resource->ResourceType      = EFI_RESOURCE_MEMORY_RESERVED;
+      Resource->ResourceAttribute = 0;
+      continue;
+    }
+
+    if (CutBase == Start) {
+      Resource->PhysicalStart  = CutTop;
+      Resource->ResourceLength = End - CutTop;
+    } else {
+      Resource->ResourceLength = CutBase - Start;
+      if (CutTop < End) {
+        BuildResourceDescriptorHob (EFI_RESOURCE_SYSTEM_MEMORY, Attributes, CutTop, End - CutTop);
+      }
+    }
+
+    BuildResourceDescriptorHob (EFI_RESOURCE_MEMORY_RESERVED, 0, CutBase, CutTop - CutBase);
+  }
+}
+
+STATIC
+VOID
+J804M1Stop (
+  IN UINTN  Code
+  )
+{
+  PanelCheckpointError (Code);
+  CpuDeadLoop ();
+}
+
+STATIC
+VOID
+J804M1ReserveFromAdt (
+  IN EFI_PHYSICAL_ADDRESS  UefiMemoryBase,
+  IN UINT64                UefiMemorySize,
+  IN EFI_PHYSICAL_ADDRESS  FdTop,
+  IN UINT64                AppendedSize
+  )
+{
+  dt_node_t      *Carveouts;
+  dt_node_t      *MemoryMap;
+  J804_M1_RANGE  Swap;
+  UINTN          Index;
+  UINTN          Inner;
+  UINTN          Merged;
+  UINT64         UefiTop;
+  UINT64         Total;
+  CHAR8          CpuNodeName[14];
+
+  ZeroMem (&mJ804M1, sizeof (mJ804M1));
+  mJ804M1.RamBase = PcdGet64 (PcdSystemMemoryBase);
+  mJ804M1.RamTop  = mJ804M1.RamBase + PcdGet64 (PcdSystemMemorySize);
+  mJ804M1.FdBase  = PcdGet64 (PcdFdBaseAddress);
+  mJ804M1.FdTop   = mJ804M1.FdBase + PcdGet32 (PcdFdSize);
+
+  Carveouts = dt_get ("/chosen/carveout-memory-map");
+  MemoryMap = dt_get ("/chosen/memory-map");
+  if ((Carveouts == NULL) || (MemoryMap == NULL)) {
+    DEBUG ((DEBUG_ERROR, "J804_M1: no /chosen carve-out or memory map, stopping\n"));
+    J804M1Stop (J804_M1_ERROR_NO_CARVEOUT_MAP);
+  }
+
+  dt_parse (Carveouts, -1, NULL, NULL, NULL, J804M1CarveoutCallback, NULL);
+  if (!mJ804M1.SawLoaderRegion) {
+    DEBUG ((DEBUG_WARN, "J804_M1: %a not in the carve-out map\n", J804_M1_LOADER_REGION));
+  }
+
+  dt_parse (MemoryMap, -1, NULL, NULL, NULL, J804M1MemoryMapCallback, NULL);
+  J804M1AddRange (FdTop, AppendedSize, "appended ramdisk");
+  J804M1AddChainloadBlock (MemoryMap, FdTop + AppendedSize);
+
+  // Kept from the J873 library: launcher-placed boot_args and the ADT copy
+  // (bounded to 2 MiB), and each cpu's cpm-impl-reg range.
+  J804M1AddRange (FixedPcdGet64 (PcdBootArgsPointer), 0x4000, "boot_args copy");
+  J804M1AddRange (FixedPcdGet64 (PcdAdtPointer), 0x200000, "ADT copy");
+  for (Index = 0; Index < PcdGet32 (PcdCoreCount); Index++) {
+    dt_node_t  *CpuNode;
+    UINT32     *Carveout;
+    size_t     CarveoutLength;
+
+    AsciiSPrint (CpuNodeName, ARRAY_SIZE (CpuNodeName), "/cpus/cpu%d", (UINT32)Index);
+    CpuNode = dt_get (CpuNodeName);
+    if (CpuNode == NULL) {
+      continue;
+    }
+
+    CarveoutLength = 0;
+    Carveout       = (UINT32 *)dt_node_prop (CpuNode, "cpm-impl-reg", &CarveoutLength);
+    if ((Carveout == NULL) || (CarveoutLength < 4 * sizeof (UINT32))) {
+      continue;
+    }
+
+    J804M1AddRange (
+      ((UINT64)Carveout[1] << 32) | Carveout[0],
+      ((UINT64)Carveout[3] << 32) | Carveout[2],
+      "cpm-impl-reg"
+      );
+  }
+
+  if (mJ804M1.Overflow) {
+    DEBUG ((DEBUG_ERROR, "J804_M1: more than %u reservations, stopping\n", J804_M1_MAX_RANGES));
+    J804M1Stop (J804_M1_ERROR_TOO_MANY_RANGES);
+  }
+
+  // Sort by base, then merge overlapping and touching ranges.
+  for (Index = 1; Index < mJ804M1.Count; Index++) {
+    Swap  = mJ804M1Ranges[Index];
+    Inner = Index;
+    while ((Inner > 0) && (mJ804M1Ranges[Inner - 1].Base > Swap.Base)) {
+      mJ804M1Ranges[Inner] = mJ804M1Ranges[Inner - 1];
+      Inner--;
+    }
+
+    mJ804M1Ranges[Inner] = Swap;
+  }
+
+  Merged = 0;
+  for (Index = 0; Index < mJ804M1.Count; Index++) {
+    if ((Merged > 0) && (mJ804M1Ranges[Index].Base <= mJ804M1Ranges[Merged - 1].Top)) {
+      if (mJ804M1Ranges[Index].Top > mJ804M1Ranges[Merged - 1].Top) {
+        mJ804M1Ranges[Merged - 1].Top = mJ804M1Ranges[Index].Top;
+      }
+    } else {
+      mJ804M1Ranges[Merged++] = mJ804M1Ranges[Index];
+    }
+  }
+
+  //
+  // PrePi already lives in the UEFI region at the RAM top (stack, HOBs,
+  // early allocations). A reservation there means the RAM top was not
+  // lowered far enough; continuing would hand that memory to both owners.
+  //
+  UefiTop = MAX (UefiMemoryBase + UefiMemorySize, mJ804M1.RamTop);
+  for (Index = 0; Index < Merged; Index++) {
+    if ((mJ804M1Ranges[Index].Base < UefiTop) && (mJ804M1Ranges[Index].Top > UefiMemoryBase)) {
+      DEBUG ((
+        DEBUG_ERROR,
+        "J804_M1: reservation 0x%lx..0x%lx overlaps the UEFI region 0x%lx..0x%lx, stopping\n",
+        mJ804M1Ranges[Index].Base,
+        mJ804M1Ranges[Index].Top,
+        UefiMemoryBase,
+        UefiTop
+        ));
+      J804M1Stop (J804_M1_ERROR_UEFI_REGION_OVERLAP);
+    }
+  }
+
+  Total = 0;
+  for (Index = 0; Index < Merged; Index++) {
+    J804M1PunchHole (mJ804M1Ranges[Index].Base, mJ804M1Ranges[Index].Top);
+    Total += mJ804M1Ranges[Index].Top - mJ804M1Ranges[Index].Base;
+  }
+
+  DEBUG ((
+    DEBUG_INFO,
+    "J804_M1: reserved %u ranges (%u merged), 0x%lx bytes of RAM 0x%lx..0x%lx\n",
+    (UINT32)mJ804M1.Count,
+    (UINT32)Merged,
+    Total,
+    mJ804M1.RamBase,
+    mJ804M1.RamTop
+    ));
+}
+#endif
 
 
 //Borrowed from ArmPlatformPkg
@@ -321,7 +830,11 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
       return EFI_COMPROMISED_DATA;
     }
 
+#if defined(J804_M1)
+    // Reserved together with the rest of the J804 list below.
+#else
     ReserveMemoryRegion (FdTop, (UINT32)AppendedReservationSize);
+#endif
 
     AppendedLocation.Signature             = NTASI_APPENDED_RAMDISK_LOCATION_SIGNATURE;
     AppendedLocation.Version               = NTASI_APPENDED_RAMDISK_LOCATION_VERSION;
@@ -348,6 +861,14 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
     DEBUG ((DEBUG_INFO, "MemoryInitPeiLib: no appended ramdisk header at FdTop 0x%lx\n", FdTop));
   }
 
+#if defined(J804_M1)
+  //
+  // The appended ramdisk (if any) is the first thing after the FD, then the
+  // chainload firmware block. J804M1ReserveFromAdt also covers boot_args, the
+  // ADT and cpm-impl-reg, so the J873 calls below are not used.
+  //
+  J804M1ReserveFromAdt (UefiMemoryBase, UefiMemorySize, FdTop, AppendedReservationSize);
+#else
   // Launcher bounds ADT to 2 MiB and checks these fixed destinations.
   ReserveMemoryRegion (FixedPcdGet64 (PcdBootArgsPointer), 0x4000);
   ReserveMemoryRegion (FixedPcdGet64 (PcdAdtPointer), 0x200000);
@@ -392,6 +913,7 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
       ((UINT64)Carveout[3] << 32) | Carveout[2]
     );
   }
+#endif
 
 
 

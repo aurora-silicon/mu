@@ -1,0 +1,22 @@
+#ifndef HOST_SHIM_HOBLIB_H_
+#define HOST_SHIM_HOBLIB_H_
+#include <Base.h>
+typedef UINT32 EFI_RESOURCE_TYPE;
+typedef UINT32 EFI_RESOURCE_ATTRIBUTE_TYPE;
+#define EFI_RESOURCE_SYSTEM_MEMORY 0
+#define EFI_RESOURCE_MEMORY_RESERVED 5
+#define EFI_HOB_TYPE_RESOURCE_DESCRIPTOR 3
+typedef struct { UINT16 HobType; UINT16 HobLength; } EFI_HOB_GENERIC_HEADER;
+typedef struct {
+  EFI_HOB_GENERIC_HEADER Header;
+  EFI_RESOURCE_TYPE ResourceType;
+  EFI_RESOURCE_ATTRIBUTE_TYPE ResourceAttribute;
+  EFI_PHYSICAL_ADDRESS PhysicalStart;
+  UINT64 ResourceLength;
+} EFI_HOB_RESOURCE_DESCRIPTOR;
+typedef union { EFI_HOB_GENERIC_HEADER *Header; EFI_HOB_RESOURCE_DESCRIPTOR *ResourceDescriptor; UINT8 *Raw; } EFI_PEI_HOB_POINTERS;
+VOID *GetHobList (VOID);
+VOID *GetNextHob (UINT16 Type, CONST VOID *Start);
+#define GET_NEXT_HOB(h) ((h).Raw + (h).Header->HobLength)
+VOID BuildResourceDescriptorHob (EFI_RESOURCE_TYPE Type, EFI_RESOURCE_ATTRIBUTE_TYPE Attr, EFI_PHYSICAL_ADDRESS Start, UINT64 Length);
+#endif
