@@ -34,6 +34,7 @@
 #include <Library/PrePiHobListPointerLib.h>
 #include <Library/PrePiLib.h>
 #include <Library/SerialPortLib.h>
+#include <Library/PanelCheckpointLib.h>
 #include <Guid/AppleFdInfoHob.h>
 
 UINT32 InitializeUART(VOID);
@@ -54,67 +55,35 @@ volatile MU_CHECKPOINT_RECORD gMuCheckpoint = {
   0
 };
 
-extern volatile UINT64 gMuFrameBufferBase;
-extern volatile UINT32 gMuFrameBufferStride;
-extern volatile UINT32 gMuFrameBufferWidth;
-extern volatile UINT32 gMuFrameBufferHeight;
-
 STATIC
 VOID
 MuVisualCheckpoint (
   IN UINT64 Stage
   )
 {
-  STATIC CONST UINT32 Colors[] = {
-    0x00FFFFFF, // PrePi Main
-    0x0000FFFF, // HOB constructor
-    0x0000FF00, // MemoryPeim
-    0x00FFFF00, // PlatformPeim
-    0x00FF8000, // Library constructors
-    0x00FF00FF, // FV decompressed
-    0x00FF0000  // Entering DXE Core
-  };
+  //
+  // Block colours by position (PanelCheckpointColor): row 0 is PrePi Main
+  // (white), HOB constructor (cyan), MemoryPeim (green), PlatformPeim
+  // (yellow), library constructors (orange), FV decompressed (magenta),
+  // entering DXE Core (red).
+  //
   UINTN          Index;
   UINTN          RowIndex;
-  UINTN          X;
-  UINTN          Y;
-  UINTN          XStart;
-  UINTN          YStart;
-  volatile UINT32 *Row;
-
-  if ((gMuFrameBufferBase == 0) ||
-      (gMuFrameBufferStride < sizeof (UINT32)) ||
-      (gMuFrameBufferWidth < 448) ||
-      (gMuFrameBufferHeight < 96)) {
-    return;
-  }
 
   if ((Stage >= 0x10) && (Stage <= 0x16)) {
     Index    = (UINTN)(Stage - 0x10);
-    RowIndex = 0;
+    RowIndex = PANEL_CHECKPOINT_ROW_PREPI;
   } else if ((Stage >= 0x20) && (Stage <= 0x26)) {
     Index    = (UINTN)(Stage - 0x20);
-    RowIndex = 1;
+    RowIndex = PANEL_CHECKPOINT_ROW_DXE_LOADER;
   } else {
     return;
   }
 
-  XStart = 24 + (Index * 56);
-  YStart = 24 + (RowIndex * 32);
-
-  // Two rows of seven 48x24 blocks in the upper-left corner. The first row is
-  // PrePi; the second row is the DXE loader and entry-point handoff.
-  for (Y = YStart; Y < (YStart + 24); Y++) {
-    Row = (volatile UINT32 *)(UINTN)(
-                                  gMuFrameBufferBase +
-                                  (Y * gMuFrameBufferStride)
-                                  );
-    for (X = XStart; X < (XStart + 48); X++) {
-      Row[X] = Colors[Index];
-    }
-  }
-
-  ArmDataMemoryBarrier ();
+  // Row 0 is PrePi; row 1 is the DXE loader and entry-point handoff. The
+  // library places the rows in the lower-left corner of the panel, clear of
+  // rounded corners and a top-edge notch, and converts colours for 30 bpp.
+  PanelCheckpointDraw (RowIndex, Index, PanelCheckpointColor (Index));
 }
 
 STATIC
@@ -278,7 +247,9 @@ UINT32 InitializeUART(VOID)
     // whenever handing a new .fd over, and grep the log for it before trusting
     // anything else in that log.
     //
-#if SILICON_PLATFORM == 8152
+#if defined(J804_M1)
+    DEBUG((EFI_D_INFO | EFI_D_LOAD, "J804 firmware build marker: J804-MU-M1-001 (from J873-MU-005)\n"));
+#elif SILICON_PLATFORM == 8152
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "J873 firmware build marker: J873-MU-005\n"));
 #else
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "J704 firmware build marker: J704-FW-15\n"));

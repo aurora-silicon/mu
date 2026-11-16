@@ -120,6 +120,9 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
 
   INF ShellPkg/Application/Shell/Shell.inf
   INF MacMini2026Pkg/Applications/J873BootProbe/J873BootProbe.inf
+!if $(J804_M1) == TRUE
+  INF T8152FamilyPkg/Drivers/J804CheckpointDxe/J804CheckpointDxe.inf
+!endif
 !ifdef $(INCLUDE_TFTP_COMMAND)
   INF ShellPkg/DynamicCommand/TftpDynamicCommand/TftpDynamicCommand.inf
 !endif #$(INCLUDE_TFTP_COMMAND)

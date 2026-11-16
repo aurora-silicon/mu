@@ -1,0 +1,26 @@
+## @file
+#  Coloured progress blocks drawn straight into the boot framebuffer.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = PanelCheckpointLib
+  FILE_GUID                      = 75360AFF-DFEA-4456-B582-41636695E7C4
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = PanelCheckpointLib
+
+[Sources]
+  PanelCheckpointLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  PcdLib
+
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer

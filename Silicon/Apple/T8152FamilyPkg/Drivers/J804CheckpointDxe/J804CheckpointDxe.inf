@@ -1,0 +1,36 @@
+## @file
+#  J804 M1: DXE and BDS checkpoint blocks on the panel.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = J804CheckpointDxe
+  FILE_GUID                      = E395FEED-7D88-4607-9083-6DC50AB832DD
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = J804CheckpointDxeEntry
+
+[Sources]
+  J804CheckpointDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  PcBdsPkg/PcBdsPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  DebugLib
+  PanelCheckpointLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+  UefiLib
+
+[Guids]
+  gEfiEndOfDxeEventGroupGuid   ## CONSUMES ## Event
+  gMsStartOfBdsNotifyGuid      ## CONSUMES ## Event
+
+[Depex]
+  TRUE

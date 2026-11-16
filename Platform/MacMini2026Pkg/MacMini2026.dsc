@@ -21,6 +21,23 @@
 !ifndef J873_WINDOWS
   DEFINE J873_WINDOWS = FALSE
 !endif
+  #
+  # J804_M1: the J873 native profile adapted for a first RAM-only run on J804
+  # (MacBook Pro 14-inch, M6) at native EL2: Null serial with panel
+  # checkpoints, ADT-driven RAM reservations and an untrimmed-RAM-top stop,
+  # no WFI in the idle path, and a J804 startup.nsh.
+  #
+!ifndef J804_M1
+  DEFINE J804_M1 = FALSE
+!endif
+!if $(J804_M1) == TRUE
+!if $(J873_WINDOWS) == TRUE
+!error "J804_M1 builds the native profile only; J873_WINDOWS must be FALSE"
+!endif
+  # Nothing drains the DockChannel on J804; both SerialPortLib mappings in
+  # AppleSiliconPkg.dsc.inc switch to the Null library on this define.
+  DEFINE APPLE_SERIAL_PORT_NULL = TRUE
+!endif
 
 [BuildOptions.common]
   # Keep the build host's directory layout out of the binaries. Each PE's
@@ -36,6 +53,9 @@
   GCC:*_CLANGPDB_*_CC_FLAGS = -ffile-prefix-map=$(SOURCE_PREFIX_MAP)/=
 !endif
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152
+!if $(J804_M1) == TRUE
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1
+!endif
 !if $(J873_WINDOWS) == TRUE
   # This existing ArmExceptionLib option preserves the full-width EL1 stack
   # for PMU faults. The EL2 sysreg-assist macro is absent in this base revision.
@@ -49,6 +69,11 @@
 
 [LibraryClasses.common]
   AcpiLib|EmbeddedPkg/Library/AcpiLib/AcpiLib.inf
+!if $(J804_M1) == TRUE
+[LibraryClasses.common.DXE_CORE]
+  # First DXE panel checkpoint, from inside DxeMain.
+  NULL|T8152FamilyPkg/Library/J804DxeCoreCheckpointLib/J804DxeCoreCheckpointLib.inf
+!endif
 
 [PcdsFixedAtBuild.common]
   # Enter the built-in shell without depending on the graphical settings UI.
@@ -85,6 +110,9 @@
 
 [Components.common]
   MacMini2026Pkg/Applications/J873BootProbe/J873BootProbe.inf
+!if $(J804_M1) == TRUE
+  T8152FamilyPkg/Drivers/J804CheckpointDxe/J804CheckpointDxe.inf
+!endif
 !if $(J873_WINDOWS) == TRUE
   MacMini2026Pkg/AcpiTables/J873AcpiTables.inf
   MacMini2026Pkg/Drivers/J873AcpiDxe/J873AcpiDxe.inf

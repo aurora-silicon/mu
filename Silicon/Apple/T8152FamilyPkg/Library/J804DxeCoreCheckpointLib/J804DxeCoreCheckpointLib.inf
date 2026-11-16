@@ -1,0 +1,25 @@
+## @file
+#  J804 M1: DXE-core-entry panel checkpoint (NULL library for DxeMain).
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = J804DxeCoreCheckpointLib
+  FILE_GUID                      = F1A2D091-DA9F-44E2-8C5C-1B5622AD0B79
+  MODULE_TYPE                    = DXE_CORE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = NULL|DXE_CORE
+  CONSTRUCTOR                    = J804DxeCoreCheckpointLibConstructor
+
+[Sources]
+  J804DxeCoreCheckpointLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  DebugLib
+  PanelCheckpointLib

@@ -243,9 +243,20 @@
   PlatformPeiLib|AppleSiliconPkg/Library/PlatformPeiLib/PlatformPeiLib.inf
 
   #
-  # UART driver.
+  # UART driver. A platform DSC that defines APPLE_SERIAL_PORT_NULL (J804 M1:
+  # nothing drains the DockChannel there) gets the Null library instead. The
+  # PrePi component below carries the same switch: keep the two in step.
   #
+!ifdef APPLE_SERIAL_PORT_NULL
+  SerialPortLib|MdePkg/Library/BaseSerialPortLibNull/BaseSerialPortLibNull.inf
+!else
   SerialPortLib|AppleSiliconPkg/Library/AppleUartSerialPortLib/AppleUartSerialPortLib.inf
+!endif
+
+  #
+  # Framebuffer progress blocks for PrePi and early DXE.
+  #
+  PanelCheckpointLib|AppleSiliconPkg/Library/PanelCheckpointLib/PanelCheckpointLib.inf
 
   #
   # Could we possibly use this code for potentially interacting with OpenOCD when
@@ -558,7 +569,11 @@
   #SEC phase
   AppleSiliconPkg/PrePi/PrePi.inf {
     <LibraryClasses>
+!ifdef APPLE_SERIAL_PORT_NULL
+    SerialPortLib|MdePkg/Library/BaseSerialPortLibNull/BaseSerialPortLibNull.inf
+!else
     SerialPortLib|AppleSiliconPkg/Library/AppleUartSerialPortLib/AppleUartSerialPortLib.inf
+!endif
   }
 
   #
