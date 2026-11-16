@@ -138,8 +138,14 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
     SECTION RAW = MacBookAirMid2020Pkg/Resources/RegulatoryLogos.png
   }
 
+  # The Shell runs startup.nsh from the file system FvSimpleFileSystemDxe puts
+  # on this FV (the file is found by its UI name).
   FILE FREEFORM = 7bef07a7-8072-49d4-ad75-02d9eab2b535 {
+!if $(J804_M1) == TRUE
+    SECTION RAW = MacMini2026Pkg/Resources/startup-j804-m1.nsh
+!else
     SECTION RAW = MacMini2026Pkg/Resources/startup.nsh
+!endif
     SECTION UI = "startup.nsh"
   }
 
