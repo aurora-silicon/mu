@@ -91,8 +91,8 @@ def parse_fv(fv):
     files = []
     while off + 0x18 <= min(fv_len, len(fv)):
         name = fv[off:off + 16]
-        if name == b'\xff' * 16:
-            break
+        if fv[off:off + 0x18] == b'\xff' * 0x18:
+            break       # free space (a pad file also has an all-0xFF name)
         ftype = fv[off + 0x12]
         attrs = fv[off + 0x13]
         size = fv[off + 0x14] | (fv[off + 0x15] << 8) | (fv[off + 0x16] << 16)
