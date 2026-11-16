@@ -60,6 +60,27 @@ STATIC volatile AURORA_AIC_TRACE mAuroraAicTrace = {
 
 STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID);
 
+/**
+ * TRUE when firmware runs at EL1, i.e. as a guest of an EL2 monitor that
+ * implements the m1n1 timer-reflection ABI: the top AIC software lines carry
+ * reflected timer events and completion is an SMC to that monitor.
+ *
+ * At EL2 (native boot, nothing above) there is no such monitor: those lines
+ * are ordinary hardware interrupts, nothing implements the SMC, and the
+ * timers arrive as FIQs on the native path below.
+ */
+STATIC
+BOOLEAN
+AppleAicV2TimerReflectionActive (
+    VOID
+    )
+{
+    UINT64 CurrentEl;
+
+    __asm__ __volatile__ ("mrs %0, CurrentEL" : "=r" (CurrentEl));
+    return ((CurrentEl >> 2) & 3) == 1;
+}
+
 STATIC VOID
 AppleAicV2CompleteReflectedTimer (
     IN UINTN Source
@@ -99,6 +120,13 @@ AppleAicV2PrepareTimerInterrupt (
     UINT32 Interrupt;
     UINT32 RangeStart;
     UINT32 RangeEnd;
+
+    if (!AppleAicV2TimerReflectionActive ()) {
+        DEBUG ((DEBUG_INFO,
+            "AppleAicDxe: not at EL1, timer reflection disabled for source %u; "
+            "native FIQ timer path only\n", Source));
+        return;
+    }
 
     if (Source == 17) {
         RangeStart = AicInfoStruct->NumIrqs - (2 * AIC_TIMER_REFLECT_CPU_SLOTS);
@@ -527,7 +555,8 @@ STATIC VOID EFIAPI AppleAicV2InterruptHandler(
     // Dispatch reflected timers from the AIC event itself. Its type and
     // number are authoritative; on J414s the event was acknowledged while the
     // CPU exception-type split below failed to classify it as an ordinary IRQ.
-    if (AicEventType == 1) {
+    // Only under an EL2 reflection monitor: natively these are real lines.
+    if ((AicEventType == 1) && AppleAicV2TimerReflectionActive ()) {
         if ((AicInterrupt >= TimerPhysBase) && (AicInterrupt < TimerVirtBase)) {
             AURORA_AIC_STAGE (0x43, AicInterrupt, TimerPhysBase, 0);
             AppleAicV2ClearSoftwareInterrupt (AicInterrupt);

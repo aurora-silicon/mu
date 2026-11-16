@@ -1,0 +1,19 @@
+## @file
+#  J804 M1 CpuLib: CpuSleep is a YIELD busy-wait, never WFI.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = J804CpuLib
+  FILE_GUID                      = 6FBBCFC5-F2FA-4697-B0BF-7A0CEFF9CE48
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = CpuLib
+
+[Sources.AARCH64]
+  J804CpuLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec

@@ -70,6 +70,9 @@
 [LibraryClasses.common]
   AcpiLib|EmbeddedPkg/Library/AcpiLib/AcpiLib.inf
 !if $(J804_M1) == TRUE
+  # CpuDxe's idle callback must not execute a bare WFI at native EL2.
+  CpuLib|T8152FamilyPkg/Library/J804CpuLib/J804CpuLib.inf
+
 [LibraryClasses.common.DXE_CORE]
   # First DXE panel checkpoint, from inside DxeMain.
   NULL|T8152FamilyPkg/Library/J804DxeCoreCheckpointLib/J804DxeCoreCheckpointLib.inf
