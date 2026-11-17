@@ -8,6 +8,7 @@
  */
 #include <Uefi.h>
 #include <IndustryStandard/Acpi.h>
+#include <Library/AppleDTLib.h>
 #include <Library/DxeServicesTableLib.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -15,6 +16,22 @@
 #include <string.h>
 
 BOOLEAN AppleG17GpuTableAdmitted(EFI_ACPI_DESCRIPTION_HEADER *Table, UINTN Size);
+
+/* No /chosen aura,windows-unified-display-v1 marker: AuraJ813UnifiedDisplay.c
+ * keeps the legacy AURA8170 selection this harness checks. */
+dt_node_t *dt_get(const char *name)
+{
+    (void)name;
+    return NULL;
+}
+
+void *dt_prop(dt_node_t *node, const char *key, size_t *lenp)
+{
+    (void)node;
+    (void)key;
+    (void)lenp;
+    return NULL;
+}
 
 static int checks, failures;
 static void check(int ok, const char *what)

@@ -12,6 +12,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 SOURCE = ROOT / "Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/AuraG17GpuDevice.c"
+# The display-owner selection the admission code consults (no marker: legacy).
+SELECTION = SOURCE.with_name("AuraJ813UnifiedDisplay.c")
 AML = ROOT / ("Build/MacBookAir2026-AARCH64/DEBUG_CLANGPDB/AARCH64/MacBookAir2026Pkg/"
               "AcpiTables/DeviceAcpiTables/OUTPUT/GPU.aml")
 # _CRS contract (AuroraSilicon integration/agx-wddm-g17-boot/README.md) with the
@@ -50,7 +52,7 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     report = {"result": "incomplete", "scope": "offline; not hardware qualification",
               "sources": {str(p.relative_to(ROOT)): sha(p) for p in
-                          [SOURCE, HERE / "harness.c", HERE / "run.py",
+                          [SOURCE, SELECTION, HERE / "harness.c", HERE / "run.py",
                            ROOT / "Platform/MacBookAir2026Pkg/AcpiTables/GPU.asl"]},
               "built_aml": {"path": str(AML.relative_to(ROOT)), "sha256": sha(AML)},
               "commands": []}
@@ -69,7 +71,8 @@ def main():
             assert run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-g",
                         "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined",
                         f"-DHOST_PCD_G17_GPU_PROBE={pcd}", "-I", HERE / "shim",
-                        HERE / "harness.c", SOURCE, "-o", binary], f"build-pcd{pcd}.log") == 0
+                        HERE / "harness.c", SOURCE, SELECTION, "-o", binary],
+                       f"build-pcd{pcd}.log") == 0
             assert run([binary, AML, out / "GPU.patched.aml"], f"run-pcd{pcd}.log") == 0, \
                 f"harness failed with PCD {pcd}"
             log = (out / f"run-pcd{pcd}.log").read_text()

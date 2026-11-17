@@ -17,6 +17,8 @@ HERE = Path(__file__).resolve().parent
 TABLES = ROOT / "Platform/MacBookAir2026Pkg/AcpiTables"
 ASL = TABLES / "DISP.asl"
 SOURCE = ROOT / "Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/AuraJ813DisplayDevice.c"
+# The display-owner selection the admission code consults (no marker: legacy).
+SELECTION = SOURCE.with_name("AuraJ813UnifiedDisplay.c")
 
 # AppleDisplayJ813Core.h role order; t8142-j813-display.dtsi (linux e50ba38).
 EXPECTED = [
@@ -99,7 +101,7 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     report = {"result": "incomplete", "scope": "offline; not hardware qualification",
               "sources": {str(p.relative_to(ROOT)): sha(p) for p in
-                          [ASL, SOURCE, HERE / "harness.c", HERE / "run.py"]},
+                          [ASL, SOURCE, SELECTION, HERE / "harness.c", HERE / "run.py"]},
               "commands": [], "checks": []}
 
     def run(command, name):
@@ -150,8 +152,10 @@ def main():
             binary = out / f"harness-pcd{pcd}"
             check(run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-g",
                        "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined",
-                       f"-DHOST_PCD_PcdAppleJ813DisplayDevice={pcd}", "-I", HERE / "shim",
-                       HERE / "harness.c", SOURCE, "-o", binary], f"build-pcd{pcd}.log") == 0,
+                       f"-DHOST_PCD_PcdAppleJ813DisplayDevice={pcd}",
+                       "-DHOST_PCD_PcdAppleJ813UnifiedDisplay=1", "-I", HERE / "shim",
+                       HERE / "harness.c", SOURCE, SELECTION, "-o", binary],
+                      f"build-pcd{pcd}.log") == 0,
                   f"harness builds with PCD {pcd}")
             check(run([binary, out / "DISP.aml"], f"run-pcd{pcd}.log") == 0,
                   f"admission cases pass with PCD {pcd}")
