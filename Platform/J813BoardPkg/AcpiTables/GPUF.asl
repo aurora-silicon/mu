@@ -1,8 +1,9 @@
-// Unified candidate only: PcdAppleJ813UnifiedDisplay excludes legacy GPU/DCP SSDTs.
+// Unified candidate only: selecting it excludes the legacy GPU/DCP SSDTs.
 // First nine resources preserve GPU.asl order; seven DCP resources follow.
 // SPDX-License-Identifier: MIT
-// J813 unified GPU/panel resource candidate. Published only when the
-// default-off PcdAppleJ813UnifiedDisplay is requested, exact J813 identity,
+// J813 unified GPU/panel resource candidate. Published only when an image
+// built with PcdAppleJ813UnifiedDisplay sees the host's /chosen
+// aura,windows-unified-display-v1 marker (default off), exact J813 identity,
 // dcp/disp0 presence and all six non-OS-RAM GPU regions validate. Selecting
 // it excludes legacy AURA8170 and AURA8180 even if this table fails admission.
 // Driver publication remains closed until primary/GPU-display leases/cadence

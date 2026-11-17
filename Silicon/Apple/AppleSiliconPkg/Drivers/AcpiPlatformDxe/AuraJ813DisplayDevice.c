@@ -17,6 +17,7 @@
 #include <Library/PcdLib.h>
 
 #include "AuraJ813DisplayDevice.h"
+#include "AuraJ813UnifiedDisplay.h"
 
 STATIC
 BOOLEAN
@@ -69,7 +70,7 @@ AppleJ813DisplayTableAdmitted (
 
   /* Selection, not successful GPU publication: failure cannot republish a
    * second owner. BasicDisplay retains the POST framebuffer. */
-  if (FixedPcdGetBool (PcdAppleJ813UnifiedDisplay) ||
+  if (AppleJ813UnifiedDisplaySelected () ||
       !FixedPcdGetBool (PcdAppleJ813DisplayDevice)) {
     return FALSE;
   }
@@ -86,6 +87,6 @@ AppleJ813DisplayTableAdmitted (
     return FALSE;
   }
 
-  DEBUG ((DEBUG_INFO, "Aura J813 display: publishing AURA8180\n"));
+  DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura J813 display: publishing AURA8180\n"));
   return TRUE;
 }

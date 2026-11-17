@@ -31,6 +31,8 @@
   AuraG17GpuDevice.h
   AuraJ813DisplayDevice.c
   AuraJ813DisplayDevice.h
+  AuraJ813UnifiedDisplay.c
+  AuraJ813UnifiedDisplay.h
 
 [Packages]
   MdePkg/MdePkg.dec

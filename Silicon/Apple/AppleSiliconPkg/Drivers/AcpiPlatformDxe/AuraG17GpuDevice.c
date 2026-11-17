@@ -7,6 +7,11 @@
  * /arm-io/sgx is well formed and lies wholly outside UEFI system memory (so
  * Windows can never allocate it). Their base/size then replace the six
  * placeholder QWordMemory descriptors. Any doubt withholds the device.
+ *
+ * The same rules admit the unified GPU+panel SSDT ("AURA817F", AURA8171)
+ * when the host selected it (AuraJ813UnifiedDisplay.c), which then withholds
+ * AURA817G; AURA8171 also needs dcp/disp0 in the ADT and keeps ranges 3-6
+ * within the unified driver's 16 MiB ceiling.
  */
 #include <Uefi.h>
 #include <IndustryStandard/Acpi.h>
@@ -18,8 +23,10 @@
 #include <Library/PcdLib.h>
 #include <Library/PrintLib.h>
 #include "AuraG17GpuDevice.h"
+#include "AuraJ813UnifiedDisplay.h"
 
 #define G17_REGIONS          6
+#define G17_UNIFIED_MAXIMUM  0x1000000ULL   /* agxw_j813_resources.c: ranges 3-6 */
 #define G17_PAGE             0x4000ULL
 #define G17_PHYS_LIMIT       (1ULL << 42)
 #define G17_DRAM_BASE        0x10000000000ULL
@@ -166,8 +173,9 @@ AppleG17GpuTableAdmitted (
   UINT32  Value;
   UINTN   Index;
   UINTN   Other;
-  BOOLEAN Unified;
-  size_t  PropertyLength;
+  BOOLEAN       Unified;
+  CONST CHAR8   *Hid;
+  size_t        PropertyLength;
 
   if ((Size < sizeof (*Table)) || (Table->Length > Size)) {
     return FALSE;
@@ -181,9 +189,11 @@ AppleG17GpuTableAdmitted (
   if (!Unified && (CompareMem (&Table->OemTableId, "AURA817G", 8) != 0)) {
     return TRUE;
   }
-  /* A requested unified image never publishes either legacy device, even
-   * when a subsequent new-table/ADT/region admission fails. */
-  if (Unified != FixedPcdGetBool (PcdAppleJ813UnifiedDisplay) ||
+  Hid = Unified ? "AURA8171" : "AURA8170";
+  /* A unified selection never publishes either legacy device, even when a
+   * subsequent new-table/ADT/region admission fails.  Without the host's
+   * marker the unified table is withheld on every boot. */
+  if (Unified != AppleJ813UnifiedDisplaySelected () ||
       (!Unified && !FixedPcdGetBool (PcdAppleG17GpuProbe))) {
     return FALSE;
   }
@@ -192,13 +202,14 @@ AppleG17GpuTableAdmitted (
        (PropertyLength == 0) ||
        (dt_get_prop ("/arm-io/disp0", "compatible", &PropertyLength) == NULL) ||
        (PropertyLength == 0))) {
+    DEBUG ((DEBUG_ERROR, "Aura G17 GPU: ADT has no dcp/disp0; AURA8171 withheld\n"));
     return FALSE;
   }
 
   if (!ReadU32 ("/chosen", "chip-id", &Value) || (Value != 0x8142) ||
       !ReadU32 ("/chosen", "board-id", &Value) || (Value != 0x24))
   {
-    DEBUG ((DEBUG_ERROR, "Aura G17 GPU: not J813; AURA8170 withheld\n"));
+    DEBUG ((DEBUG_ERROR, "Aura G17 GPU: not J813; %a withheld\n", Hid));
     return FALSE;
   }
 
@@ -207,18 +218,19 @@ AppleG17GpuTableAdmitted (
 
     AsciiSPrint (Name, sizeof (Name), "%a-base", mNames[Index]);
     if (!ReadU64 (Name, &Base[Index])) {
-      DEBUG ((DEBUG_ERROR, "Aura G17 GPU: %a missing; AURA8170 withheld\n", Name));
+      DEBUG ((DEBUG_ERROR, "Aura G17 GPU: %a missing; %a withheld\n", Name, Hid));
       return FALSE;
     }
 
     AsciiSPrint (Name, sizeof (Name), "%a-size", mNames[Index]);
     if (!ReadU64 (Name, &Length[Index])) {
-      DEBUG ((DEBUG_ERROR, "Aura G17 GPU: %a missing; AURA8170 withheld\n", Name));
+      DEBUG ((DEBUG_ERROR, "Aura G17 GPU: %a missing; %a withheld\n", Name, Hid));
       return FALSE;
     }
 
     if ((Length[Index] < mMinimum[Index]) ||
         (mExact[Index] && (Length[Index] != mMinimum[Index])) ||
+        (Unified && !mExact[Index] && (Length[Index] > G17_UNIFIED_MAXIMUM)) ||
         (((Base[Index] | Length[Index]) & (G17_PAGE - 1)) != 0) ||
         (Base[Index] < G17_DRAM_BASE) || (Base[Index] >= G17_PHYS_LIMIT) ||
         (Length[Index] > G17_PHYS_LIMIT - Base[Index]) ||
@@ -226,10 +238,11 @@ AppleG17GpuTableAdmitted (
     {
       DEBUG ((
         DEBUG_ERROR,
-        "Aura G17 GPU: %a 0x%lx+0x%lx rejected; AURA8170 withheld\n",
+        "Aura G17 GPU: %a 0x%lx+0x%lx rejected; %a withheld\n",
         mNames[Index],
         Base[Index],
-        Length[Index]
+        Length[Index],
+        Hid
         ));
       return FALSE;
     }
@@ -251,7 +264,7 @@ AppleG17GpuTableAdmitted (
     }
   }
 
-  DEBUG ((DEBUG_INFO, "Aura G17 GPU: J813 %a resource owner\n",
+  DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura G17 GPU: J813 %a resource owner\n",
           Unified ? "unified AURA8171" : "render AURA8170"));
   return TRUE;
 }

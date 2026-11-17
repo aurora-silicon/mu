@@ -57,7 +57,9 @@
   DEFINE NTASI_G17_GPU_PROBE = FALSE
   # Publishes the J813 DCP device for the standalone AppleDisplay driver.
   DEFINE NTASI_J813_DISPLAY_DEVICE = FALSE
-  # Candidate only. Suppresses BOTH legacy GPU/DCP SSDTs when requested.
+  # Allows the host's /chosen aura,windows-unified-display-v1 marker to select
+  # the unified GPU+panel device (AURA8171) instead of AURA8170 + AURA8180.
+  # Without the marker the image publishes the legacy pair, as before.
   DEFINE NTASI_J813_UNIFIED_DISPLAY = FALSE
   # Enabling the storage features disables the interactive MTP survey. Its
   # eight-second delay loop depends on the guest counter path and can dominate

@@ -50,6 +50,7 @@ test "$profile" != internal-storage-windows-n1 || n1_bus=TRUE
 # The GPU probe image is the N1 image plus the J813 G17 GPU device (AURA8170).
 g17_gpu=FALSE
 j813_disp=FALSE
+j813_unified=FALSE
 # Empty keeps the DSC's NTASI_DEBUG_PRINT_ERROR_LEVEL.
 debug_print_level=
 if test "$profile" = internal-storage-windows-n1-gpu; then
@@ -66,6 +67,9 @@ if test "$profile" = internal-storage-windows-n1-gpu-disp; then
     # and a trapped write under the hypervisor's lock, about 8.5 us a byte;
     # the full level cost about 15 s of boot 146's 19.6 s in Mu (1.8 MB).
     debug_print_level=0x80000007
+    # Allows the host's /chosen aura,windows-unified-display-v1 marker to
+    # select AURA8171 instead of AURA8170 + AURA8180; no marker, no change.
+    j813_unified=TRUE
 fi
 ans_acpi=${ans_acpi:-FALSE}
 if test "$ans" = true; then
@@ -166,6 +170,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
     "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
     "BLD_*_NTASI_G17_GPU_PROBE=$g17_gpu" \
     "BLD_*_NTASI_J813_DISPLAY_DEVICE=$j813_disp" \
+    "BLD_*_NTASI_J813_UNIFIED_DISPLAY=$j813_unified" \
     "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
     ${debug_print_level:+"BLD_*_NTASI_DEBUG_PRINT_ERROR_LEVEL=$debug_print_level"} \
     "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1; then
@@ -189,6 +194,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
             "BLD_*_NTASI_ENABLE_N1_BUS=$n1_bus" \
             "BLD_*_NTASI_G17_GPU_PROBE=$g17_gpu" \
             "BLD_*_NTASI_J813_DISPLAY_DEVICE=$j813_disp" \
+            "BLD_*_NTASI_J813_UNIFIED_DISPLAY=$j813_unified" \
             "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
             ${debug_print_level:+"BLD_*_NTASI_DEBUG_PRINT_ERROR_LEVEL=$debug_print_level"} \
             "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1 || {
@@ -212,13 +218,14 @@ test -z "$(git -C "$source_root" status --porcelain=v1 --untracked-files=no --ig
 manifest=$artifact_dir/manifest.json
 "$venv/bin/python" - "$manifest" "$commit" "$clean" "$profile" "$size" "$digest" \
     "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" "$n1_bus" "$g17_gpu" "$j813_disp" \
-    "$debug_print_level" <<'PY'
+    "$debug_print_level" "$j813_unified" <<'PY'
 import json
 import pathlib
 import sys
 
 (path, commit, clean, profile, size, digest, ans, ans_dxe, ans_block_io,
- ans_preserve, ans_acpi, n1_bus, g17_gpu, j813_disp, debug_print_level) = sys.argv[1:]
+ ans_preserve, ans_acpi, n1_bus, g17_gpu, j813_disp, debug_print_level,
+ j813_unified) = sys.argv[1:]
 enabled = lambda value: value == "TRUE"
 record = {
     "schema": "aurora.j813.mu-profile.v1",
@@ -236,6 +243,9 @@ record = {
         "n1_handoff": "aura,windows-n1-v1" if enabled(n1_bus) else None,
         "g17_gpu_device": "AURA8170" if enabled(g17_gpu) else None,
         "j813_display_device": "AURA8180" if enabled(j813_disp) else None,
+        # The unified device (AURA8171) is published only on the host's marker.
+        "j813_unified_display_marker":
+            "aura,windows-unified-display-v1" if enabled(j813_unified) else None,
         "baseline_capabilities": {
             "usb3_deferred_pipe_switch_port_mask": 0,
             "usb_dwc3_reset_dart_handoff":
@@ -257,6 +267,7 @@ record = {
             "PcdAppleN1BusHandoff": enabled(n1_bus),
             "PcdAppleG17GpuProbe": enabled(g17_gpu),
             "PcdAppleJ813DisplayDevice": enabled(j813_disp),
+            "PcdAppleJ813UnifiedDisplay": enabled(j813_unified),
             "PcdAppleAnsPmgrResetBase": "0x380700300",
             "PcdAppleAnsPmgrApcieStBase": "0x380700410",
             "PcdAppleAnsPmgrApcieStSysBase": "0x380700520",
