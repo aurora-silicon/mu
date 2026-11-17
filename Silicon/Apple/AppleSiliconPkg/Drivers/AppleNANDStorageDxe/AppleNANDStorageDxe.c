@@ -310,10 +310,6 @@ typedef struct {
   BOOLEAN                           ReadyToBootDiagnosticsComplete;
   BOOLEAN                           InheritedCoprocessor;
   BOOLEAN                           InheritedSartMemoryReserved;
-  UINT32                            LastNvmeReadOffset;
-  UINT32                            LastNvmeWriteOffset;
-  BOOLEAN                           LastNvmeReadValid;
-  BOOLEAN                           LastNvmeWriteValid;
   BOOLEAN                           Fatal;
   BOOLEAN                           HandedOff;
 } APPLE_ANS_DEVICE;
@@ -1316,12 +1312,9 @@ NvmeRead32 (
   APPLE_ANS_DEVICE  *Device = Opaque;
   UINTN             Base;
 
-  if (!Device->LastNvmeReadValid || (Device->LastNvmeReadOffset != Offset)) {
-    ANS_DEBUG ((DEBUG_INFO, "AppleANS: NVMe MMIO read  +0x%05x\n", Offset));
-    Device->LastNvmeReadOffset = Offset;
-    Device->LastNvmeReadValid  = TRUE;
-  }
-
+  // No per-access logging: every byte on the emulated UART is a trapped
+  // write plus a status poll, and the Windows loader issues thousands of
+  // commands through this path.
   Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
           (Device->NvmeHw->secure_io_queue_registers &&
            (Offset >= NTASI_ANS_REG_SECURE_IOSQ_ADDR) &&
@@ -1339,12 +1332,6 @@ NvmeWrite32 (
 {
   APPLE_ANS_DEVICE  *Device = Opaque;
   UINTN             Base;
-
-  if (!Device->LastNvmeWriteValid || (Device->LastNvmeWriteOffset != Offset)) {
-    ANS_DEBUG ((DEBUG_INFO, "AppleANS: NVMe MMIO write +0x%05x = 0x%08x\n", Offset, Value));
-    Device->LastNvmeWriteOffset = Offset;
-    Device->LastNvmeWriteValid  = TRUE;
-  }
 
   Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
           (Device->NvmeHw->secure_io_queue_registers &&
@@ -1364,9 +1351,6 @@ NvmeWrite64 (
   APPLE_ANS_DEVICE  *Device = Opaque;
   UINTN             Base;
 
-  ANS_DEBUG ((DEBUG_INFO, "AppleANS: NVMe MMIO write64 +0x%05x = 0x%016Lx\n", Offset, Value));
-  Device->LastNvmeWriteOffset = Offset;
-  Device->LastNvmeWriteValid  = TRUE;
   Base = ((Offset <= NTASI_ANS_REG_DB_IOCQ) ||
           (Device->NvmeHw->secure_io_queue_registers &&
            (Offset >= NTASI_ANS_REG_SECURE_IOSQ_ADDR) &&
@@ -2053,7 +2037,7 @@ AnsAuditBcdReferences (
       );
   }
   ANS_DEBUG ((
-    DEBUG_INFO,
+    DEBUG_INIT | DEBUG_INFO,
     "AppleANS ReadyToBoot BCD audit: HD(%u) read 0x%Lx byte(s)%a; hive=%a winload-path=%a disk-guid-binary=%a disk-guid-text=%a\n",
     EspPartitionNumber,
     (UINT64)ScanSize,
@@ -3737,7 +3721,7 @@ AppleNANDStorageDxeInitialize (
 #endif
 
   ANS_DEBUG ((
-    DEBUG_INFO,
+    DEBUG_INIT | DEBUG_INFO,
     "AppleANS: bring-up completed all stages; namespace 1 ready: %Lu blocks x %u bytes\n",
     Device->BlockDevice.media.block_count,
     Device->BlockDevice.media.block_size

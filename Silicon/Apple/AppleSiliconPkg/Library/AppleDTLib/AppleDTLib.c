@@ -298,7 +298,7 @@ dt_node_t* dt_node(dt_node_t *node, const char *name)
     dt_node_t *dev = dt_find(node, name);
     if(!dev)
     {
-        DEBUG((DEBUG_INFO, "Missing DeviceTree node: %a\n", name));
+        DEBUG((DEBUG_WARN, "Missing DeviceTree node: %a\n", name));
     }
     return dev;
 }
@@ -334,7 +334,8 @@ static int dt_node_parent_cb(void *a, dt_node_t *node, int depth)
             // garbage value is provably unused on this ADT's shape), but it
             // is undefined behavior regardless of luck, so return the
             // correct, well-defined answer instead: the root has no parent.
-            DEBUG((DEBUG_INFO, "DeviceTree parent depth underflow: %d (root has no parent)\n", depth));
+            // This is the normal end of every ancestor walk (hundreds per
+            // boot), so it is not logged.
             arg->parent = NULL;
         }
         else
@@ -374,7 +375,7 @@ void* dt_node_prop(dt_node_t *node, const char *prop, size_t *size)
     void *val = dt_prop(node, prop, size);
     if(!val)
     {
-        DEBUG((DEBUG_INFO, "Missing DeviceTree prop: %a\n", prop));
+        DEBUG((DEBUG_WARN, "Missing DeviceTree prop: %a\n", prop));
     }
     return val;
 }

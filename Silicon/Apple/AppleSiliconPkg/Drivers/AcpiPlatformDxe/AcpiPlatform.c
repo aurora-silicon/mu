@@ -4547,7 +4547,7 @@ AppleApplyUsbDisabledPolicy (
     gBS->FreePool (*Table);
     *Table = (EFI_ACPI_COMMON_HEADER *)Updated;
     Updated = NULL;
-    DEBUG ((DEBUG_INFO, "Aura USB: explicit disabled policy; XHC0/XHC1 withheld\n"));
+    DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura USB: explicit disabled policy; XHC0/XHC1 withheld\n"));
   }
 
 Done:
@@ -4605,7 +4605,7 @@ AppleCpuFreqTableAdmitted (
   if (Value != 0x24) {
     return FALSE;
   }
-  DEBUG ((DEBUG_INFO, "Aura CPU frequency: J813 manual ownership; publishing AURA8142\n"));
+  DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura CPU frequency: J813 manual ownership; publishing AURA8142\n"));
   return TRUE;
 }
 
@@ -4640,10 +4640,10 @@ AppleMtpTableAdmitted (
   }
   CopyMem (&Disabled, Property, sizeof (Disabled));
   if (Disabled != 0) {
-    DEBUG ((DEBUG_INFO, "Aura MTP: handoff unavailable (%u); MTP0 withheld\n", Disabled));
+    DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura MTP: handoff unavailable (%u); MTP0 withheld\n", Disabled));
     return FALSE;
   }
-  DEBUG ((DEBUG_INFO, "Aura MTP: prepared handoff; publishing MTP0\n"));
+  DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura MTP: prepared handoff; publishing MTP0\n"));
   return TRUE;
 }
 
@@ -4669,7 +4669,7 @@ AppleN1TableAdmitted (
   }
 
   if (!FixedPcdGetBool (PcdAppleN1BusHandoff)) {
-    DEBUG ((DEBUG_INFO, "Aura N1: profile disabled; AURA8130 withheld\n"));
+    DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura N1: profile disabled; AURA8130 withheld\n"));
     return FALSE;
   }
 
@@ -4698,7 +4698,7 @@ AppleN1TableAdmitted (
     return FALSE;
   }
 
-  DEBUG ((DEBUG_INFO, "Aura N1: cold ROM and clean SID0 verified; publishing AURA8130\n"));
+  DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura N1: cold ROM and clean SID0 verified; publishing AURA8130\n"));
   return TRUE;
 }
 
