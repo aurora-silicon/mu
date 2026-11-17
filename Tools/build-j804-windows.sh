@@ -10,7 +10,9 @@
 # Environment:
 #   WM6_OUTPUT_ROOT          output directory (default ../out/j804-windows)
 #   WM6_VENV                 venv made by Tools/wm6-env.sh (default ../venv)
-#   WM6_CLEAN=1              delete Build/MacBookPro2026-AARCH64 first
+#   WM6_CLEAN=1              delete Build/MacBookPro2026-AARCH64 first (also
+#                            done when the J804_WINDOWS_* flags differ from the
+#                            last build there: both variants share that tree)
 #   WM6_J804_ANS=TRUE        emit ANS0 (_STA 0xF); the default DSDT has no ANS0
 #   WM6_J804_VUART=TRUE      carrier vUART build (serial lib, COM0, DBG2)
 set -eu
@@ -55,9 +57,18 @@ test -x "$host_tools/GenFfs" || {
     exit 1
 }
 build_dir=$source_root/Build/MacBookPro2026-AARCH64
+# The default and vUART variants share build_dir, and the manifest scans every
+# PE and ACPI table in it: never build one variant over the other's output.
+flags_stamp=$build_dir/.wm6-j804-windows-flags
+build_flags="J804_WINDOWS_ANS=$ans J804_WINDOWS_VUART=$vuart"
 if test "${WM6_CLEAN:-0}" = 1; then
     rm -rf "$build_dir"
+elif test -d "$build_dir" && test "$(cat "$flags_stamp" 2>/dev/null)" != "$build_flags"; then
+    echo "Build flags differ from the last build in $build_dir (or unknown): cleaning it" >&2
+    rm -rf "$build_dir"
 fi
+mkdir -p "$build_dir"
+printf '%s\n' "$build_flags" > "$flags_stamp"
 export PATH="$venv/bin:$toolchain_dir:$llvm_bin:$base_tools/BinWrappers/PosixLike:$host_tools:$PATH"
 export CLANG_BIN="$toolchain_dir/"
 export CLANG_HOST_BIN=/usr/bin/

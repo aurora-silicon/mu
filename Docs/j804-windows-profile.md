@@ -4,10 +4,21 @@ Mu for the MacBook Pro 14-inch, M6 (J804, T8152), running at EL1 as the guest
 of the EL2 carrier: aura's `WINDOWS=1` personality ported to T8152 (PLAN 0.5,
 option H1). Build: `sh Tools/build-j804-windows.sh` on branch `j804-windows`;
 output `../out/j804-windows/artifacts/J804WIN_EFI.fd` with `MANIFEST.txt`.
-The serial variant is `WM6_J804_VUART=TRUE WM6_OUTPUT_ROOT=../out/j804-windows-vuart
-sh Tools/build-j804-windows.sh`; `MANIFEST.txt` records the build flags, and
-the manifest check fails unless DBG2 and `\_SB.COM0` are present exactly when
-`J804_WINDOWS_VUART=TRUE`.
+The serial variant is `WM6_CLEAN=1 WM6_J804_VUART=TRUE
+WM6_OUTPUT_ROOT=../out/j804-windows-vuart sh Tools/build-j804-windows.sh`.
+Both variants share `Build/MacBookPro2026-AARCH64`; the script cleans it by
+itself when the flags differ from the last build there, and `WM6_CLEAN=1`
+gives the clean tree the recorded sha256 comes from. `MANIFEST.txt` records
+the build flags and each submodule's HEAD and `git diff` sha256 (the j873
+patches are uncommitted submodule changes). The manifest check fails unless
+the FV carries exactly one DSDT, the DSDT declares `Device (COM0)` directly
+in `Scope (\_SB)` exactly when `J804_WINDOWS_VUART=TRUE`, and DBG2 (naming
+`\_SB.COM0`) is in the FV exactly then. In a vUART build `DxeCore.efi` also
+carries the `J804 reset: EL2, restarting through WD1` string: DxeCore links
+DebuggerFeaturePkg's DebugAgentDxe, whose GDB stub reboot path
+(`DebugReboot` -> `ResetCold`) is reachable only with a real serial
+transport; with the Null serial library the linker drops it. The debugger
+stays off (`PcdForceEnableDebugger` FALSE, no debugger-control HOB).
 
 Status: built and host-tested only. Nothing here has run on hardware.
 

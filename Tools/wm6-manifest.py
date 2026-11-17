@@ -9,8 +9,11 @@ Host-only. Checks:
   * No build-host paths in any PE of the build output or in the uncompressed
     FVMAIN (the FD itself is LZMA-compressed, so it is not scanned directly).
 Writes MANIFEST.txt and manifest.json next to the FD:
-  sha256, POSIX cksum, size, git commit and dirty state, the build flags the
-  build script passed (--build-flag NAME=VALUE), marker strings found
+  sha256, POSIX cksum, size, git commit and dirty state, every submodule's
+  HEAD and, for a dirty one, the sha256 of its `git diff` (the j873 patches
+  are applied as uncommitted submodule changes, so this pins the source the
+  FD came from), the build flags the build script passed
+  (--build-flag NAME=VALUE), marker strings found
   in the PE files, the FVMAIN and FVMAIN_COMPACT file GUID/type/name lists,
   the startup.nsh that the FV carries and, for the windows profile, the ACPI
   tables the build produced and the FV carries (signature, length, sha256).
@@ -20,6 +23,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import struct
 import subprocess
 import sys
@@ -68,6 +72,16 @@ ACPI_REQUIRED = {'DSDT', 'FACP', 'APIC', 'GTDT'}
 # The windows profile's DBG2 (and the DSDT's COM0) exist only in a
 # J804_WINDOWS_VUART=TRUE build; a manifest must not let the two FDs be confused.
 VUART_FLAG = 'J804_WINDOWS_VUART'
+# DBG2's namespace string for the vUART (ASCII, NUL-terminated; ACPI 6.4 DBG2
+# Device Information structure, NamespaceString).
+DBG2_COM0 = b'\\_SB.COM0\0'
+# AML encodings (ACPI 6.4 spec, section 20.2): ScopeOp 0x10 and DeviceOp
+# 0x5B 0x82, each followed by a PkgLength (lead byte bits 7:6 = number of
+# extra bytes) that covers itself and the rest of the object. iasl writes
+# Scope (\_SB) at the table's root as the relative name _SB_ (no root prefix).
+AML_SCOPE = re.compile(rb'\x10([\x00-\x3f]|[\x40-\x7f].|[\x80-\xbf]..|[\xc0-\xff]...)(\\?)_SB_', re.S)
+AML_DEVICE = re.compile(rb'\x5b\x82([\x00-\x3f]|[\x40-\x7f].|[\x80-\xbf]..|[\xc0-\xff]...)'
+                        rb'([A-Z_][A-Z0-9_]{3})', re.S)
 
 FFS_TYPES = {
     0x01: 'RAW', 0x02: 'FREEFORM', 0x03: 'SEC', 0x04: 'PEI_CORE',
@@ -140,6 +154,67 @@ def parse_fv(fv):
                           name=ui, size=size, raw=raw))
         off = (off + size + 7) & ~7
     return files
+
+
+def aml_pkg_length(raw):
+    lead = raw[0]
+    extra = lead >> 6
+    if extra == 0:
+        return lead & 0x3F
+    value = lead & 0x0F
+    for i in range(extra):
+        value |= raw[1 + i] << (4 + 8 * i)
+    return value
+
+
+def aml_extents(regex, blob):
+    """(name, start, end) of each object regex matches; end from its PkgLength."""
+    out = []
+    for m in regex.finditer(blob):
+        name = m.group(2).decode()
+        start = m.start(1)           # PkgLength counts from its own first byte
+        out.append((name, m.start(), start + aml_pkg_length(m.group(1))))
+    return out
+
+
+def dsdt_has_sb_com0(dsdt):
+    """True if the DSDT AML declares Device (COM0) directly in Scope (\\_SB)."""
+    found = aml_extents(AML_SCOPE, dsdt)
+    devices = aml_extents(AML_DEVICE, dsdt)
+    # \_SB_ anywhere, or _SB_ only at the root (not inside another object).
+    scopes = [(n, s, e) for n, s, e in found
+              if n == '\\' or not any(s2 < s and e <= e2 for _, s2, e2 in found + devices)]
+    for name, start, end in devices:
+        if name != 'COM0':
+            continue
+        in_sb = any(s <= start and end <= e for _, s, e in scopes)
+        nested = any(s < start and end <= e for n, s, e in devices if (n, s) != (name, start))
+        if in_sb and not nested:
+            return True
+    return False
+
+
+def submodule_states(root):
+    """Each submodule's path, HEAD and, if dirty, the sha256 of `git diff`."""
+    out = []
+    listing = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-s'], text=True)
+    for line in listing.splitlines():
+        meta, _, path = line.partition('\t')
+        if not meta.startswith('160000 '):
+            continue
+        sub = root / path
+        if not (sub / '.git').exists():
+            out.append(dict(path=path, head=None, diff_sha256=None))
+            continue
+        head = subprocess.check_output(['git', '-C', str(sub), 'rev-parse', 'HEAD'],
+                                       text=True).strip()
+        diff = subprocess.check_output(['git', '-C', str(sub), 'diff', 'HEAD'])
+        untracked = subprocess.check_output(['git', '-C', str(sub), 'ls-files', '--others',
+                                             '--exclude-standard'], text=True).split()
+        out.append(dict(path=path, head=head,
+                        diff_sha256=hashlib.sha256(diff).hexdigest() if diff else None,
+                        untracked=untracked))
+    return out
 
 
 def posix_cksum(path):
@@ -224,7 +299,7 @@ def main():
                 continue
             acpi.append(dict(file=path.name, signature=blob[:4].decode('ascii', 'replace'),
                              length=struct.unpack_from('<I', blob, 4)[0],
-                             sha256=hashlib.sha256(blob).hexdigest()))
+                             sha256=hashlib.sha256(blob).hexdigest(), blob=blob))
             for pat in PATH_PATTERNS:
                 if pat in blob:
                     leaks.append(f'{path.name}: {pat.decode()}')
@@ -237,13 +312,20 @@ def main():
         elif (vuart == 'TRUE') != ('DBG2' in found):
             failures.append(f'{VUART_FLAG}={vuart} but DBG2 is '
                             + ('built' if 'DBG2' in found else 'not built'))
-        dsdt = [t['file'] for t in acpi if t['signature'] == 'DSDT']
+        # The FV-carried tables only (the list above); one DSDT, one DBG2 at most.
+        dsdt = list({t['blob'] for t in acpi if t['signature'] == 'DSDT'})
+        dbg2 = list({t['blob'] for t in acpi if t['signature'] == 'DBG2'})
+        if len(dsdt) != 1:
+            failures.append(f'{len(dsdt)} DSDT tables in FVMAIN, expected exactly 1')
+        if len(dbg2) > 1:
+            failures.append(f'{len(dbg2)} DBG2 tables in FVMAIN, expected at most 1')
         if vuart in ('TRUE', 'FALSE') and len(dsdt) == 1:
-            dsdt_blob = next(args.build_dir.joinpath('AARCH64', 'MacBookPro2026Pkg')
-                             .rglob(dsdt[0])).read_bytes()
-            if (vuart == 'TRUE') != (b'COM0' in dsdt_blob):
+            com0 = dsdt_has_sb_com0(dsdt[0])
+            if (vuart == 'TRUE') != com0:
                 failures.append(f'{VUART_FLAG}={vuart} but the DSDT '
-                                + ('names' if b'COM0' in dsdt_blob else 'lacks') + ' COM0')
+                                + ('declares' if com0 else 'lacks') + ' Device (\\_SB.COM0)')
+        if vuart == 'TRUE' and len(dbg2) == 1 and DBG2_COM0 not in dbg2[0]:
+            failures.append('DBG2 does not name \\_SB.COM0')
     if leaks:
         failures.append(f'{len(leaks)} build-host paths in PE files or ACPI tables')
 
@@ -263,6 +345,15 @@ def main():
                                      text=True).strip()
     status = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain'],
                                      text=True).splitlines()
+    submodules = submodule_states(root)
+    for sub in submodules:
+        if sub['head'] is None:
+            failures.append(f'submodule {sub["path"]} is not checked out')
+        elif sub['untracked']:
+            failures.append(f'submodule {sub["path"]} has untracked files '
+                            f'({len(sub["untracked"])}); the source state is not pinned')
+    for t in acpi:
+        del t['blob']
 
     record = dict(
         schema='wm6.mu-fd-manifest.v1',
@@ -273,6 +364,7 @@ def main():
                 cksum=crc, cksum_size=csize),
         source_commit=commit,
         source_status=status,
+        submodules=[{k: v for k, v in s.items() if k != 'untracked'} for s in submodules],
         build_flags=flags,
         pe_files_scanned=len(scanned),
         path_leaks=leaks,
@@ -295,6 +387,11 @@ def main():
         f'cksum          {crc} {csize}',
         f'source commit  {commit}',
         'source status  ' + ('; '.join(s.strip() for s in status) or 'clean'),
+    ]
+    for sub in submodules:
+        lines.append(f'submodule      {sub["path"]} {sub["head"]} '
+                     + (f'diff sha256 {sub["diff_sha256"]}' if sub['diff_sha256'] else 'clean'))
+    lines += [
         'build flags    ' + (' '.join(f'{k}={v}' for k, v in flags.items()) or 'none recorded'),
         f'path check     {len(scanned)} PE/FV files scanned, '
         f'{len(leaks)} build-host paths found',
