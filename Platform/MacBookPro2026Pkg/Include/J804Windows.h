@@ -220,4 +220,52 @@
 //
 #define J804_GPU0_HID  "AGHN0001"
 
+//
+// I0: keyboard and pointer (windows-m6/INPUT-DESIGN.md, aura-win
+// docs/windows-t8152.md "The Mu side"). Only a J804_WINDOWS_INPUT build uses
+// these. The carrier emulates one 16 KiB MMIO mailbox page (hooked, never
+// mapped; every access trapped) in the same /arm-io gap as the AHCI ABAR,
+// 0x10000000 above it, and raises a purely virtual level SPI (no AIC line
+// behind it) while reports are queued. 991 is in no "interrupts" property of
+// the J804 ADT and is neither the AHCI line nor a published AIC alias. The
+// carrier translates every source (Mac-fed frames on the vUART RX first, the
+// internal keyboard and trackpad later) into fixed HID reports; Windows'
+// m6input.sys binds _HID J804_INPUT_HID. Mu never touches the page and has no
+// input driver: J804InputAcpiDxe only installs \_SB.INP0 (its own SSDT, OEM
+// table ID J804INP0) when the launcher's handshake below is present and valid.
+//
+#define J804_INPUT_BASE        0xF50000000
+#define J804_INPUT_SIZE        0x4000
+#define J804_GSIV_INPUT        991
+#define J804_INPUT_HID         "NTAS2040"   // project-local; not AuroraSilicon's NTAS0050
+
+//
+// Run-time handshake: the launcher writes this /chosen property into the
+// guest ADT only after the carrier's input ATTACH returned 0 (page hooked,
+// SPI 991 owned). Without it, or with any value that differs from this
+// contract, J804InputAcpiDxe installs no INP0 SSDT, so Windows never touches
+// the page. Little-endian, 24 bytes:
+//   +0x00 u64 page base (J804_INPUT_BASE)
+//   +0x08 u32 page size (J804_INPUT_SIZE)
+//   +0x0C u32 GSIV (J804_GSIV_INPUT)
+//   +0x10 u32 feature mask: bits 0-3 the report collections (keyboard,
+//             absolute pointer, relative pointer, consumer; all four set),
+//             bits 4-15 clear (PTP is not in this contract), bits 16-23 the
+//             attached sources (at least one: 16 host feed, 17 internal
+//             keyboard, 18 trackpad), bits 24-31 clear
+//   +0x14 u32 version (J804_INPUT_VERSION)
+//
+#define J804_INPUT_ADT_PROPERTY        "aura,windows-input-v1"
+#define J804_INPUT_ADT_PROPERTY_SIZE   24
+#define J804_INPUT_VERSION             1
+#define J804_INPUT_FEATURES_REPORTS    0x0000000F
+#define J804_INPUT_FEATURES_SOURCES    0x00FF0000
+
+//
+// Raw FD marker (MacBookPro2026.fdf region 0x140|0x10, input builds only),
+// read by the launcher before it attaches input: "J804INP1", u32
+// J804_INPUT_BASE >> 12, u32 J804_GSIV_INPUT. A non-input FD has 0xFF there.
+//
+#define J804_INPUT_FD_MARKER_OFFSET    0x140
+
 #endif

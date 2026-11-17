@@ -77,6 +77,13 @@
   #   patches it from that page and installs it only then. Mu never touches
   #   the GPU. Needs J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the
   #   AHCI or USB image, unchanged.
+  # J804_WINDOWS_INPUT: I0, the carrier's keyboard and pointer mailbox
+  #   (J804Windows.h, windows-m6/INPUT-DESIGN.md): the \_SB.INP0 SSDT
+  #   (J804Inp0Ssdt), J804InputAcpiDxe, which installs it only when the
+  #   launcher's /chosen input handshake is present, and the FD marker block
+  #   at 0x140. No Mu input driver and no C or ASL define: Mu never touches
+  #   the page. Needs J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the
+  #   AHCI, USB or GPU image, unchanged.
   #
 !ifndef J804_WINDOWS_ANS
   DEFINE J804_WINDOWS_ANS = FALSE
@@ -96,6 +103,9 @@
 !ifndef J804_WINDOWS_GPU
   DEFINE J804_WINDOWS_GPU = FALSE
 !endif
+!ifndef J804_WINDOWS_INPUT
+  DEFINE J804_WINDOWS_INPUT = FALSE
+!endif
 !if $(J804_WINDOWS_USB) == TRUE
 !if $(J804_WINDOWS_AHCI) == FALSE
 !error "J804_WINDOWS_USB builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
@@ -104,6 +114,11 @@
 !if $(J804_WINDOWS_GPU) == TRUE
 !if $(J804_WINDOWS_AHCI) == FALSE
 !error "J804_WINDOWS_GPU builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
+!endif
+!endif
+!if $(J804_WINDOWS_INPUT) == TRUE
+!if $(J804_WINDOWS_AHCI) == FALSE
+!error "J804_WINDOWS_INPUT builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
 !endif
 !endif
 !if $(SECURE_BOOT_ENABLE) == TRUE
@@ -285,4 +300,8 @@
 !if $(J804_WINDOWS_GPU) == TRUE
   MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf
   MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf
+!endif
+!if $(J804_WINDOWS_INPUT) == TRUE
+  MacBookPro2026Pkg/AcpiTables/J804Inp0Ssdt.inf
+  MacBookPro2026Pkg/Drivers/J804InputAcpiDxe/J804InputAcpiDxe.inf
 !endif

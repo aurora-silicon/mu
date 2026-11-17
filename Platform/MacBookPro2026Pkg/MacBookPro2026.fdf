@@ -54,6 +54,19 @@ DATA = {
 }
 !endif
 
+!if $(J804_WINDOWS_INPUT) == TRUE
+# I0 input contract marker (J804Windows.h J804_INPUT_FD_MARKER_OFFSET), read
+# by the launcher before it attaches input: "J804INP1", u32 J804_INPUT_BASE
+# >> 12 (0xF50000), u32 J804_GSIV_INPUT (991). Little-endian. Absent (0xFF)
+# in non-input builds.
+0x000000140|0x000000010
+DATA = {
+  0x4a, 0x38, 0x30, 0x34, 0x49, 0x4e, 0x50, 0x31, # "J804INP1"
+  0x00, 0x00, 0xf5, 0x00,                         # 0xF50000000 >> 12
+  0xdf, 0x03, 0x00, 0x00                          # GSIV 991
+}
+!endif
+
 0x000008000|0x001DF8000
 gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
 FV = FVMAIN_COMPACT
@@ -164,6 +177,12 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   # (J804GpuAcpiDxe).
   INF MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf
   INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf
+!endif
+!if $(J804_WINDOWS_INPUT) == TRUE
+  # I0: \_SB.INP0 in its own SSDT, installed only with the /chosen input
+  # handshake (J804InputAcpiDxe).
+  INF MacBookPro2026Pkg/Drivers/J804InputAcpiDxe/J804InputAcpiDxe.inf
+  INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Inp0Ssdt.inf
 !endif
   INF MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
   INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf

@@ -16,7 +16,10 @@
 // J804XhciAcpiDxe installs only when the launcher's USB handshake is present.
 // Nor is the carrier-admitted GPU (G0, J804_WINDOWS_GPU): \_SB.GPU0 is the
 // SSDT template SsdtGpu0.asl, which J804GpuAcpiDxe patches from the carrier's
-// handoff page and installs only with the launcher's GPU handshake.
+// handoff page and installs only with the launcher's GPU handshake. Nor is
+// the carrier's input mailbox (I0, J804_WINDOWS_INPUT): \_SB.INP0 is the
+// SSDT SsdtInp0.asl, which J804InputAcpiDxe installs only with the
+// launcher's input handshake.
 //
 // Values shared with the carrier come from J804Windows.h.
 //

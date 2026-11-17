@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# J804 \_SB.INP0 SSDT, only in J804_WINDOWS_INPUT builds; installed by
+# J804InputAcpiDxe only with a valid /chosen input handshake.
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804Inp0Ssdt
+  FILE_GUID = 021B562E-3BD3-4324-BB92-25DB0ED09223
+  MODULE_TYPE = USER_DEFINED
+  VERSION_STRING = 1.0
+[Sources]
+  SsdtInp0.asl
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec

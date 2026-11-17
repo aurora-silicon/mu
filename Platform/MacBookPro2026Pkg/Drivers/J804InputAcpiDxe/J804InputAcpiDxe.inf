@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+# J804 windows profile, I0 (J804_WINDOWS_INPUT builds only): install the
+# \_SB.INP0 SSDT (J804Inp0Ssdt) only when the launcher's /chosen input
+# handshake says the carrier emulates the input page. Never touches the
+# page.
+#
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804InputAcpiDxe
+  FILE_GUID = 4A1F182C-A0B2-4B04-828D-2D82F695F0AE
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J804InputAcpiEntry
+
+[Sources]
+  J804InputAcpiDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  AcpiLib
+  AppleDTLib
+  ArmLib
+  BaseLib
+  DebugLib
+  DxeServicesTableLib
+  PcdLib
+
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
+
+[Protocols]
+  gEfiAcpiTableProtocolGuid
+
+[Depex]
+  gEfiAcpiTableProtocolGuid
