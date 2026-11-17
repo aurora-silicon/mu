@@ -13,7 +13,7 @@ Writes MANIFEST.txt and manifest.json next to the FD:
   build script passed (--build-flag NAME=VALUE), marker strings found
   in the PE files, the FVMAIN and FVMAIN_COMPACT file GUID/type/name lists,
   the startup.nsh that the FV carries and, for the windows profile, the ACPI
-  tables the build produced (signature, length, sha256).
+  tables the build produced and the FV carries (signature, length, sha256).
 Exit status is non-zero if any check fails.
 """
 import argparse
@@ -212,12 +212,15 @@ def main():
     acpi = []
     if args.profile == 'j804-windows':
         # Only the platform's own tables (the FV also carries RamDiskDxe's
-        # SSDT; AppleSiliconPkg's generic GTDT is built but not in the FV).
+        # SSDT; AppleSiliconPkg's generic GTDT is built but not in the FV),
+        # and only those the FV carries: a table left in the build directory
+        # by an earlier build with other flags (DBG2) is not in this FD.
+        fvmain_blob = fvmain_path.read_bytes()
         for path in sorted(args.build_dir.joinpath('AARCH64', 'MacBookPro2026Pkg').rglob('*')):
             if path.suffix not in ('.aml', '.acpi') or not path.is_file():
                 continue
             blob = path.read_bytes()
-            if len(blob) < 36:
+            if len(blob) < 36 or blob not in fvmain_blob:
                 continue
             acpi.append(dict(file=path.name, signature=blob[:4].decode('ascii', 'replace'),
                              length=struct.unpack_from('<I', blob, 4)[0],
