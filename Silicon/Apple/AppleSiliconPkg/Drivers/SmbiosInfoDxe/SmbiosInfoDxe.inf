@@ -18,6 +18,12 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosCpuModel
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosCpuIdentifier
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosLiftAdtIdentity
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemFamily
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosECoreMaxFreqMhz
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosPCoreMaxFreqMhz
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosBootFreqMhz

@@ -247,7 +247,9 @@ UINT32 InitializeUART(VOID)
     // whenever handing a new .fd over, and grep the log for it before trusting
     // anything else in that log.
     //
-#if defined(J804_M1)
+#if defined(J804_WINDOWS)
+    DEBUG((EFI_D_INFO | EFI_D_LOAD, "J804 firmware build marker: J804-MU-WIN-001 (from J804-MU-M1-001)\n"));
+#elif defined(J804_M1)
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "J804 firmware build marker: J804-MU-M1-001 (from J873-MU-005)\n"));
 #elif SILICON_PLATFORM == 8152
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "J873 firmware build marker: J873-MU-005\n"));

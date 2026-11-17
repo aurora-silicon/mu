@@ -178,7 +178,7 @@ PrioritizeRamdiskBoot (
 
   FileDevicePathOnly = FileDevicePath (
                          NULL,
-#if defined(J873_WINDOWS)
+#if defined(J873_WINDOWS) || defined(J804_WINDOWS)
                          // Windows installation media exposes the removable
                          // ARM64 loader, not the installed bootmgfw path.
                          L"\\EFI\\BOOT\\BOOTAA64.EFI"

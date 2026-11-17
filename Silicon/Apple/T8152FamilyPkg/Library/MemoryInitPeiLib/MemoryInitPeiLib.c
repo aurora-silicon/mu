@@ -654,6 +654,57 @@ J804M1ReserveFromAdt (
 }
 #endif
 
+#if defined(J804_M1)
+//
+// Fail closed if the launcher-placed boot_args or ADT copy is not where the
+// reservations below assume (J804BootHandoffIsSane, adapted from the
+// windows-mu-handoff ReserveBootHandoff check). Kept outside the reservation
+// block above, which the host test extracts on its own.
+//
+STATIC
+VOID
+J804M1CheckBootHandoff (
+  IN EFI_PHYSICAL_ADDRESS  UefiMemoryBase,
+  IN UINT64                UefiMemorySize
+  )
+{
+  CONST struct boot_args  *BootArgs;
+  UINT64                  RamBase;
+  UINT64                  RamTop;
+  UINT64                  FdBase;
+  UINT64                  UefiTop;
+
+  RamBase  = PcdGet64 (PcdSystemMemoryBase);
+  RamTop   = RamBase + PcdGet64 (PcdSystemMemorySize);
+  FdBase   = PcdGet64 (PcdFdBaseAddress);
+  UefiTop  = MAX (UefiMemoryBase + UefiMemorySize, RamTop);
+  BootArgs = (CONST struct boot_args *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
+  if (!J804BootHandoffIsSane (
+         RamBase,
+         RamTop,
+         FdBase,
+         FdBase + PcdGet32 (PcdFdSize),
+         UefiMemoryBase,
+         UefiTop,
+         FixedPcdGet64 (PcdBootArgsPointer),
+         FixedPcdGet64 (PcdAdtPointer),
+         BootArgs->devtree_size
+         ))
+  {
+    DEBUG ((
+      DEBUG_ERROR,
+      "J804_M1: boot hand-off copies 0x%lx/0x%lx (ADT 0x%x bytes) are not clear of the FD, the UEFI region or RAM bounds, stopping\n",
+      FixedPcdGet64 (PcdBootArgsPointer),
+      FixedPcdGet64 (PcdAdtPointer),
+      BootArgs->devtree_size
+      ));
+    J804M1Stop (J804_M1_ERROR_BOOT_HANDOFF);
+  }
+
+  DEBUG ((DEBUG_INFO, "J804_M1: boot hand-off copies checked\n"));
+}
+#endif
+
 
 //Borrowed from ArmPlatformPkg
 EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 UefiMemorySize)
@@ -867,6 +918,7 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   // chainload firmware block. J804M1ReserveFromAdt also covers boot_args, the
   // ADT and cpm-impl-reg, so the J873 calls below are not used.
   //
+  J804M1CheckBootHandoff (UefiMemoryBase, UefiMemorySize);
   J804M1ReserveFromAdt (UefiMemoryBase, UefiMemorySize, FdTop, AppendedReservationSize);
 #else
   // Launcher bounds ADT to 2 MiB and checks these fixed destinations.
@@ -984,9 +1036,15 @@ VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
   // AIC3 and DockChannel only. No unported PCIe/USB MMIO is exposed.
   MAP_DEVICE_RANGE (0x301000000ULL, 0x1cc000);
   MAP_DEVICE_RANGE (0x308128000ULL, 0x8000);
-#if defined(J873_WINDOWS)
+#if defined(J873_WINDOWS) || defined(J804_WINDOWS_VUART)
   // The Windows carrier emulates this UART; never access its physical block.
   MAP_DEVICE_RANGE (0x331200000ULL, 0x4000);
+#endif
+#if defined(J804_WINDOWS)
+  // J804 WD1 (/arm-io/wdt reg[0], apple,t8152-wdt), used only by the J804
+  // reset library when it runs at EL2 with no carrier above it. Under the
+  // carrier (EL1) resets go through PSCI and this page is never touched.
+  MAP_DEVICE_RANGE (0x3082b0000ULL, 0x4000);
 #endif
 
 #undef MAP_DEVICE_RANGE

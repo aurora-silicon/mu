@@ -125,7 +125,7 @@ UINTN EFIAPI SerialPortWrite(IN UINT8 *Buffer, IN UINTN NumberOfBytes)
     // Do not unmask interrupts while SEC/DXE is installing exception vectors.
     for (Index = 0; Index < NumberOfBytes; Index++) {
         UINTN Spins = 0;
-#if defined(J873_WINDOWS)
+#if defined(J873_WINDOWS) || defined(J804_WINDOWS_VUART)
         while (!(MmioRead32 (UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_TXBE)) {
 #else
         while (MmioRead32 (UART_BASE + 0x14) == 0) {
@@ -134,7 +134,7 @@ UINTN EFIAPI SerialPortWrite(IN UINT8 *Buffer, IN UINTN NumberOfBytes)
                 return Index;
             }
         }
-#if defined(J873_WINDOWS)
+#if defined(J873_WINDOWS) || defined(J804_WINDOWS_VUART)
         MmioWrite32 (UART_BASE + UART_TX_BYTE, Buffer[Index]);
 #else
         MmioWrite32 (UART_BASE + 0x04, Buffer[Index]);
@@ -186,7 +186,7 @@ UINTN EFIAPI SerialPortRead(
     }
 
     for (Count = 0; (Count < NumberOfBytes) && SerialPortPoll (); Count++, Buffer++) {
-#if SILICON_PLATFORM == 8152 && !defined(J873_WINDOWS)
+#if SILICON_PLATFORM == 8152 && !defined(J873_WINDOWS) && !defined(J804_WINDOWS_VUART)
       *Buffer = (UINT8)(MmioRead32 (UART_BASE + 0x1c) >> 8);
 #else
       *Buffer = MmioRead32 (UART_BASE + UART_RX_BYTE);
@@ -240,7 +240,7 @@ BOOLEAN EFIAPI SerialPortPoll(VOID)
         return FALSE;
     }
 
-#if SILICON_PLATFORM == 8152 && !defined(J873_WINDOWS)
+#if SILICON_PLATFORM == 8152 && !defined(J873_WINDOWS) && !defined(J804_WINDOWS_VUART)
     return MmioRead32 (UART_BASE + 0x2c) != 0;
 #else
     return (MmioRead32(UART_BASE + UART_TRANSFER_STATUS) & UART_TRANSFER_STATUS_RXD) ? TRUE : FALSE;

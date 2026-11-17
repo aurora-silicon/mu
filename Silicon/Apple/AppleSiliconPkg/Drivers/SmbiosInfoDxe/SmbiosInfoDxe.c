@@ -789,6 +789,135 @@ LogSmbiosData(
   return Status;
 }
 
+
+/***********************************************************************
+        ADT identity (PcdSmbiosLiftAdtIdentity)
+************************************************************************/
+
+//
+// Storage for identity strings copied out of the ADT. SMBIOS strings must stay
+// valid until LogSmbiosData has copied them, so they live here, not on the
+// stack. Nothing in this block is compiled in: every value is read from the
+// device tree of the machine the firmware is running on.
+//
+#define ADT_IDENTITY_STRING_MAX  64
+
+STATIC CHAR8 mAdtModel[ADT_IDENTITY_STRING_MAX];         // root "model", e.g. Mac18,1
+STATIC CHAR8 mAdtTargetType[ADT_IDENTITY_STRING_MAX];    // root "target-type", e.g. J804
+STATIC CHAR8 mAdtBoardName[ADT_IDENTITY_STRING_MAX];     // root "compatible"[0], e.g. J804AP
+STATIC CHAR8 mAdtProductName[ADT_IDENTITY_STRING_MAX];   // /product "product-name"
+STATIC CHAR8 mAdtSerial[ADT_IDENTITY_STRING_MAX];        // root "serial-number"
+STATIC CHAR8 mAdtBoardSerial[ADT_IDENTITY_STRING_MAX];   // root "mlb-serial-number"
+
+/**
+  Copy the first NUL-terminated string of an ADT property into Buffer.
+  Only printable ASCII is accepted; anything else, an empty value or a
+  missing property leaves Buffer empty and returns FALSE.
+**/
+STATIC
+BOOLEAN
+CopyAdtString (
+  IN  dt_node_t    *Node,
+  IN  CONST CHAR8  *Property,
+  OUT CHAR8        *Buffer,
+  IN  UINTN        BufferSize
+  )
+{
+  CONST CHAR8  *Value;
+  size_t       Length;
+  UINTN        Index;
+
+  Buffer[0] = '\0';
+  if (Node == NULL) {
+    return FALSE;
+  }
+
+  Length = 0;
+  Value  = dt_node_prop (Node, Property, &Length);
+  if ((Value == NULL) || (Length == 0)) {
+    return FALSE;
+  }
+
+  for (Index = 0; (Index < Length) && (Index + 1 < BufferSize); Index++) {
+    if (Value[Index] == '\0') {
+      break;
+    }
+
+    if ((Value[Index] < 0x20) || (Value[Index] > 0x7E)) {
+      Buffer[0] = '\0';
+      return FALSE;
+    }
+
+    Buffer[Index] = Value[Index];
+  }
+
+  Buffer[Index] = '\0';
+  return Index != 0;
+}
+
+/**
+  Read the identity strings from the ADT. Returns FALSE if the feature is off
+  or the ADT root is missing; individual missing properties fall back to the
+  PcdSmbiosSystem* strings (or "Not Specified" for serial numbers).
+**/
+STATIC
+BOOLEAN
+ReadAdtIdentity (
+  VOID
+  )
+{
+  dt_node_t  *Root;
+
+  if (!FixedPcdGetBool (PcdSmbiosLiftAdtIdentity)) {
+    return FALSE;
+  }
+
+  Root = (dt_node_t *)(UINTN)FixedPcdGet64 (PcdAdtPointer);
+  if (Root == NULL) {
+    return FALSE;
+  }
+
+  CopyAdtString (Root, "model", mAdtModel, sizeof (mAdtModel));
+  CopyAdtString (Root, "target-type", mAdtTargetType, sizeof (mAdtTargetType));
+  CopyAdtString (Root, "compatible", mAdtBoardName, sizeof (mAdtBoardName));
+  CopyAdtString (Root, "serial-number", mAdtSerial, sizeof (mAdtSerial));
+  CopyAdtString (Root, "mlb-serial-number", mAdtBoardSerial, sizeof (mAdtBoardSerial));
+  CopyAdtString (dt_get ("/product"), "product-name", mAdtProductName, sizeof (mAdtProductName));
+
+  if ((mAdtModel[0] != '\0') &&
+      (AsciiStrCmp (mAdtModel, (CONST CHAR8 *)FixedPcdGetPtr (PcdSmbiosSystemModelNumber)) != 0))
+  {
+    DEBUG ((
+      DEBUG_WARN,
+      "SmbiosInfoDxe: ADT model %a differs from the build's %a; reporting the ADT value\n",
+      mAdtModel,
+      (CONST CHAR8 *)FixedPcdGetPtr (PcdSmbiosSystemModelNumber)
+      ));
+  }
+
+  // Never log the serial numbers themselves.
+  DEBUG ((
+    DEBUG_INFO,
+    "SmbiosInfoDxe: ADT identity model=%a target=%a board=%a serial %a, board serial %a\n",
+    mAdtModel,
+    mAdtTargetType,
+    mAdtBoardName,
+    (mAdtSerial[0] != '\0') ? "present" : "absent",
+    (mAdtBoardSerial[0] != '\0') ? "present" : "absent"
+    ));
+  return TRUE;
+}
+
+STATIC
+CHAR8 *
+AdtOrPcd (
+  IN CHAR8        *AdtValue,
+  IN CONST CHAR8  *Fallback
+  )
+{
+  return (AdtValue[0] != '\0') ? AdtValue : (CHAR8 *)Fallback;
+}
+
 /***********************************************************************
         SMBIOS data update  TYPE0  BIOS Information
 ************************************************************************/
@@ -810,12 +939,15 @@ VOID BIOSInfoUpdateSmbiosType0(VOID)
 
 VOID SysInfoUpdateSmbiosType1(VOID)
 {
-  CHAR8  serialNo[13];
-  UINT64 serial;
-
-  // Update serial number from ADT blob
-  // TODO: add ADT commands
-  
+  // Identity from the ADT when PcdSmbiosLiftAdtIdentity is set: ProductName
+  // is the model identifier (as on other Macs), Version the marketing name.
+  if (ReadAdtIdentity ()) {
+    mSysInfoType1Strings[1] = AdtOrPcd (mAdtModel, (CONST CHAR8 *)FixedPcdGetPtr (PcdSmbiosSystemModelNumber));
+    mSysInfoType1Strings[2] = AdtOrPcd (mAdtProductName, (CONST CHAR8 *)FixedPcdGetPtr (PcdSmbiosSystemModel));
+    mSysInfoType1Strings[3] = AdtOrPcd (mAdtSerial, "Not Specified");
+    mSysInfoType1Strings[4] = AdtOrPcd (mAdtTargetType, (CONST CHAR8 *)FixedPcdGetPtr (PcdSmbiosSystemSku));
+    mSysInfoType1Strings[5] = (CHAR8 *)FixedPcdGetPtr (PcdSmbiosSystemFamily);
+  }
 
   LogSmbiosData(
       (EFI_SMBIOS_TABLE_HEADER *)&mSysInfoType1, mSysInfoType1Strings, NULL);
@@ -826,11 +958,11 @@ VOID SysInfoUpdateSmbiosType1(VOID)
 ************************************************************************/
 VOID BoardInfoUpdateSmbiosType2(VOID)
 {
-  CHAR8  serialNo[13];
-  UINT32 serial;
-
-  // Update serial number from ADT
-  // TODO: add ADT commands
+  // Board name and logic-board serial from the ADT (PcdSmbiosLiftAdtIdentity).
+  if (FixedPcdGetBool (PcdSmbiosLiftAdtIdentity)) {
+    mBoardInfoType2Strings[1] = AdtOrPcd (mAdtBoardName, (CONST CHAR8 *)FixedPcdGetPtr (PcdSmbiosSystemSku));
+    mBoardInfoType2Strings[3] = AdtOrPcd (mAdtBoardSerial, "Not Specified");
+  }
 
   LogSmbiosData(
       (EFI_SMBIOS_TABLE_HEADER *)&mBoardInfoType2, mBoardInfoType2Strings,
@@ -842,11 +974,10 @@ VOID BoardInfoUpdateSmbiosType2(VOID)
 ************************************************************************/
 VOID EnclosureInfoUpdateSmbiosType3(VOID)
 {
-  CHAR8  serialNo[13];
-  UINT32 serial;
-
-  // Update serial number from ADT
-  // TODO: add ADT info
+  // System serial from the ADT (PcdSmbiosLiftAdtIdentity).
+  if (FixedPcdGetBool (PcdSmbiosLiftAdtIdentity)) {
+    mEnclosureInfoType3Strings[2] = AdtOrPcd (mAdtSerial, "Not Specified");
+  }
 
   LogSmbiosData(
       (EFI_SMBIOS_TABLE_HEADER *)&mEnclosureInfoType3,

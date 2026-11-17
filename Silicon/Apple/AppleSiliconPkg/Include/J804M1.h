@@ -42,9 +42,10 @@
 #define J804_M1_ERROR_NO_CARVEOUT_MAP      3  // ADT has no /chosen/carveout-memory-map
 #define J804_M1_ERROR_NOT_J804             4  // ADT does not describe a J804
 #define J804_M1_ERROR_BAD_ADT              5  // ADT size unusable or ADT fails dt_check
+#define J804_M1_ERROR_BOOT_HANDOFF         6  // boot_args/ADT copy fails J804BootHandoffIsSane
 //
 // Codes 0, 1, 3, 4 and 5 can come from PrePi EarlySetup (before the stack and
-// UEFI region exist); 1, 2 and 3 from MemoryInitPeiLib. When the FD has no
+// UEFI region exist); 1, 2, 3 and 6 from MemoryInitPeiLib. When the FD has no
 // Linux header, or EarlySetup somehow returns, ModuleEntryPoint.S halts in a
 // branch-to-self loop without a block (gMuCheckpoint stage 0xEE).
 //
@@ -276,6 +277,88 @@ J804M1RegionIsClear (
   }
 
   return !Check->Hit;
+}
+
+/**
+  Validate the launcher-placed boot hand-off copies before MemoryInitPeiLib
+  reserves them: the boot_args copy at BootArgsCopy (one 16 KiB page) and the
+  ADT copy at AdtCopy (J804_M1_ADT_COPY_MAX bytes, holding DevtreeSize bytes).
+
+  Adapted from ReserveBootHandoff in aurora-silicon/mu codex/windows-mu-handoff
+  340f15e (T8142FamilyPkg MemoryInitPeiLib, BSD-2-Clause-Patent), rewritten as
+  a pure check for the J804 reservation model, where the reservations
+  themselves are added to the merged J804 range table. It fails closed on
+  every condition that ReserveBootHandoff rejects:
+    - a copy that is not page aligned, wraps, or is not wholly inside RAM;
+    - an ADT copy that starts inside the boot_args copy;
+    - an ADT size of zero or above the reserved copy size;
+    - a copy that overlaps the FD (the J804 range table would otherwise cut
+      the FD out of the reservation silently) or the UEFI region at the top
+      of RAM.
+
+  Returns TRUE when both copies are sane.
+**/
+STATIC inline
+BOOLEAN
+J804BootHandoffIsSane (
+  IN UINT64  RamBase,
+  IN UINT64  RamTop,
+  IN UINT64  FdBase,
+  IN UINT64  FdTop,
+  IN UINT64  UefiBase,
+  IN UINT64  UefiTop,
+  IN UINT64  BootArgsCopy,
+  IN UINT64  AdtCopy,
+  IN UINT64  DevtreeSize
+  )
+{
+  CONST UINT64  BootArgsSize = 0x4000;
+  CONST UINT64  AdtSize      = J804_M1_ADT_COPY_MAX;
+  CONST UINT64  PageMask     = 0x3FFF;
+  UINT64        BootArgsTop;
+  UINT64        AdtTop;
+
+  if ((RamTop <= RamBase) || (FdTop < FdBase) || (UefiTop < UefiBase)) {
+    return FALSE;
+  }
+
+  if (((BootArgsCopy & PageMask) != 0) || ((AdtCopy & PageMask) != 0)) {
+    return FALSE;
+  }
+
+  if ((BootArgsCopy > MAX_UINT64 - BootArgsSize) || (AdtCopy > MAX_UINT64 - AdtSize)) {
+    return FALSE;
+  }
+
+  BootArgsTop = BootArgsCopy + BootArgsSize;
+  AdtTop      = AdtCopy + AdtSize;
+  if ((BootArgsCopy < RamBase) || (BootArgsTop > RamTop) ||
+      (AdtCopy < RamBase) || (AdtTop > RamTop))
+  {
+    return FALSE;
+  }
+
+  if ((AdtCopy < BootArgsTop) && (BootArgsCopy < AdtTop)) {
+    return FALSE;
+  }
+
+  if ((DevtreeSize == 0) || (DevtreeSize > AdtSize)) {
+    return FALSE;
+  }
+
+  if (((BootArgsCopy < FdTop) && (FdBase < BootArgsTop)) ||
+      ((AdtCopy < FdTop) && (FdBase < AdtTop)))
+  {
+    return FALSE;
+  }
+
+  if (((BootArgsCopy < UefiTop) && (UefiBase < BootArgsTop)) ||
+      ((AdtCopy < UefiTop) && (UefiBase < AdtTop)))
+  {
+    return FALSE;
+  }
+
+  return TRUE;
 }
 
 #endif // !__ASSEMBLER__

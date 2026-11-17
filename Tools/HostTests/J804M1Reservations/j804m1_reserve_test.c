@@ -318,6 +318,38 @@ int main (int argc, char **argv)
     printf ("missing carve-out map: stop code %d\n", stop);
   }
 
+  /* 5. Boot hand-off check (J804BootHandoffIsSane, the windows-mu-handoff
+     ReserveBootHandoff port): the real layout passes, every rejection case
+     of the original fails closed. RAM and FD as in the trimmed launch, UEFI
+     region the top 128 MiB, ADT size of the saved tree. */
+  {
+    const UINT64 rb = 0x10005d2c000ULL, rt = J804_M1_RAM_TOP_LIMIT;
+    const UINT64 fb = gHostFdBase, ft = gHostFdBase + 0x1E00000;
+    const UINT64 ub = rt - 0x8000000, ut = rt;
+    const UINT64 ba = 0x10220000000ULL, ad = 0x10220004000ULL, sz = (UINT64)size;
+    unsigned cases = 0;
+#define HANDOFF(expect, b, a, s, fbase, ftop, ubase, utop, rbase, rtop, what) do { \
+      cases++; \
+      CHECK (J804BootHandoffIsSane (rbase, rtop, fbase, ftop, ubase, utop, b, a, s) == (expect), \
+             "boot hand-off: %s", what); } while (0)
+    HANDOFF (TRUE,  ba, ad, sz, fb, ft, ub, ut, rb, rt, "real J804 layout refused");
+    HANDOFF (TRUE,  ba, ad, J804_M1_ADT_COPY_MAX, fb, ft, ub, ut, rb, rt, "2 MiB ADT refused");
+    HANDOFF (FALSE, ba, ad, 0, fb, ft, ub, ut, rb, rt, "zero ADT size accepted");
+    HANDOFF (FALSE, ba, ad, J804_M1_ADT_COPY_MAX + 1, fb, ft, ub, ut, rb, rt, "ADT above the copy size accepted");
+    HANDOFF (FALSE, ba + 0x1000, ad, sz, fb, ft, ub, ut, rb, rt, "unaligned boot_args copy accepted");
+    HANDOFF (FALSE, ba, ad + 0x1000, sz, fb, ft, ub, ut, rb, rt, "unaligned ADT copy accepted");
+    HANDOFF (FALSE, ba, ba, sz, fb, ft, ub, ut, rb, rt, "ADT copy on the boot_args copy accepted");
+    HANDOFF (FALSE, ba, ad, sz, ba, ba + 0x1E00000, ub, ut, rb, rt, "copies inside the FD accepted");
+    HANDOFF (FALSE, ba, ad, sz, ad + 0x100000, ad + 0x1F00000, ub, ut, rb, rt, "ADT copy reaching the FD accepted");
+    HANDOFF (FALSE, ba, ad, sz, fb, ft, ba, ba + 0x8000000, rb, rt, "copies in the UEFI region accepted");
+    HANDOFF (FALSE, ba, ad, sz, fb, ft, ub, ut, ba + 0x4000, rt, "boot_args copy below RAM accepted");
+    HANDOFF (FALSE, ba, ad, sz, fb, ft, ub, ut, rb, ad + 0x100000, "ADT copy past the RAM top accepted");
+    HANDOFF (FALSE, MAX_UINT64 & ~0x3FFFULL, ad, sz, fb, ft, ub, ut, rb, rt, "wrapping boot_args copy accepted");
+    HANDOFF (FALSE, ba, ad, sz, fb, ft, ub, ut, rt, rb, "empty RAM accepted");
+#undef HANDOFF
+    printf ("boot hand-off check: %u cases, ADT 0x%llx bytes\n", cases, sz);
+  }
+
   printf ("%s (%d failures)\n", gFailures ? "FAILED" : "PASSED", gFailures);
   free (adt);
   return gFailures != 0;

@@ -146,6 +146,11 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"Mac??,?"|VOID*|0x0000100c
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemFamily|"Mac Placeholder"|VOID*|0x0000100d
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"Mac Placeholder (Year)"|VOID*|0x00001000e
+  # TRUE: SmbiosInfoDxe fills the Type 1/2/3 identity strings (model, product
+  # name, board and system serial numbers) from the ADT at run time, with the
+  # PcdSmbiosSystem* strings only as fallbacks. FALSE keeps the old static
+  # "Not Specified" strings. Identifiers are never compiled in.
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosLiftAdtIdentity|FALSE|BOOLEAN|0x00001013
 
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferWidth|1920|UINT32|0x00004401
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferHeight|1080|UINT32|0x00004402
