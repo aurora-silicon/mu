@@ -64,6 +64,8 @@ typedef struct {
   // Overrides; 0 = computed.
   UINT32    RangeOffset, RangeStride, PerfOffset, PerfStride, Total;
   UINT32    PerfPad;
+  UINT32    G1[11];        // 0xc0..0xec: ID words, CPU_CONTROL, CPU_STATUS
+  UINT8     G1Tail;        // written at 0xec
   UINT8     HeaderTail;    // written at 0xff
 } MODEL;
 
@@ -180,6 +182,11 @@ build (const MODEL *m, UINT8 *p)
   put (p, 0x70, m->DramBase, 8);
   put (p, 0x78, m->DramSize, 8);
   memcpy (p + 0x80, m->Receipt, 64);
+  for (int i = 0; i < 11; i++) {
+    put (p, 0xc0 + 4 * i, m->G1[i], 4);
+  }
+
+  p[0xec] = m->G1Tail;
   p[0xff] = m->HeaderTail;
   for (UINT32 i = 0; i < m->RangeCount && roff + (i + 1) * 32 <= 0x4000; i++) {
     UINT32  o = roff + i * 32;
@@ -262,6 +269,10 @@ test_valid (void)
   // Every state the carrier may set later is accepted (GPU0 still lists no
   // interrupt); bit 7 and above are not.
   MUTATE ("state 0x7f", J804GpuOk, m.State = 0x7f);
+  // G1 (carrier probe mode): powered, RUN guarded, MMIO forwarded,
+  // firmware mapped, with the power-on readings at 0xc0..0xec.
+  MUTATE ("G1 readings when powered", J804GpuOk, (m.State = 0x75, m.G1[0] = 0x12345678, m.G1[6] = 0xfff,
+                                                  m.G1[7] = 0x10, m.G1[8] = 0x10, m.G1[9] = 0xe, m.G1[10] = 0xe));
   MUTATE ("state admitted only", J804GpuOk, m.State = 0x1);
   MUTATE ("pool of half of RAM", J804GpuOk, (m.PoolBase = RAM_TOP - 0x80000000ULL, m.PoolSize = 0x80000000ULL,
                                              m.Ranges[13].Base = m.PoolBase, m.Ranges[13].Size = m.PoolSize));
@@ -285,6 +296,9 @@ test_refusals (void)
   MUTATE ("unknown state bit", J804GpuBadState, m.State = 0x83);
   MUTATE ("reserved word", J804GpuBadReserved, m.Reserved0 = 1);
   MUTATE ("header tail", J804GpuBadReserved, m.HeaderTail = 1);
+  MUTATE ("G1 readings before power-on", J804GpuBadReserved, (m.State = 0x3, m.G1[0] = 1));
+  MUTATE ("G1 CPU_STATUS before power-on", J804GpuBadReserved, (m.State = 0x3, m.G1[10] = 0xe));
+  MUTATE ("byte after the G1 fields", J804GpuBadReserved, (m.State = 0x75, m.G1[0] = 1, m.G1Tail = 1));
   MUTATE ("perf pad", J804GpuBadReserved, m.PerfPad = 1);
   MUTATE ("range pad", J804GpuBadReserved, m.Ranges[3].Pad = 1);
   MUTATE ("range offset", J804GpuBadLayout, m.RangeOffset = 0x120);

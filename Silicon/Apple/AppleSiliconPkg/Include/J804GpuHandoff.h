@@ -72,7 +72,17 @@
 #define J804_GPU_HO_DRAM_BASE     0x70
 #define J804_GPU_HO_DRAM_SIZE     0x78
 #define J804_GPU_HO_RECEIPT       0x80         // char[64], NUL padded
-#define J804_GPU_HO_RESERVED1     0xc0         // to the header end, zero
+//
+// G1 (carrier --windows-gpu probe) fields in the header's former spare tail:
+// what the carrier read after power-on. Zero until the powered state bit is
+// set; GPU0 does not use them, the G1 probe and the driver do.
+//
+#define J804_GPU_HO_GPU_ID        0xc0         // u32[7]: six GPU ID words and the core mask
+#define J804_GPU_HO_CPU_CONTROL   0xdc         // u32[2]: gfx-asc, gfx1-asc
+#define J804_GPU_HO_CPU_STATUS    0xe4         // u32[2]
+#define J804_GPU_HO_G1_END        0xec
+#define J804_GPU_ID_WORDS         7
+#define J804_GPU_HO_RESERVED1     0xec         // to the header end, zero
 
 //
 // Range classes (carrier enum gpu_class).
@@ -387,6 +397,17 @@ J804GpuParseHandoff (
   for (Index = J804_GPU_HO_RESERVED1; Index < J804_GPU_HANDOFF_HEADER; Index++) {
     if (Page[Index] != 0) {
       return J804GpuBadReserved;
+    }
+  }
+
+  //
+  // The G1 fields are the carrier's power-on readings: zero before it.
+  //
+  if ((Parsed.State & J804_GPU_S_POWERED) == 0) {
+    for (Index = J804_GPU_HO_GPU_ID; Index < J804_GPU_HO_G1_END; Index++) {
+      if (Page[Index] != 0) {
+        return J804GpuBadReserved;
+      }
     }
   }
 
