@@ -14,6 +14,9 @@
 // NVRAM (spi controller and NOR). usb-drd1's xHCI (D4, J804_WINDOWS_USB) is
 // not in this table: it is the separate SSDT SsdtXhc1.asl, which
 // J804XhciAcpiDxe installs only when the launcher's USB handshake is present.
+// Nor is the carrier-admitted GPU (G0, J804_WINDOWS_GPU): \_SB.GPU0 is the
+// SSDT template SsdtGpu0.asl, which J804GpuAcpiDxe patches from the carrier's
+// handoff page and installs only with the launcher's GPU handshake.
 //
 // Values shared with the carrier come from J804Windows.h.
 //

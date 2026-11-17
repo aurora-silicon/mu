@@ -162,7 +162,7 @@ VOID Main(IN VOID *StackBase, IN UINTN StackSize, IN VOID *DeviceTreePtr, IN UIN
         CpuDeadLoop();
     }
 
-    MuCheckpoint(0x12);
+    MuCheckpoint(0x12); J804_GPU_RESERVE_POOL_HOB ();
 
     //
     // Publish where m1n1 actually loaded us, for consumers in later phases.

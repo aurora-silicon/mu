@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# J804 \_SB.GPU0 SSDT template, only in J804_WINDOWS_GPU builds; patched from
+# the carrier's GPU handoff page and installed by J804GpuAcpiDxe only with a
+# valid /chosen GPU handshake.
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804Gpu0Ssdt
+  FILE_GUID = 3C230D00-9C66-4CA9-BCAA-614E034EAAC2
+  MODULE_TYPE = USER_DEFINED
+  VERSION_STRING = 1.0
+[Sources]
+  SsdtGpu0.asl
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec

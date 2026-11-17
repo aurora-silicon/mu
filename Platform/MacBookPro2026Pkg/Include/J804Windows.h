@@ -193,4 +193,31 @@
 //
 #define J804_USB_FD_MARKER_OFFSET    0x120
 
+//
+// G0: the carrier-admitted G18 GPU (windows-m6/WINDOWS-GPU-PLAN.md H10,
+// windows-m6/G0-CARRIER-CONTRACT.md). Only a J804_WINDOWS_GPU build uses
+// these. Unlike AHCI and USB, no address is part of the compiled contract:
+// the carrier lifts every GPU address, line and size from the live ADT, puts
+// them in a 16 KiB read-only handoff page outside guest RAM, and the launcher
+// writes /chosen/aura,windows-gpu-v1 (16 bytes: page IPA, page size) only
+// after the carrier's ADMIT returned 0. Layout, rules and parser:
+// AppleSiliconPkg/Include/J804GpuHandoff.h (PrePi reads it too).
+//
+//   - PrePi: with a valid page, lowers Mu's RAM top to the GPU pool base (the
+//     pool is the top of the guest RAM window, 32 MiB aligned, at most half
+//     of it) and describes the pool as reserved memory, so the UEFI memory
+//     map Windows gets reports it as EfiReservedMemoryType.
+//   - J804GpuAcpiDxe: re-validates the page and installs \_SB.GPU0 (its own
+//     SSDT, OEM table ID J804GPU0, patched from the page) with _HID
+//     J804_GPU0_HID, the sgx window, the GFX post-office page, the pool and
+//     the handoff page in _CRS, the handoff IPA in _DSD, no interrupt and no
+//     power methods.
+// Without the handshake, or with any check failing, the RAM is unchanged and
+// there is no GPU0. Mu never touches the GPU, the mailbox or the pool.
+//
+// J804_GPU0_HID is the project's own ID (owner decision D5): not an
+// AuroraSilicon NTAS ID, so none of their unaudited drivers can bind.
+//
+#define J804_GPU0_HID  "AGHN0001"
+
 #endif

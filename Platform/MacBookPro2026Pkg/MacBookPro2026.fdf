@@ -158,6 +158,13 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   INF MacBookPro2026Pkg/Drivers/J804XhciAcpiDxe/J804XhciAcpiDxe.inf
   INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Xhc1Ssdt.inf
 !endif
+!if $(J804_WINDOWS_GPU) == TRUE
+  # G0: \_SB.GPU0 in its own SSDT template, patched from the carrier's GPU
+  # handoff page and installed only with the /chosen GPU handshake
+  # (J804GpuAcpiDxe).
+  INF MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf
+  INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf
+!endif
   INF MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
   INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf
   INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf

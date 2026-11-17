@@ -69,6 +69,14 @@
   #   0x120. No Mu USB driver: Mu never touches the controller. Needs
   #   J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the AHCI image,
   #   unchanged.
+  # J804_WINDOWS_GPU: G0, the carrier-admitted G18 GPU (J804Windows.h,
+  #   AppleSiliconPkg J804GpuHandoff.h, windows-m6/G0-CARRIER-CONTRACT.md):
+  #   PrePi lowers the RAM top to the GPU pool and reserves the pool when the
+  #   launcher's /chosen GPU handshake names a valid carrier handoff page;
+  #   the \_SB.GPU0 SSDT template (J804Gpu0Ssdt) and J804GpuAcpiDxe, which
+  #   patches it from that page and installs it only then. Mu never touches
+  #   the GPU. Needs J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the
+  #   AHCI or USB image, unchanged.
   #
 !ifndef J804_WINDOWS_ANS
   DEFINE J804_WINDOWS_ANS = FALSE
@@ -85,9 +93,17 @@
 !ifndef J804_WINDOWS_USB
   DEFINE J804_WINDOWS_USB = FALSE
 !endif
+!ifndef J804_WINDOWS_GPU
+  DEFINE J804_WINDOWS_GPU = FALSE
+!endif
 !if $(J804_WINDOWS_USB) == TRUE
 !if $(J804_WINDOWS_AHCI) == FALSE
 !error "J804_WINDOWS_USB builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
+!endif
+!endif
+!if $(J804_WINDOWS_GPU) == TRUE
+!if $(J804_WINDOWS_AHCI) == FALSE
+!error "J804_WINDOWS_GPU builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
 !endif
 !endif
 !if $(SECURE_BOOT_ENABLE) == TRUE
@@ -131,9 +147,27 @@
   # J804_M1 in C selects the J804 memory and early-stop safety (PrePi RAM-top
   # checks, ADT reservations, boot hand-off check); J804_WINDOWS the windows
   # profile switches (BOOTAA64 ramdisk path, WD1 mapping, build marker).
-  # J804_WINDOWS_AHCI adds -DJ804_WINDOWS_AHCI=1 and J804_WINDOWS_USB
-  # -DJ804_WINDOWS_USB=1; without them the flags are exactly those of the
-  # M2/M3 builds.
+  # J804_WINDOWS_AHCI adds -DJ804_WINDOWS_AHCI=1, J804_WINDOWS_USB
+  # -DJ804_WINDOWS_USB=1 and J804_WINDOWS_GPU -DJ804_WINDOWS_GPU=1; without
+  # them the flags are exactly those of the M2/M3 builds (and without
+  # J804_WINDOWS_GPU exactly those of the AHCI and USB builds).
+!if $(J804_WINDOWS_GPU) == TRUE
+!if $(J804_WINDOWS_USB) == TRUE
+!if $(J804_WINDOWS_VUART) == TRUE
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_VUART=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_USB=1 -DJ804_WINDOWS_GPU=1
+!else
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_USB=1 -DJ804_WINDOWS_GPU=1
+!endif
+  GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_USB=1 -DJ804_WINDOWS_GPU=1
+!else
+!if $(J804_WINDOWS_VUART) == TRUE
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_VUART=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_GPU=1
+!else
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_GPU=1
+!endif
+  GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_GPU=1
+!endif
+!else
 !if $(J804_WINDOWS_USB) == TRUE
 !if $(J804_WINDOWS_VUART) == TRUE
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_VUART=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_USB=1
@@ -156,6 +190,7 @@
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1
 !endif
   GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1 -DJ804_WINDOWS=1
+!endif
 !endif
 !endif
   GCC:*_*_AARCH64_ASLPP_FLAGS = -DJ804_WINDOWS_ANS=$(J804_ASL_ANS) -DJ804_WINDOWS_SMC=$(J804_ASL_SMC) -DJ804_WINDOWS_VUART=$(J804_ASL_VUART) -DJ804_WINDOWS_AHCI=$(J804_ASL_AHCI)
@@ -246,4 +281,8 @@
 !if $(J804_WINDOWS_USB) == TRUE
   MacBookPro2026Pkg/AcpiTables/J804Xhc1Ssdt.inf
   MacBookPro2026Pkg/Drivers/J804XhciAcpiDxe/J804XhciAcpiDxe.inf
+!endif
+!if $(J804_WINDOWS_GPU) == TRUE
+  MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf
+  MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf
 !endif

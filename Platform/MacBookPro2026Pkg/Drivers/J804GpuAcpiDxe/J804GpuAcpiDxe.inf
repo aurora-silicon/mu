@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+# J804 windows profile, G0 GPU (J804_WINDOWS_GPU builds only): install the
+# \_SB.GPU0 SSDT (J804Gpu0Ssdt), patched from the carrier's read-only GPU
+# handoff page, only when the launcher's /chosen GPU handshake names a page
+# that validates and PrePi reserved the pool. Never touches the GPU.
+#
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804GpuAcpiDxe
+  FILE_GUID = 856EF555-D249-45F8-99D4-96F8ACDE4563
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J804GpuAcpiEntry
+
+[Sources]
+  J804GpuAcpiDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  AppleDTLib
+  ArmLib
+  BaseLib
+  DebugLib
+  DxeServicesLib
+  DxeServicesTableLib
+  MemoryAllocationLib
+  PcdLib
+  UefiBootServicesTableLib
+
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer
+
+[Protocols]
+  gEfiAcpiTableProtocolGuid
+
+[Depex]
+  gEfiAcpiTableProtocolGuid
