@@ -4781,8 +4781,14 @@ AcpiPlatformEntryPoint (
       TableSize = ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable)->Length;
       ASSERT (Size >= TableSize);
 
+      // A withheld table is released and skipped like any other: the next
+      // ReadSection must allocate afresh (CurrentTable == NULL) and read the
+      // next instance.  Without both it re-read this instance into the freed
+      // buffer and freed it again (boot 145, DxeCore Pool.c assert).
       if (!AppleCpuFreqTableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size)) {
         gBS->FreePool (CurrentTable);
+        CurrentTable = NULL;
+        Instance++;
         continue;
       }
       if (!AppleN1TableAdmitted ((EFI_ACPI_DESCRIPTION_HEADER *)CurrentTable, Size) ||
