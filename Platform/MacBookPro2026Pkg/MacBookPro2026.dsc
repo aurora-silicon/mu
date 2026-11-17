@@ -62,8 +62,13 @@
   #   SataControllerDxe, AtaAtapiPassThru, AtaBusDxe, J804AhciDxe), which
   #   acts only when the launcher's /chosen handshake is present. FALSE = the
   #   M2/M3 image, unchanged.
-  # J804_WINDOWS_USB: refused until the USB prerequisite of PLAN 0.6 holds
-  #   (aura->guest ownership hand-off, coherent Gen3 DART identity maps).
+  # J804_WINDOWS_USB: D4, usb-drd1's xHCI passed through by the carrier
+  #   (J804Windows.h, windows-m6/D4-USB-DESIGN.md): the \_SB.XHC1 SSDT
+  #   (J804Xhc1Ssdt), J804XhciAcpiDxe, which installs it only when the
+  #   launcher's /chosen USB handshake is present, and the FD marker block at
+  #   0x120. No Mu USB driver: Mu never touches the controller. Needs
+  #   J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the AHCI image,
+  #   unchanged.
   #
 !ifndef J804_WINDOWS_ANS
   DEFINE J804_WINDOWS_ANS = FALSE
@@ -81,7 +86,9 @@
   DEFINE J804_WINDOWS_USB = FALSE
 !endif
 !if $(J804_WINDOWS_USB) == TRUE
-!error "J804_WINDOWS_USB: the USB prerequisite (PLAN 0.6) is not met; USB stays hidden"
+!if $(J804_WINDOWS_AHCI) == FALSE
+!error "J804_WINDOWS_USB builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
+!endif
 !endif
 !if $(SECURE_BOOT_ENABLE) == TRUE
 !error "The J804 windows profile builds with SECURE_BOOT_ENABLE = FALSE"
@@ -124,8 +131,17 @@
   # J804_M1 in C selects the J804 memory and early-stop safety (PrePi RAM-top
   # checks, ADT reservations, boot hand-off check); J804_WINDOWS the windows
   # profile switches (BOOTAA64 ramdisk path, WD1 mapping, build marker).
-  # J804_WINDOWS_AHCI adds -DJ804_WINDOWS_AHCI=1; without it the flags are
-  # exactly those of the M2/M3 builds.
+  # J804_WINDOWS_AHCI adds -DJ804_WINDOWS_AHCI=1 and J804_WINDOWS_USB
+  # -DJ804_WINDOWS_USB=1; without them the flags are exactly those of the
+  # M2/M3 builds.
+!if $(J804_WINDOWS_USB) == TRUE
+!if $(J804_WINDOWS_VUART) == TRUE
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_VUART=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_USB=1
+!else
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_USB=1
+!endif
+  GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1 -DJ804_WINDOWS_USB=1
+!else
 !if $(J804_WINDOWS_AHCI) == TRUE
 !if $(J804_WINDOWS_VUART) == TRUE
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_VUART=1 -DJ804_WINDOWS_AHCI=1
@@ -140,6 +156,7 @@
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1
 !endif
   GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1 -DJ804_WINDOWS=1
+!endif
 !endif
   GCC:*_*_AARCH64_ASLPP_FLAGS = -DJ804_WINDOWS_ANS=$(J804_ASL_ANS) -DJ804_WINDOWS_SMC=$(J804_ASL_SMC) -DJ804_WINDOWS_VUART=$(J804_ASL_VUART) -DJ804_WINDOWS_AHCI=$(J804_ASL_AHCI)
 
@@ -225,4 +242,8 @@
   MdeModulePkg/Bus/Ata/AtaAtapiPassThru/AtaAtapiPassThru.inf
   MdeModulePkg/Bus/Ata/AtaBusDxe/AtaBusDxe.inf
   MacBookPro2026Pkg/Drivers/J804AhciDxe/J804AhciDxe.inf
+!endif
+!if $(J804_WINDOWS_USB) == TRUE
+  MacBookPro2026Pkg/AcpiTables/J804Xhc1Ssdt.inf
+  MacBookPro2026Pkg/Drivers/J804XhciAcpiDxe/J804XhciAcpiDxe.inf
 !endif

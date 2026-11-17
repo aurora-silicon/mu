@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+# J804 windows profile, D4 (J804_WINDOWS_USB builds only): install the
+# \_SB.XHC1 SSDT (J804Xhc1Ssdt) only when the launcher's /chosen USB
+# handshake says the carrier passes usb-drd1's xHCI through. Never touches
+# the controller.
+#
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804XhciAcpiDxe
+  FILE_GUID = FE59F79D-F8BE-456D-995C-6A2DD11E512B
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J804XhciAcpiEntry
+
+[Sources]
+  J804XhciAcpiDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  AcpiLib
+  AppleDTLib
+  ArmLib
+  BaseLib
+  DebugLib
+  DxeServicesTableLib
+  MemoryAllocationLib
+  PcdLib
+
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
+
+[Protocols]
+  gEfiAcpiTableProtocolGuid
+
+[Depex]
+  gEfiAcpiTableProtocolGuid

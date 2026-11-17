@@ -10,8 +10,10 @@
 //
 // Deliberately NOT described, whatever a driver might want: speaker amps,
 // i2c1, i2c3, AOP, ADMAC, the hpm USB-PD port controllers, GPIO pin 0xca
-// (193), the USB-C xHCI controllers (until the USB prerequisite of PLAN 0.6
-// holds), and anything that reaches the QSPI NVRAM (spi controller and NOR).
+// (193), the USB-C xHCI controllers, and anything that reaches the QSPI
+// NVRAM (spi controller and NOR). usb-drd1's xHCI (D4, J804_WINDOWS_USB) is
+// not in this table: it is the separate SSDT SsdtXhc1.asl, which
+// J804XhciAcpiDxe installs only when the launcher's USB handshake is present.
 //
 // Values shared with the carrier come from J804Windows.h.
 //

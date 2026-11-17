@@ -41,6 +41,19 @@ DATA = {
 }
 !endif
 
+!if $(J804_WINDOWS_USB) == TRUE
+# D4 USB contract marker (J804Windows.h J804_USB_FD_MARKER_OFFSET), read by
+# the launcher before it attaches USB: "J804USB1", u32 J804_XHC1_BASE >> 12
+# (0x40A430), u32 J804_GSIV_XHC1 (995). Little-endian. Absent (0xFF) in
+# non-USB builds. 0x130 is kept for a later usb-drd3 marker.
+0x000000120|0x000000010
+DATA = {
+  0x4a, 0x38, 0x30, 0x34, 0x55, 0x53, 0x42, 0x31, # "J804USB1"
+  0x30, 0xa4, 0x40, 0x00,                         # 0x40A430000 >> 12
+  0xe3, 0x03, 0x00, 0x00                          # GSIV 995
+}
+!endif
+
 0x000008000|0x001DF8000
 gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
 FV = FVMAIN_COMPACT
@@ -138,6 +151,12 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804AcpiTables.inf
 !if $(J804_WINDOWS_VUART) == TRUE
   INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Dbg2Table.inf
+!endif
+!if $(J804_WINDOWS_USB) == TRUE
+  # D4: \_SB.XHC1 in its own SSDT, installed only with the /chosen USB
+  # handshake (J804XhciAcpiDxe).
+  INF MacBookPro2026Pkg/Drivers/J804XhciAcpiDxe/J804XhciAcpiDxe.inf
+  INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Xhc1Ssdt.inf
 !endif
   INF MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
   INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf

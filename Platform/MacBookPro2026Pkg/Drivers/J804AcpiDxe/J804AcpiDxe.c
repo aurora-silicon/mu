@@ -61,6 +61,17 @@ J804AcpiEntry (
   }
 #endif
 
+#if defined (J804_WINDOWS_USB)
+  DEBUG ((
+    DEBUG_INFO,
+    "J804_WINDOWS_ACPI: 12 CPUs (cpu6 first), vGIC 0x%lx/0x%lx, timer %u/%u, XHC1 left to J804XhciAcpiDxe: %r\n",
+    (UINT64)J804_GICD_BASE,
+    (UINT64)J804_GICR_BASE,
+    J804_TIMER_P_INTID,
+    J804_TIMER_V_INTID,
+    Status
+    ));
+#else
   DEBUG ((
     DEBUG_INFO,
     "J804_WINDOWS_ACPI: 12 CPUs (cpu6 first), vGIC 0x%lx/0x%lx, timer %u/%u, no USB: %r\n",
@@ -70,5 +81,6 @@ J804AcpiEntry (
     J804_TIMER_V_INTID,
     Status
     ));
+#endif
   return Status;
 }

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# J804 \_SB.XHC1 SSDT, only in J804_WINDOWS_USB builds; installed by
+# J804XhciAcpiDxe only with a valid /chosen USB handshake.
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804Xhc1Ssdt
+  FILE_GUID = F6D32646-0922-4EF3-8337-F5780E98B345
+  MODULE_TYPE = USER_DEFINED
+  VERSION_STRING = 1.0
+[Sources]
+  SsdtXhc1.asl
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec

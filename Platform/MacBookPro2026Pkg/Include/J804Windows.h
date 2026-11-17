@@ -144,4 +144,53 @@
 //
 #define J804_AHCI_FD_MARKER_OFFSET    0x110
 
+//
+// D4: USB keyboard and mouse (windows-m6/D4-USB-DESIGN.md). Only a
+// J804_WINDOWS_USB build uses these. The carrier passes usb-drd1's xHCI
+// register window through to the guest (stage 2 maps exactly these two
+// 16 KiB pages, IPA == PA, Device-nGnRnE; the dwc3 globals at +0xc100, the
+// PHY, the DART and everything else of the port stay denied), aliases AIC
+// 1692 to the level SPI J804_GSIV_XHC1, and maps exactly the guest RAM
+// window in a coherent Gen3 DART identity map of its own (DVA == IPA == PA),
+// invisible to the guest. Mu never touches the controller: it only publishes
+// \_SB.XHC1 (PNP0D10) for Windows' usbxhci, in an SSDT that J804XhciAcpiDxe
+// installs only when the launcher's handshake below is present and valid.
+// usb-drd0 (0x402430000) is the proxy link to the host and is never
+// described; usb-drd3 (J804_XHC2_BASE, GSIV 997) is not in this build.
+//
+#define J804_XHC1_BASE         0x40A430000   // usb-drd1 xHCI (dwc3 +0x0..+0x7FFF)
+#define J804_XHC2_BASE         0x412430000   // usb-drd3, not described by any build yet
+#define J804_XHC_SIZE          0x8000        // two 16 KiB stage-2 pages
+
+//
+// Run-time handshake: the launcher writes this /chosen property into the
+// guest ADT only after the carrier's USB ATTACH succeeded (stage-2 window
+// mapped, alias owned, DART identity map live). Without it, or with any value
+// that differs from this contract, J804XhciAcpiDxe installs no XHC1 SSDT, so
+// Windows never touches the xHCI window. Little-endian, 40 bytes:
+//   +0x00 u32 port mask: exactly J804_USB_PORT_DRD1 (bit 1 = usb-drd1; the
+//             ATTACH argument; bit 3 = usb-drd3 is refused by this build)
+//   +0x04 u32 GSIV (J804_GSIV_XHC1)
+//   +0x08 u64 xHCI base (J804_XHC1_BASE)
+//   +0x10 u64 xHCI size (J804_XHC_SIZE)
+//   +0x18 u64 DMA window base: first byte the carrier's DART maps (DVA == PA)
+//   +0x20 u64 DMA window top (exclusive). The window must be non-empty,
+//             16 KiB aligned at both ends and clear of the xHCI window; Mu
+//             also requires every byte of RAM in its GCD map to lie inside
+//             it and the window to be clear of the AHCI store named in
+//             /chosen/aura,windows-ahci-v1 (when that property is present).
+//
+#define J804_USB_ADT_PROPERTY        "aura,windows-usb-v1"
+#define J804_USB_ADT_PROPERTY_SIZE   40
+#define J804_USB_PORT_DRD1           0x2
+#define J804_USB_PORT_DRD3           0x8
+
+//
+// Raw FD marker (MacBookPro2026.fdf region 0x120|0x10, USB builds only),
+// read by the launcher before it attaches USB: "J804USB1", u32
+// J804_XHC1_BASE >> 12, u32 J804_GSIV_XHC1. A non-USB FD has 0xFF there.
+// 0x130 is kept for a later usb-drd3 marker ("J804USB3").
+//
+#define J804_USB_FD_MARKER_OFFSET    0x120
+
 #endif
