@@ -82,6 +82,17 @@ AHCI_FD_MARKER = b'J804AHC1' + struct.pack('<II', 0xF40000000 >> 12, 990)
 AHCI_FV_DRIVERS = ('NonDiscoverablePciDeviceDxe', 'SataController', 'AtaAtapiPassThruDxe',
                    'AtaBusDxe', 'J804AhciDxe')
 AHCI_MARKERS = ['J804_WINDOWS_AHCI: BootNext=Boot', 'J804_WINDOWS_AHCI refused']
+# The D4 USB build (J804_WINDOWS_USB=TRUE): Device (\_SB.XHC1) in its own
+# platform SSDT (OEM table ID J804XHC1), never in the DSDT; the raw contract
+# marker at FD offset 0x120 ("J804USB1", xHCI base >> 12, GSIV; J804Windows.h)
+# and J804XhciAcpiDxe, which installs the SSDT only with the /chosen USB
+# handshake. A non-USB FD has none of them and 0xFF at the marker offset.
+USB_FLAG = 'J804_WINDOWS_USB'
+USB_FD_MARKER_OFFSET = 0x120
+USB_FD_MARKER = b'J804USB1' + struct.pack('<II', 0x40A430000 >> 12, 995)
+USB_SSDT_OEM_TABLE_ID = b'J804XHC1'
+USB_FV_DRIVERS = ('J804XhciAcpiDxe',)
+USB_MARKERS = ['J804_WINDOWS_USB: XHC1 published', 'J804_WINDOWS_USB refused']
 # DBG2's namespace string for the vUART (ASCII, NUL-terminated; ACPI 6.4 DBG2
 # Device Information structure, NamespaceString).
 DBG2_COM0 = b'\\_SB.COM0\0'
@@ -294,11 +305,15 @@ def main():
     ahci = flags.get(AHCI_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
     if ahci == 'TRUE':
         wanted += AHCI_MARKERS
+    usb = flags.get(USB_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
+    if usb == 'TRUE':
+        wanted += USB_MARKERS
     markers = {}
     for marker in wanted:
         markers[marker] = [p.name for p in top if find_strings(p.read_bytes(), marker)]
     if args.profile in ('j804-m1', 'j804-windows'):
-        for marker in MARKERS[args.profile] + (AHCI_MARKERS if ahci == 'TRUE' else []):
+        for marker in (MARKERS[args.profile] + (AHCI_MARKERS if ahci == 'TRUE' else [])
+                       + (USB_MARKERS if usb == 'TRUE' else [])):
             if not markers[marker]:
                 failures.append(f'marker {marker!r} not found in any PE')
 
@@ -351,6 +366,22 @@ def main():
             if (ahci == 'TRUE') != ahc0:
                 failures.append(f'{AHCI_FLAG}={ahci} but the DSDT '
                                 + ('declares' if ahc0 else 'lacks') + ' Device (\\_SB.AHC0)')
+        # XHC1 only ever in the J804XHC1 SSDT, which only a USB build carries.
+        ssdt = list({t['blob'] for t in acpi if t['signature'] == 'SSDT'})
+        if len(dsdt) == 1 and dsdt_has_sb_device(dsdt[0], 'XHC1'):
+            failures.append('the DSDT declares Device (\\_SB.XHC1); it belongs in the gated SSDT')
+        if usb not in ('TRUE', 'FALSE'):
+            failures.append(f'--build-flag {USB_FLAG}=TRUE|FALSE expected, got {usb!r}')
+        elif usb == 'TRUE':
+            if len(ssdt) != 1:
+                failures.append(f'{USB_FLAG}=TRUE but FVMAIN carries {len(ssdt)} platform SSDTs, '
+                                'expected exactly 1')
+            elif (ssdt[0][16:24] != USB_SSDT_OEM_TABLE_ID
+                  or not dsdt_has_sb_device(ssdt[0], 'XHC1')):
+                failures.append(f'{USB_FLAG}=TRUE but the platform SSDT is not the '
+                                'J804XHC1 table declaring Device (\\_SB.XHC1)')
+        elif ssdt:
+            failures.append(f'{USB_FLAG}=FALSE but FVMAIN carries {len(ssdt)} platform SSDTs')
     if leaks:
         failures.append(f'{len(leaks)} build-host paths in PE files or ACPI tables')
 
@@ -366,6 +397,17 @@ def main():
         for driver in AHCI_FV_DRIVERS:
             if (ahci == 'TRUE') != (driver in names):
                 failures.append(f'{AHCI_FLAG}={ahci} but FVMAIN '
+                                + ('carries ' if driver in names else 'lacks ') + driver)
+    if usb in ('TRUE', 'FALSE'):
+        marker = data[USB_FD_MARKER_OFFSET:USB_FD_MARKER_OFFSET + len(USB_FD_MARKER)]
+        expected = USB_FD_MARKER if usb == 'TRUE' else b'\xff' * len(USB_FD_MARKER)
+        if marker != expected:
+            failures.append(f'{USB_FLAG}={usb} but FD offset 0x{USB_FD_MARKER_OFFSET:x} '
+                            f'holds {marker.hex()} (expected {expected.hex()})')
+        names = {f['name'] for f in fvmain}
+        for driver in USB_FV_DRIVERS:
+            if (usb == 'TRUE') != (driver in names):
+                failures.append(f'{USB_FLAG}={usb} but FVMAIN '
                                 + ('carries ' if driver in names else 'lacks ') + driver)
     startup = [f for f in fvmain if f['name'] == 'startup.nsh']
     startup_text = None

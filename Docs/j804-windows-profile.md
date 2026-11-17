@@ -26,6 +26,13 @@ WM6_OUTPUT_ROOT=../out/j804-windows-ahci sh Tools/build-j804-windows.sh`.
 With `J804_WINDOWS_AHCI` FALSE (the default) the FDs are byte-identical to
 those built before the flag existed.
 
+The D4 USB variant (usb-drd1's xHCI passed through, see below) is
+`WM6_CLEAN=1 WM6_J804_VUART=TRUE WM6_J804_AHCI=TRUE WM6_J804_USB=TRUE
+WM6_OUTPUT_ROOT=../out/j804-windows-usb sh Tools/build-j804-windows.sh`
+(`WM6_J804_USB` needs `WM6_J804_AHCI`). With `J804_WINDOWS_USB` FALSE the
+default, vUART and AHCI FDs are byte-identical to those built before the flag
+existed.
+
 Status: built and host-tested only. Nothing here has run on hardware.
 
 ## What the image does
@@ -46,7 +53,8 @@ Status: built and host-tested only. Nothing here has run on hardware.
 - Serial is the Null library unless the build sets `J804_WINDOWS_VUART`.
 - Variables are RAM-only (`PcdEmuVariableNvModeEnable`), Secure Boot is off,
   there is no driver for any real storage device, no USB driver and no NVRAM
-  access. Only a `J804_WINDOWS_AHCI` build carries an ATA stack, and it only
+  access (a `J804_WINDOWS_USB` build only describes usb-drd1 to Windows; Mu
+  never touches it). Only a `J804_WINDOWS_AHCI` build carries an ATA stack, and it only
   ever talks to the carrier's emulated AHCI HBA (next section).
 - `J804AcpiDxe` installs the ACPI tables only at EL1, on cpu6 (MPIDR
   0x10100), on a J804 ADT.
@@ -119,6 +127,48 @@ A `J804_WINDOWS_AHCI=TRUE` build adds:
   `Tests/test_j804_windows_acpi_contract.py`. The manifest checks AHC0, the
   marker and the five drivers against the `J804_WINDOWS_AHCI` build flag.
 
+## D4: usb-drd1's xHCI for Windows (`J804_WINDOWS_USB`)
+
+Contract: `windows-m6/D4-USB-DESIGN.md` and `J804Windows.h` (`J804_XHC*`,
+`J804_GSIV_XHC1`, `J804_USB_*`). The carrier passes usb-drd1's xHCI register
+window [0x40A430000, 0x40A438000) through (two 16 KiB stage-2 pages, IPA ==
+PA; the dwc3 globals at +0xc100, the PHY, the DART and the rest of the port
+stay denied), aliases AIC 1692 to the level SPI 995, keeps the dwc3 in the
+USB2 host state aura's `j804_usb_prep` leaves, and maps exactly the guest RAM
+window in a coherent Gen3 DART identity map that the guest cannot see.
+usb-drd0 (the proxy link) is never described; usb-drd3 is not in this build
+(0x130 is kept for its marker).
+
+A `J804_WINDOWS_USB=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
+- `\_SB.XHC1` in its own SSDT (`AcpiTables/SsdtXhc1.asl`, OEM table ID
+  `J804XHC1`, FFS `J804Xhc1Ssdt` F6D32646-0922-4EF3-8337-F5780E98B345), not in
+  the DSDT: `_HID` PNP0D10 (usbxhci), `_UID` 1, `_CCA` 1, `_STA` 0xF,
+  QWordMemory 0x40A430000-0x40A437FFF (0x8000) and Interrupt {995} level,
+  active-high, exclusive. No `_PSx`, `_PRx`, `_PRW`, `_DSW` or `_S0W`:
+  Windows has no ACPI way to power the controller off, and without `_S0W` it
+  is not wake-capable in S0. No `_DSD`, `_DMA` or MSI.
+- `J804XhciAcpiDxe`, which installs that SSDT only at EL1 on cpu6 of a J804
+  and only when the launcher wrote `/chosen/aura,windows-usb-v1` (40 bytes,
+  little-endian: u32 port mask = 0x2 (bit 1 = usb-drd1), u32 GSIV 995, u64
+  xHCI base 0x40A430000, u64 xHCI size 0x8000, u64 DMA window base, u64 DMA
+  window top; the window non-empty, 16 KiB aligned and clear of the xHCI
+  window) after the carrier's USB ATTACH. It also refuses when any RAM in
+  the GCD map lies outside the DMA window (a DMA buffer there would fault in
+  the DART), when the xHCI window is RAM in the GCD map, and when the DMA
+  window overlaps the AHCI store of `/chosen/aura,windows-ahci-v1` (or that
+  property is malformed). Without the property, or with any refusal, Windows
+  sees no XHC1 and never touches the xHCI window, so a USB FD is safe under
+  a launcher with USB off.
+- A raw marker at FD offset 0x120: `"J804USB1"`, u32 0x0040A430 (xHCI base
+  >> 12), u32 995, for the launcher to check before it attaches USB.
+  Non-USB FDs have 0xFF there.
+- Host tests: `Tools/HostTests/J804UsbHandshake` (the property parser and the
+  range helpers, ASan/UBSan) and the XHC1/marker/DSC/SSDT checks in
+  `Tests/test_j804_windows_acpi_contract.py` (the SSDT is also compiled on
+  its own with `cc -E` and `iasl`). The manifest checks the SSDT (exactly one
+  platform SSDT, `J804XHC1`, declaring `\_SB.XHC1`), no XHC1 in the DSDT,
+  the marker and the driver against the `J804_WINDOWS_USB` build flag.
+
 ## ACPI tables
 
 | Table | Content |
@@ -129,11 +179,12 @@ A `J804_WINDOWS_AHCI=TRUE` build adds:
 | FADT | HW_REDUCED_ACPI, PSCI compliant (SMC), PreferredPmProfile MOBILE, no low-power S0 idle |
 | DBG2 | only with `J804_WINDOWS_VUART`: \_SB.COM0 at 0x331200000 |
 | DSDT AHC0 | only with `J804_WINDOWS_AHCI`: NTAS2010, `_CLS` 01/06/01, `_CCA` 1, ABAR 0xF40000000/0x4000, GSIV 990 level/high |
+| SSDT J804XHC1 | only with `J804_WINDOWS_USB`, installed only with the `/chosen/aura,windows-usb-v1` handshake: `\_SB.XHC1` PNP0D10, `_UID` 1, `_CCA` 1, 0x40A430000/0x8000, GSIV 995 level/high, no power methods |
 
 Not described, by design: speaker amps, i2c1, i2c3, AOP, ADMAC, the hpm
-USB-PD controllers, GPIO 0xca (193), the xHCI controllers, the QSPI NVRAM
-(spi controller and NOR). `J804_WINDOWS_USB=TRUE` is refused by the DSC
-until the USB prerequisite of PLAN 0.6 holds.
+USB-PD controllers, GPIO 0xca (193), the xHCI controllers (except XHC1 in
+the gated SSDT of a `J804_WINDOWS_USB` build), the QSPI NVRAM (spi
+controller and NOR).
 
 ANS mailbox: 0x316020300 is the Linux-proven post-office window 3 (our
 `t8152-j804.dts` ans_mbox, IRQs 302/262). It is not taken from the live ADT,
@@ -162,7 +213,7 @@ must match the carrier; neither side can discover the other's choice.
 | vGIC bases | GICD 0xF00000000, GICR 0xF10000000 (frames 0x20000) | `hv_vgicv3_init` T8152 case with `DIST_BASE_36_BIT`/`REDIST_BASE_36_BIT` (present in aura-win `j804-windows`, hv_vgic.c T8152 case; not run) |
 | Redistributors | static: 12 GICCs all ENABLED, 12 x 0x20000 discovery range | one dense frame per live CPU, `GICR_TYPER.Last` on the last; affinity from `smp_get_mpidr`. The carrier sizes the vGIC to `hv_vgic_live_cpu_count()`, so it must **refuse** a T8152 Windows launch unless all 12 CPUs are live (there is no live mask Mu could patch the MADT from). Not implemented in aura-win yet |
 | Timers | INTID 17 (phys), 18 (virt) | `HV_GIC_TIMER_P_INTID`/`_V_INTID` 17/18 |
-| AIC aliases | GSIV 995/996/997 | `hv_aic_alias` T8152 table {995, 1692}, {996, 1349}, {997, 1834}; 995/997 only once USB exists |
+| AIC aliases | GSIV 995/996/997 | `hv_aic_alias` T8152 table {995, 1692}, {996, 1349}, {997, 1834}; 995 only while the USB ATTACH holds, 997 not used by any build |
 | PSCI | SMC conduit; CPU_ON by MPIDR | CPU_ON = spin-table release, CPU_OFF = park (never a power-off), SYSTEM_RESET = NVMe shutdown then WD1, SYSTEM_OFF = no power-off |
 | Timer reflection | `smc #0` with x0 = "NTAIC" | the existing NTAIC handler, AIC3 slots at NumIrqs (0x960 on J804) minus 2 x slots |
 | Sysreg forwarding | `hvc #0` with x0 = "NTSRG" | the existing NTSRG handler |
@@ -170,6 +221,7 @@ must match the carrier; neither side can discover the other's choice.
 | RAM top | PrePi stops above 0x1059d600000 | guest_ram top (the boot_args RAM top the guest sees) <= 0x1059d600000 |
 | FD | 0x1E00000 bytes, entry at offset 0, 64 KiB aligned | `run_guest.py -r -E 0`, placed outside CTXR_D |
 | AHCI disk (D1, AHCI builds) | ABAR 0xF40000000/0x4000, GSIV 990 level/high, `_CCA` 1; FD marker at 0x110; acts only on `/chosen/aura,windows-ahci-v1` | hook the ABAR page (never map it), deliver SPI 990 as a level through GICD_IROUTER, keep the store outside guest RAM and stage 2; write the 40-byte property only after ATTACH; refuse an AHCI FD (marker present) without an attached disk |
+| USB (D4, USB builds) | XHC1 0x40A430000/0x8000, GSIV 995 level/high, `_CCA` 1, no power methods; FD marker at 0x120; XHC1 SSDT installed only on `/chosen/aura,windows-usb-v1` | map exactly [0x40A430000, 0x40A438000) Device-nGnRnE IPA == PA, nothing else of usb-drd1; alias AIC 1692 to level SPI 995; coherent Gen3 DART identity map of exactly the DMA window it writes into the property (the guest RAM window, never the AHCI store or carrier memory); dwc3 left as `j804_usb_prep` sets it; write the 40-byte property only after ATTACH succeeded, with port mask 0x2; refuse a USB FD (marker present) without ATTACH and `--windows-usb drd1` with an FD lacking the marker |
 | Stage 2 | the default build enables no MMIO device: only guest RAM, the framebuffer shadow, AIC3 and the hooked vGIC window are used (SMC0 `_STA` 0, no ANS0) | aura-win's real policy: an allowlist of the guest RAM window, carrier-registered pages (BGRA shadow, read-only ADT alias) and the AIC (Device-nGnRnE), plus hooked MMIO; an ADT denylist (qspi, sep, aop, admac, i2c, audio, gpio, wdt, pmgr, spmi, dart, sart, ans, smc, mtp, spi, dcp, sio, usb-drd0, 0x331118000, region-id-218/-4) checked at map time and before entry; HCR_EL2.TWI set. Enabling SMC0 or ANS0 needs an explicit carrier allowlist (ANS: trapped windows only, see above) |
 
 ## Not verified
@@ -188,6 +240,10 @@ must match the carrier; neither side can discover the other's choice.
   ANS0 enabled (no J804 NVMe driver exists; AuroraSilicon AppleNvme is
   reference-only and hard-codes J873).
 - Whether a Windows debugger transport exists for the DBG2 port subtype.
+- D4: usbxhci on this dwc3 through the carrier's passthrough and DART map,
+  Windows' ACPI handling of an SSDT-only XHC1, and whether the GCD RAM check
+  of `J804XhciAcpiDxe` matches the RAM PrePi describes under the AHCI launch
+  (it fails closed: no XHC1, with a log line).
 - D1: AtaAtapiPassThru, AtaBusDxe and storahci against the carrier's model;
   whether CpuDxe maps the GCD-added ABAR as expected on this TIANO
   (ArmSetMemoryAttributes on an unmapped range); `NTAS2010` against the IDs

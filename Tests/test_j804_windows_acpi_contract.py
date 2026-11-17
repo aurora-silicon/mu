@@ -18,23 +18,33 @@ with the EL2 carrier in Platform/MacBookPro2026Pkg/Include/J804Windows.h:
     twelve ACPI0007 CPUs, SMC0 NTAS2032 with _STA 0 because the T8152
     carrier denies the SMC pages, no ANS0; COM0 only in a J804_WINDOWS_VUART
     build, AHC0 only in a J804_WINDOWS_AHCI build), and none of the
-    forbidden blocks (USB controllers, i2c1/i2c3, the J873 ANS mailbox page,
+    forbidden blocks (USB controllers: XHC1 is never in the DSDT, i2c1/i2c3,
+    the J873 ANS mailbox page,
     the QSPI/NVRAM controller, the PMGR SPI/QSPI power states, the DCP
     mailbox). ANS0 checks run only on a J804_WINDOWS_ANS build.
   * AHC0 (D1, J804_WINDOWS_AHCI build): NTAS2010, _CLS 01/06/01, _CCA 1,
     _STA 0xF, one QWord memory range = the ABAR page of J804Windows.h and one
     level, active-high interrupt = J804_GSIV_AHCI.
+  * XHC1 (D4, J804_WINDOWS_USB build): the only platform SSDT, OEM table ID
+    J804XHC1, declaring just \_SB.XHC1: PNP0D10, _UID 1, _CCA 1, _STA 0xF,
+    one QWord memory range = the two xHCI pages of usb-drd1 and one level,
+    active-high interrupt = J804_GSIV_XHC1, no power or wake methods. A
+    non-USB build has no platform SSDT.
 
 The build flags come from the stamp Tools/build-j804-windows.sh writes in
 the build tree (all FALSE when it is missing). Skips when no build is
-present. The D1 contract checks between J804Windows.h, the FDF marker block
-and the DSC need no build. Host-only.
+present. The D1 and D4 contract checks between J804Windows.h, the FDF marker
+blocks and the DSC need no build; the D4 SSDT is also compiled on its own
+with cc -E and iasl when both are installed. Host-only.
 """
 
 from __future__ import annotations
 
 import re
+import shutil
 import struct
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -46,6 +56,8 @@ J804M1_H = REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "Include" / "J804M1.
 FLAGS_STAMP = REPO / "Build" / "MacBookPro2026-AARCH64" / ".wm6-j804-windows-flags"
 FDF = REPO / "Platform" / "MacBookPro2026Pkg" / "MacBookPro2026.fdf"
 DSC = REPO / "Platform" / "MacBookPro2026Pkg" / "MacBookPro2026.dsc"
+ACPI_SRC = REPO / "Platform" / "MacBookPro2026Pkg" / "AcpiTables"
+SSDT_XHC1 = ACPI_SRC / "SsdtXhc1.asl"
 
 CPU_MPIDR = {0: 0x0, 1: 0x1, 2: 0x2, 3: 0x3, 4: 0x4, 5: 0x5,
              6: 0x10100, 7: 0x10101,
@@ -60,8 +72,8 @@ CPU_EFFICIENCY = {**{m: EFF_E for m in range(6)},
 
 # Physical blocks that must never appear in a J804 windows DSDT.
 FORBIDDEN_QWORDS = {
-    0x40A430000: "usb-drd1 xHCI (USB prerequisite not met)",
-    0x412430000: "usb-drd3 xHCI (USB prerequisite not met)",
+    0x40A430000: "usb-drd1 xHCI (only in the gated J804XHC1 SSDT)",
+    0x412430000: "usb-drd3 xHCI (no build describes it)",
     0x402430000: "usb-drd0 (aura console/proxy port)",
     0x331014000: "i2c1",
     0x33101C000: "i2c3",
@@ -72,10 +84,15 @@ FORBIDDEN_QWORDS = {
     0x316020500: "DCP mailbox (shared post-office page)",
 }
 
+# Methods XHC1 must not have: power states, power resources, wake (D4).
+XHC1_FORBIDDEN_METHODS = (b"_PS0", b"_PS1", b"_PS2", b"_PS3", b"_PSC", b"_PR0", b"_PR2",
+                          b"_PR3", b"_PRW", b"_DSW", b"_S0W", b"_S3W", b"_S4W", b"_S0D",
+                          b"_S3D", b"_S4D", b"_RMV", b"_EJ0")
 
 
 def build_flags() -> dict[str, bool]:
-    flags = {"J804_WINDOWS_ANS": False, "J804_WINDOWS_VUART": False, "J804_WINDOWS_AHCI": False}
+    flags = {"J804_WINDOWS_ANS": False, "J804_WINDOWS_VUART": False, "J804_WINDOWS_AHCI": False,
+             "J804_WINDOWS_USB": False}
     if FLAGS_STAMP.is_file():
         for item in FLAGS_STAMP.read_text().split():
             name, _, value = item.partition("=")
@@ -101,6 +118,21 @@ def find_table(signature: str) -> bytes:
             if blob[:4] == signature.encode():
                 return blob
     raise FileNotFoundError(signature)
+
+
+def find_tables(signature: str) -> list[bytes]:
+    """Every distinct table with this signature in the platform build tree."""
+    found = []
+    for path in sorted(BUILD.rglob("*")):
+        if path.suffix in (".acpi", ".aml") and path.is_file():
+            blob = path.read_bytes()
+            if blob[:4] == signature.encode() and blob not in found:
+                found.append(blob)
+    return found
+
+
+def checksum_ok(blob: bytes) -> bool:
+    return sum(blob) % 256 == 0
 
 
 def length_ok(blob: bytes) -> bool:
@@ -329,9 +361,124 @@ class J804WindowsAcpiContract(unittest.TestCase):
                                ("irq", 0x01, [self.h["J804_GSIV_AHCI"]])],
                          "ABAR page, then one consumer level active-high exclusive SPI")
 
+    def test_xhc1(self) -> None:
+        ssdts = find_tables("SSDT")
+        if not build_flags()["J804_WINDOWS_USB"]:
+            self.assertEqual(ssdts, [], "a non-USB build carries no platform SSDT")
+            return
+        self.assertEqual(len(ssdts), 1, "exactly one platform SSDT in a USB build")
+        check_xhc1_ssdt(self, ssdts[0], self.h)
+
     def test_published_gsivs_are_legal(self) -> None:
         for key in ("J804_GSIV_XHC1", "J804_GSIV_ANS", "J804_GSIV_XHC2"):
             self.assertTrue(32 <= self.h[key] < 1020, key)
+
+
+def check_xhc1_ssdt(case: unittest.TestCase, ssdt: bytes, h: dict[str, int]) -> None:
+    """The D4 SSDT: only \\_SB.XHC1, with the contract's resources."""
+    case.assertTrue(length_ok(ssdt))
+    case.assertTrue(checksum_ok(ssdt), "SSDT checksum")
+    case.assertEqual(ssdt[10:16], b"AURORA")
+    case.assertEqual(ssdt[16:24], b"J804XHC1")
+    devs = {d["name"]: d for d in devices(ssdt)}
+    case.assertEqual(set(devs), {"XHC1"}, "the SSDT declares XHC1 and nothing else")
+    xhc1 = devs["XHC1"]
+    case.assertEqual(xhc1["_HID"], "PNP0D10")
+    case.assertEqual(xhc1["_UID"], 1)
+    case.assertEqual(xhc1["_CCA"], 1, "coherent DMA through the carrier's DART identity map")
+    case.assertEqual(xhc1["_STA"], 0x0F)
+    base, size = h["J804_XHC1_BASE"], h["J804_XHC_SIZE"]
+    case.assertEqual(resources(xhc1["_CRS"]),
+                     [("qword", base, base + size - 1, size), ("irq", 0x01, [h["J804_GSIV_XHC1"]])],
+                     "the two xHCI pages, then one consumer level active-high exclusive SPI")
+    for name in XHC1_FORBIDDEN_METHODS:
+        case.assertNotIn(name, ssdt, f"XHC1 must not have {name.decode()}")
+    for forbidden in (0x402430000, 0x412430000, 0x40A43C100):
+        case.assertFalse(base <= forbidden < base + size, hex(forbidden))
+
+
+class J804WindowsUsbContract(unittest.TestCase):
+    """D4 values shared by J804Windows.h, the FDF marker, the DSC and the SSDT (no build)."""
+
+    def setUp(self) -> None:
+        self.h = header_defines()
+
+    def test_header_values(self) -> None:
+        h = self.h
+        self.assertEqual((h["J804_XHC1_BASE"], h["J804_XHC_SIZE"], h["J804_GSIV_XHC1"]),
+                         (0x40A430000, 0x8000, 995))
+        self.assertEqual(h["J804_XHC2_BASE"], 0x412430000)
+        self.assertEqual(h["J804_XHC1_BASE"] % 0x4000, 0, "16 KiB stage-2 pages")
+        self.assertEqual(h["J804_XHC_SIZE"] % 0x4000, 0)
+        self.assertLessEqual(h["J804_XHC_SIZE"], 0xC100, "the dwc3 globals at +0xc100 stay out")
+        self.assertNotEqual(h["J804_XHC1_BASE"], 0x402430000, "never usb-drd0")
+        self.assertNotIn(h["J804_GSIV_XHC1"], {h["J804_GSIV_AHCI"], h["J804_GSIV_ANS"]})
+        self.assertEqual(header_strings()["J804_USB_ADT_PROPERTY"], "aura,windows-usb-v1")
+        self.assertLess(len("aura,windows-usb-v1"), 32, "ADT property keys are 32 bytes")
+        self.assertEqual(h["J804_USB_ADT_PROPERTY_SIZE"], 40)
+        self.assertEqual((h["J804_USB_PORT_DRD1"], h["J804_USB_PORT_DRD3"]), (1 << 1, 1 << 3))
+        self.assertEqual(h["J804_USB_FD_MARKER_OFFSET"], 0x120)
+
+    def test_fd_marker_block(self) -> None:
+        fdf = FDF.read_text()
+        m = re.search(r"!if \$\(J804_WINDOWS_USB\) == TRUE\n(?:#[^\n]*\n)*"
+                      r"(0x[0-9A-Fa-f]+)\|(0x[0-9A-Fa-f]+)\nDATA = \{(.*?)\}", fdf, re.S)
+        self.assertIsNotNone(m, "USB marker region under !if J804_WINDOWS_USB")
+        offset, size = int(m.group(1), 16), int(m.group(2), 16)
+        data = bytes(int(b, 16) for b in re.findall(r"0x([0-9A-Fa-f]{2})\b",
+                                                     re.sub(r"#.*", "", m.group(3))))
+        self.assertEqual(offset, self.h["J804_USB_FD_MARKER_OFFSET"])
+        self.assertEqual(size, 0x10)
+        self.assertEqual(data, b"J804USB1" + struct.pack("<II", self.h["J804_XHC1_BASE"] >> 12,
+                                                         self.h["J804_GSIV_XHC1"]))
+        # After the AHCI marker (0x110|0x10), before the FV at 0x8000.
+        self.assertGreaterEqual(offset, self.h["J804_AHCI_FD_MARKER_OFFSET"] + 0x10)
+        self.assertLessEqual(offset + size, 0x8000)
+
+    def test_dsc_defaults_off(self) -> None:
+        dsc = DSC.read_text()
+        self.assertIn("!ifndef J804_WINDOWS_USB\n  DEFINE J804_WINDOWS_USB = FALSE\n!endif", dsc)
+        self.assertIn('!if $(J804_WINDOWS_AHCI) == FALSE\n!error', dsc,
+                      "a USB build needs the AHCI profile")
+        # The non-USB branch of the CC/PP flags never names USB.
+        block = dsc.split("!if $(J804_WINDOWS_USB) == TRUE\n!if $(J804_WINDOWS_VUART)", 1)[1]
+        usb_on, usb_off = block.split("\n!else\n!if $(J804_WINDOWS_AHCI) == TRUE\n", 1)
+        self.assertEqual(usb_on.count("-DJ804_WINDOWS_USB=1"), 3)
+        self.assertNotIn("USB", usb_off.split("  GCC:*_*_AARCH64_ASLPP_FLAGS", 1)[0])
+        components = dsc.split("[Components.common]", 1)[1]
+        self.assertIn("!if $(J804_WINDOWS_USB) == TRUE\n"
+                      "  MacBookPro2026Pkg/AcpiTables/J804Xhc1Ssdt.inf\n"
+                      "  MacBookPro2026Pkg/Drivers/J804XhciAcpiDxe/J804XhciAcpiDxe.inf\n!endif",
+                      components)
+
+    def test_sources(self) -> None:
+        self.assertNotIn("XHC", (ACPI_SRC / "DSDT.asl").read_text().split("DefinitionBlock", 1)[1],
+                         "XHC1 is never in the DSDT")
+        asl = SSDT_XHC1.read_text()
+        body = re.sub(r"//.*", "", asl)
+        for name in XHC1_FORBIDDEN_METHODS:
+            self.assertNotIn(name.decode(), body)
+        for macro in ("J804_XHC1_BASE", "J804_XHC_SIZE", "J804_GSIV_XHC1"):
+            self.assertIn(macro, body)
+        inf = (ACPI_SRC / "J804Xhc1Ssdt.inf").read_text()
+        guid = re.search(r"FILE_GUID = ([0-9A-F-]+)", inf).group(1)
+        driver = (REPO / "Platform" / "MacBookPro2026Pkg" / "Drivers" / "J804XhciAcpiDxe"
+                  / "J804XhciAcpiDxe.c").read_text()
+        g = guid.split("-")
+        c_guid = (f"0x{g[0].lower()}, 0x{g[1].lower()}, 0x{g[2].lower()}, {{ "
+                  + ", ".join(f"0x{g[3][i:i + 2].lower()}" for i in (0, 2)) + ", "
+                  + ", ".join(f"0x{g[4][i:i + 2].lower()}" for i in range(0, 12, 2)) + " }")
+        self.assertIn(c_guid, driver, "J804XhciAcpiDxe installs the J804Xhc1Ssdt FILE_GUID")
+
+    @unittest.skipUnless(shutil.which("iasl") and shutil.which("cc"), "needs cc and iasl")
+    def test_ssdt_compiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pre = Path(tmp) / "SsdtXhc1.asl"
+            subprocess.run(["cc", "-E", "-P", "-x", "c", "-I", str(HEADER.parent),
+                            str(SSDT_XHC1), "-o", str(pre)], check=True)
+            subprocess.run(["iasl", "-vs", "-p", str(Path(tmp) / "SsdtXhc1"), str(pre)],
+                           check=True, capture_output=True)
+            check_xhc1_ssdt(self, (Path(tmp) / "SsdtXhc1.aml").read_bytes(), self.h)
 
 
 class J804WindowsAhciContract(unittest.TestCase):
@@ -364,7 +511,7 @@ class J804WindowsAhciContract(unittest.TestCase):
 
     def test_fd_marker_block(self) -> None:
         fdf = FDF.read_text()
-        m = re.search(r"!if \$\(J804_WINDOWS_AHCI\) == TRUE\n(?:#.*\n)*"
+        m = re.search(r"!if \$\(J804_WINDOWS_AHCI\) == TRUE\n(?:#[^\n]*\n)*"
                       r"(0x[0-9A-Fa-f]+)\|(0x[0-9A-Fa-f]+)\nDATA = \{(.*?)\}", fdf, re.S)
         self.assertIsNotNone(m, "AHCI marker region under !if J804_WINDOWS_AHCI")
         offset, size = int(m.group(1), 16), int(m.group(2), 16)

@@ -17,6 +17,8 @@
 #   WM6_J804_VUART=TRUE      carrier vUART build (serial lib, COM0, DBG2)
 #   WM6_J804_AHCI=TRUE       D1 carrier AHCI disk build (AHC0, FD marker at
 #                            0x110, Mu AHCI stack, J804AhciDxe)
+#   WM6_J804_USB=TRUE        D4 usb-drd1 xHCI build (needs WM6_J804_AHCI=TRUE):
+#                            the XHC1 SSDT, J804XhciAcpiDxe, FD marker at 0x120
 set -eu
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$source_root"
@@ -41,9 +43,14 @@ lld_link=${AURORADBG_LLD_LINK:-/opt/homebrew/opt/lld/bin/lld-link}
 ans=${WM6_J804_ANS:-FALSE}
 vuart=${WM6_J804_VUART:-FALSE}
 ahci=${WM6_J804_AHCI:-FALSE}
-for flag in "$ans" "$vuart" "$ahci"; do
+usb=${WM6_J804_USB:-FALSE}
+for flag in "$ans" "$vuart" "$ahci" "$usb"; do
     case "$flag" in TRUE|FALSE) ;; *) echo "WM6_J804_* must be TRUE or FALSE" >&2; exit 1 ;; esac
 done
+if test "$usb" = TRUE && test "$ahci" != TRUE; then
+    echo "WM6_J804_USB=TRUE needs WM6_J804_AHCI=TRUE" >&2
+    exit 1
+fi
 output_root=${WM6_OUTPUT_ROOT:-$parent/out/j804-windows}
 mkdir -p "$output_root/toolchain" "$output_root/artifacts"
 toolchain_dir=$output_root/toolchain
@@ -60,10 +67,10 @@ test -x "$host_tools/GenFfs" || {
     exit 1
 }
 build_dir=$source_root/Build/MacBookPro2026-AARCH64
-# The default, vUART and AHCI variants share build_dir, and the manifest scans every
+# The default, vUART, AHCI and USB variants share build_dir, and the manifest scans every
 # PE and ACPI table in it: never build one variant over the other's output.
 flags_stamp=$build_dir/.wm6-j804-windows-flags
-build_flags="J804_WINDOWS_ANS=$ans J804_WINDOWS_VUART=$vuart J804_WINDOWS_AHCI=$ahci"
+build_flags="J804_WINDOWS_ANS=$ans J804_WINDOWS_VUART=$vuart J804_WINDOWS_AHCI=$ahci J804_WINDOWS_USB=$usb"
 if test "${WM6_CLEAN:-0}" = 1; then
     rm -rf "$build_dir"
 elif test -d "$build_dir" && test "$(cat "$flags_stamp" 2>/dev/null)" != "$build_flags"; then
@@ -80,7 +87,7 @@ log=$output_root/build.log
 "$venv/bin/stuart_build" -c Platform/MacBookPro2026Pkg/PlatformBuild.py \
     TOOL_CHAIN_TAG=CLANGPDB TARGET=DEBUG \
     "BLD_*_J804_WINDOWS_ANS=$ans" "BLD_*_J804_WINDOWS_VUART=$vuart" \
-    "BLD_*_J804_WINDOWS_AHCI=$ahci" \
+    "BLD_*_J804_WINDOWS_AHCI=$ahci" "BLD_*_J804_WINDOWS_USB=$usb" \
     "BLD_*_SOURCE_PREFIX_MAP=$source_root" \
     > "$log" 2>&1 || {
     tail -50 "$log" >&2
@@ -94,7 +101,7 @@ cp "$fd" "$output_root/artifacts/J804WIN_EFI.fd"
     --source-root "$source_root" --build-dir "$out" \
     --fd "$output_root/artifacts/J804WIN_EFI.fd" --profile j804-windows \
     --build-flag "J804_WINDOWS_ANS=$ans" --build-flag "J804_WINDOWS_VUART=$vuart" \
-    --build-flag "J804_WINDOWS_AHCI=$ahci" \
+    --build-flag "J804_WINDOWS_AHCI=$ahci" --build-flag "J804_WINDOWS_USB=$usb" \
     --out "$output_root/artifacts"
 # The build log names the checkout path; keep it out of the hand-over files.
 sed "s|$source_root|<mu>|g; s|$parent|<wm6>|g; s|$HOME|<home>|g" "$log" > "$log.tmp" && mv "$log.tmp" "$log"
