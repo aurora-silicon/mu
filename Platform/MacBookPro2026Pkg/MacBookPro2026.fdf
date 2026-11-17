@@ -28,6 +28,19 @@ DATA = {
   0x53, 0x41, 0x4e, 0x43, 0x48, 0x45, 0x43, 0x4b  # "SANCHECK"
 }
 
+!if $(J804_WINDOWS_AHCI) == TRUE
+# D1 AHCI contract marker (J804Windows.h J804_AHCI_FD_MARKER_OFFSET), read by
+# the launcher before it attaches a disk: "J804AHC1", u32 J804_AHCI_BASE >> 12
+# (0xF40000), u32 J804_GSIV_AHCI (990). Little-endian. Absent (0xFF) in
+# non-AHCI builds.
+0x000000110|0x000000010
+DATA = {
+  0x4a, 0x38, 0x30, 0x34, 0x41, 0x48, 0x43, 0x31, # "J804AHC1"
+  0x00, 0x00, 0xf4, 0x00,                         # 0xF40000000 >> 12
+  0xde, 0x03, 0x00, 0x00                          # GSIV 990
+}
+!endif
+
 0x000008000|0x001DF8000
 gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
 FV = FVMAIN_COMPACT
@@ -106,6 +119,16 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
   INF MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
   INF AppleSiliconPkg/Drivers/BootRamdiskHelperDxe/BootRamdiskHelperDxe.inf
+!if $(J804_WINDOWS_AHCI) == TRUE
+  # D1: the carrier-emulated AHCI disk. J804AhciDxe must stay after
+  # BootRamdiskHelperDxe (same-pass dispatch follows FV order; its depex is a
+  # superset of the helper's).
+  INF MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceDxe.inf
+  INF MdeModulePkg/Bus/Pci/SataControllerDxe/SataControllerDxe.inf
+  INF MdeModulePkg/Bus/Ata/AtaAtapiPassThru/AtaAtapiPassThru.inf
+  INF MdeModulePkg/Bus/Ata/AtaBusDxe/AtaBusDxe.inf
+  INF MacBookPro2026Pkg/Drivers/J804AhciDxe/J804AhciDxe.inf
+!endif
 
   INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
 

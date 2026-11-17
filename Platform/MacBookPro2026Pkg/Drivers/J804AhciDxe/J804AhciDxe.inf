@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+# J804 windows profile, D1 (J804_WINDOWS_AHCI builds only): register the
+# carrier-emulated AHCI HBA as a non-discoverable PCI device, connect it and
+# put the Windows loader on its disk first in the boot order.
+#
+# The depex is a superset of BootRamdiskHelperDxe's (gEfiRamDiskProtocolGuid)
+# and the FDF places this driver after it, so the DXE dispatcher always runs
+# the RAM-disk helper first; the boot rule below relies on that. It also needs
+# the variable services (BootOrder, BootNext). The UEFI drivers it connects
+# (NonDiscoverablePciDeviceDxe, SataControllerDxe, AtaAtapiPassThru,
+# AtaBusDxe, DiskIoDxe, PartitionDxe, Fat) have no depex and are dispatched
+# in the first pass, before this driver can be scheduled.
+#
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804AhciDxe
+  FILE_GUID = A3EF4F89-75A2-4FCD-8CE5-ECF5520D2942
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J804AhciEntry
+
+[Sources]
+  J804AhciDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  AppleDTLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  DxeServicesTableLib
+  MemoryAllocationLib
+  NonDiscoverableDeviceRegistrationLib
+  PcdLib
+  UefiBootManagerLib
+  UefiBootServicesTableLib
+  UefiLib
+  UefiRuntimeServicesTableLib
+
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
+
+[Guids]
+  gEfiGlobalVariableGuid                    ## SOMETIMES_PRODUCES ## Variable:L"BootNext"
+
+[Protocols]
+  gEfiSimpleFileSystemProtocolGuid          ## SOMETIMES_CONSUMES
+  gEfiDevicePathProtocolGuid                ## SOMETIMES_CONSUMES
+  gEdkiiNonDiscoverableDeviceProtocolGuid   ## SOMETIMES_CONSUMES
+  gEfiRamDiskProtocolGuid                   ## CONSUMES (depex only: ordering)
+  gEfiVariableArchProtocolGuid              ## CONSUMES
+  gEfiVariableWriteArchProtocolGuid         ## CONSUMES
+
+[Depex]
+  gEfiRamDiskProtocolGuid AND gEfiVariableArchProtocolGuid AND gEfiVariableWriteArchProtocolGuid

@@ -5,7 +5,8 @@
 //
 // Described: twelve CPUs in three ACPI0010 clusters, the SMC (read-only
 // sensor contract, NTAS2032) and the internal SSD controller (NTAS2004,
-// present but disabled unless the build sets J804_WINDOWS_ANS).
+// present but disabled unless the build sets J804_WINDOWS_ANS), plus COM0
+// (J804_WINDOWS_VUART) and the carrier's AHCI disk AHC0 (J804_WINDOWS_AHCI).
 //
 // Deliberately NOT described, whatever a driver might want: speaker amps,
 // i2c1, i2c3, AOP, ADMAC, the hpm USB-PD port controllers, GPIO pin 0xca
@@ -24,6 +25,9 @@
 #endif
 #ifndef J804_WINDOWS_VUART
 #define J804_WINDOWS_VUART 0
+#endif
+#ifndef J804_WINDOWS_AHCI
+#define J804_WINDOWS_AHCI 0
 #endif
 
 DefinitionBlock ("", "DSDT", 2, "AURORA", "J804WIN", 1)
@@ -234,6 +238,38 @@ DefinitionBlock ("", "DSDT", 2, "AURORA", "J804WIN", 1)
                 QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0,
                     0x331200000, 0x331203FFF, 0, 0x4000)
+            })
+        }
+#endif
+
+#if J804_WINDOWS_AHCI
+        //
+        // D1: the carrier-emulated AHCI 1.3.1 HBA (one SATA port, a DRAM
+        // disk; windows-m6/D1-AHCI-DESIGN.md). _CLS 01/06/01 gives Windows
+        // the compatible ID ACPI\CLS_0001&SUBCLS_0006&PI_01, which mshdc.inf
+        // binds to the inbox storahci. The _HID is project-local. The ABAR
+        // page is hooked by the carrier (never mapped) and the interrupt is
+        // a purely virtual level SPI with no AIC line behind it. DMA is
+        // cache coherent: the carrier copies through its cached map of
+        // guest RAM. Only built with J804_WINDOWS_AHCI. _STA is a constant:
+        // the launcher must refuse to start an AHCI FD (raw marker at FD
+        // offset 0x110) without an attached disk, or Windows would bind
+        // storahci to an ABAR the carrier does not hook. J804AhciDxe uses the
+        // /chosen handshake to decide the same for UEFI.
+        //
+        Device (AHC0)
+        {
+            Name (_HID, "NTAS2010")
+            Name (_UID, Zero)
+            Name (_CLS, Package (0x03) { 0x01, 0x06, 0x01 })
+            Name (_CCA, One)
+            Name (_STA, 0x0F)
+            Name (_CRS, ResourceTemplate ()
+            {
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    J804_AHCI_BASE, 0xF40003FFF, 0, J804_AHCI_SIZE)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) {J804_GSIV_AHCI}
             })
         }
 #endif

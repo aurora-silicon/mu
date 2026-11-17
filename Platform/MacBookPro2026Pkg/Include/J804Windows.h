@@ -103,4 +103,45 @@
 #define J804_WD1_ALARM         0x14
 #define J804_WD1_CTL           0x1c
 
+//
+// D1: the carrier-emulated AHCI 1.3.1 HBA (one SATA port, a DRAM-backed disk;
+// windows-m6/D1-AHCI-DESIGN.md). Only a J804_WINDOWS_AHCI build uses these.
+//
+// ABAR: one 16 KiB stage-2 page the carrier hooks and never maps, in the gap
+// [0xE80000000, 0x1000000000) that no /arm-io range of the J804 ADT covers,
+// 0x10000000 above the vGIC ITS frame. The interrupt is a purely virtual SPI
+// (no AIC line behind it): level-sensitive, active-high, routed by the
+// carrier's GICD_IROUTER. 990 is in no "interrupts" property of the J804 ADT
+// and is not one of the published AIC aliases above.
+//
+#define J804_AHCI_BASE         0xF40000000
+#define J804_AHCI_SIZE         0x4000
+#define J804_GSIV_AHCI         990
+
+//
+// Run-time handshake: the launcher writes this /chosen property into the
+// guest ADT only when the carrier has attached a disk (ATTACH done, ABAR
+// hooked). Without it J804AhciDxe registers nothing, so an AHCI FD under an
+// older launcher never touches J804_AHCI_BASE. Little-endian, 40 bytes:
+//   +0x00 u64 ABAR base (J804_AHCI_BASE)
+//   +0x08 u64 ABAR size (J804_AHCI_SIZE)
+//   +0x10 u32 GSIV (J804_GSIV_AHCI)
+//   +0x14 u32 boot: 0 = AHCI disk first, 1 = appended RAM disk first
+//   +0x18 u64 store base (first byte of the carrier's DRAM store)
+//   +0x20 u64 store top (exclusive; the --windows-guest-ram window top)
+// The 24-byte form without the store range is accepted with a warning.
+//
+#define J804_AHCI_ADT_PROPERTY        "aura,windows-ahci-v1"
+#define J804_AHCI_ADT_PROPERTY_SIZE   40
+#define J804_AHCI_ADT_PROPERTY_SHORT  24
+#define J804_AHCI_BOOT_DISK           0
+#define J804_AHCI_BOOT_RAMDISK        1
+
+//
+// Raw FD marker (MacBookPro2026.fdf region 0x110|0x10, AHCI builds only),
+// read by the launcher before it attaches a disk: "J804AHC1", u32
+// J804_AHCI_BASE >> 12, u32 J804_GSIV_AHCI. A non-AHCI FD has 0xFF there.
+//
+#define J804_AHCI_FD_MARKER_OFFSET    0x110
+
 #endif

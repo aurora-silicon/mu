@@ -56,6 +56,12 @@
   #   stage-2 aborts. Enable only once the carrier allowlists the SMC pages.
   # J804_WINDOWS_VUART: the carrier offers a vUART at the uart0 address; adds
   #   the Samsung UART serial library, \_SB.COM0 and DBG2. FALSE = Null serial.
+  # J804_WINDOWS_AHCI: D1, the carrier-emulated AHCI disk (J804Windows.h,
+  #   windows-m6/D1-AHCI-DESIGN.md): AHC0 in the DSDT, the FD marker block at
+  #   0x110, and the Mu AHCI stack (NonDiscoverablePciDeviceDxe,
+  #   SataControllerDxe, AtaAtapiPassThru, AtaBusDxe, J804AhciDxe), which
+  #   acts only when the launcher's /chosen handshake is present. FALSE = the
+  #   M2/M3 image, unchanged.
   # J804_WINDOWS_USB: refused until the USB prerequisite of PLAN 0.6 holds
   #   (aura->guest ownership hand-off, coherent Gen3 DART identity maps).
   #
@@ -67,6 +73,9 @@
 !endif
 !ifndef J804_WINDOWS_VUART
   DEFINE J804_WINDOWS_VUART = FALSE
+!endif
+!ifndef J804_WINDOWS_AHCI
+  DEFINE J804_WINDOWS_AHCI = FALSE
 !endif
 !ifndef J804_WINDOWS_USB
   DEFINE J804_WINDOWS_USB = FALSE
@@ -97,6 +106,11 @@
 !else
   DEFINE J804_ASL_VUART = 0
 !endif
+!if $(J804_WINDOWS_AHCI) == TRUE
+  DEFINE J804_ASL_AHCI = 1
+!else
+  DEFINE J804_ASL_AHCI = 0
+!endif
 
 [BuildOptions.common]
   # Keep the build host's directory layout out of the binaries (as the J804
@@ -110,13 +124,24 @@
   # J804_M1 in C selects the J804 memory and early-stop safety (PrePi RAM-top
   # checks, ADT reservations, boot hand-off check); J804_WINDOWS the windows
   # profile switches (BOOTAA64 ramdisk path, WD1 mapping, build marker).
+  # J804_WINDOWS_AHCI adds -DJ804_WINDOWS_AHCI=1; without it the flags are
+  # exactly those of the M2/M3 builds.
+!if $(J804_WINDOWS_AHCI) == TRUE
+!if $(J804_WINDOWS_VUART) == TRUE
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_VUART=1 -DJ804_WINDOWS_AHCI=1
+!else
+  GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1
+!endif
+  GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_AHCI=1
+!else
 !if $(J804_WINDOWS_VUART) == TRUE
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1 -DJ804_WINDOWS_VUART=1
 !else
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8152 -DJ804_M1=1 -DJ804_WINDOWS=1
 !endif
   GCC:*_*_AARCH64_PP_FLAGS = -DJ804_M1=1 -DJ804_WINDOWS=1
-  GCC:*_*_AARCH64_ASLPP_FLAGS = -DJ804_WINDOWS_ANS=$(J804_ASL_ANS) -DJ804_WINDOWS_SMC=$(J804_ASL_SMC) -DJ804_WINDOWS_VUART=$(J804_ASL_VUART)
+!endif
+  GCC:*_*_AARCH64_ASLPP_FLAGS = -DJ804_WINDOWS_ANS=$(J804_ASL_ANS) -DJ804_WINDOWS_SMC=$(J804_ASL_SMC) -DJ804_WINDOWS_VUART=$(J804_ASL_VUART) -DJ804_WINDOWS_AHCI=$(J804_ASL_AHCI)
 
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc
 !include AppleSiliconPkg/FrontpageDsc.inc
@@ -167,6 +192,10 @@
   # The carrier's emulated GICv3 (J804Windows.h; MADT.aslc asserts these).
   gArmTokenSpaceGuid.PcdGicDistributorBase|0xF00000000
   gArmTokenSpaceGuid.PcdGicRedistributorsBase|0xF10000000
+!if $(J804_WINDOWS_AHCI) == TRUE
+  # The carrier's IDENTIFY data reports no SMART feature set (word 82 bit 0).
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAtaSmartEnable|FALSE
+!endif
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferWidth|1280
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferHeight|720
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferPixelBpp|32
@@ -189,4 +218,11 @@
   MacBookPro2026Pkg/Drivers/J804AcpiDxe/J804AcpiDxe.inf
 !if $(J804_WINDOWS_VUART) == TRUE
   MacBookPro2026Pkg/AcpiTables/J804Dbg2Table.inf
+!endif
+!if $(J804_WINDOWS_AHCI) == TRUE
+  # NonDiscoverablePciDeviceDxe is already a component (AppleSiliconPkg.dsc.inc).
+  MdeModulePkg/Bus/Pci/SataControllerDxe/SataControllerDxe.inf
+  MdeModulePkg/Bus/Ata/AtaAtapiPassThru/AtaAtapiPassThru.inf
+  MdeModulePkg/Bus/Ata/AtaBusDxe/AtaBusDxe.inf
+  MacBookPro2026Pkg/Drivers/J804AhciDxe/J804AhciDxe.inf
 !endif
