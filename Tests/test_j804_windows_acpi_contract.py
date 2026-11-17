@@ -29,7 +29,16 @@ with the EL2 carrier in Platform/MacBookPro2026Pkg/Include/J804Windows.h:
     J804XHC1, declaring just \_SB.XHC1: PNP0D10, _UID 1, _CCA 1, _STA 0xF,
     one QWord memory range = the two xHCI pages of usb-drd1 and one level,
     active-high interrupt = J804_GSIV_XHC1, no power or wake methods. A
-    non-USB build has no platform SSDT.
+    non-USB build has no J804XHC1 SSDT.
+  * GPU0 (G0, J804_WINDOWS_GPU build): the template SSDT, OEM table ID
+    J804GPU0, declaring just \_SB.GPU0: the project _HID J804_GPU0_HID (not
+    an NTAS ID), _UID 0, _CCA 1, _STA 0xF, four QWord memory ranges whose
+    values are the J804GpuHandoff.h patch sentinels (sgx window, GFX
+    post-office page, pool, handoff page), no interrupt, no power or wake
+    methods, and the handoff IPA sentinel in _DSD. The template is also
+    patched by the host test (Tools/HostTests/J804GpuHandoff) with a
+    synthetic handoff and checked again. A non-GPU build has no J804GPU0
+    SSDT; no DSDT ever declares GPU0.
 
 The build flags come from the stamp Tools/build-j804-windows.sh writes in
 the build tree (all FALSE when it is missing). Skips when no build is
@@ -58,6 +67,9 @@ FDF = REPO / "Platform" / "MacBookPro2026Pkg" / "MacBookPro2026.fdf"
 DSC = REPO / "Platform" / "MacBookPro2026Pkg" / "MacBookPro2026.dsc"
 ACPI_SRC = REPO / "Platform" / "MacBookPro2026Pkg" / "AcpiTables"
 SSDT_XHC1 = ACPI_SRC / "SsdtXhc1.asl"
+SSDT_GPU0 = ACPI_SRC / "SsdtGpu0.asl"
+GPU_HANDOFF_H = REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "Include" / "J804GpuHandoff.h"
+GPU_HOST_TEST = REPO / "Tools" / "HostTests" / "J804GpuHandoff"
 
 CPU_MPIDR = {0: 0x0, 1: 0x1, 2: 0x2, 3: 0x3, 4: 0x4, 5: 0x5,
              6: 0x10100, 7: 0x10101,
@@ -90,9 +102,23 @@ XHC1_FORBIDDEN_METHODS = (b"_PS0", b"_PS1", b"_PS2", b"_PS3", b"_PSC", b"_PR0", 
                           b"_S3D", b"_S4D", b"_RMV", b"_EJ0")
 
 
+# GPU0 (G0): the J804GpuHandoff.h patch sentinels, in _CRS order (_MIN,
+# _MAX, _LEN per resource), and the _DSD handoff IPA sentinel.
+def gpu_sentinel(k: int) -> tuple[int, int, int]:
+    low = 0x5AA5000000000000 | (k << 40)
+    length = 0x0000005A00000000 | (k << 28)
+    return low, low + length - 1, length
+
+
+GPU_SENTINEL_IPA = 0x5AA5A55A5AA5A55A
+# The synthetic handoff Tools/HostTests/J804GpuHandoff patches the template with.
+GPU_SYNTHETIC = [(0x440000000, 0x4000000), (0x360080000, 0x4000), (0x900000000, 0x10000000),
+                 (0x806000000, 0x4000)]
+
+
 def build_flags() -> dict[str, bool]:
     flags = {"J804_WINDOWS_ANS": False, "J804_WINDOWS_VUART": False, "J804_WINDOWS_AHCI": False,
-             "J804_WINDOWS_USB": False}
+             "J804_WINDOWS_USB": False, "J804_WINDOWS_GPU": False}
     if FLAGS_STAMP.is_file():
         for item in FLAGS_STAMP.read_text().split():
             name, _, value = item.partition("=")
@@ -362,12 +388,29 @@ class J804WindowsAcpiContract(unittest.TestCase):
                          "ABAR page, then one consumer level active-high exclusive SPI")
 
     def test_xhc1(self) -> None:
-        ssdts = find_tables("SSDT")
+        ssdts = [t for t in find_tables("SSDT") if t[16:24] == b"J804XHC1"]
         if not build_flags()["J804_WINDOWS_USB"]:
-            self.assertEqual(ssdts, [], "a non-USB build carries no platform SSDT")
+            self.assertEqual(ssdts, [], "a non-USB build carries no J804XHC1 SSDT")
             return
-        self.assertEqual(len(ssdts), 1, "exactly one platform SSDT in a USB build")
+        self.assertEqual(len(ssdts), 1, "exactly one J804XHC1 SSDT in a USB build")
         check_xhc1_ssdt(self, ssdts[0], self.h)
+
+    def test_gpu0(self) -> None:
+        ssdts = [t for t in find_tables("SSDT") if t[16:24] == b"J804GPU0"]
+        self.assertNotIn("GPU0", {d["name"] for d in devices(find_table("DSDT"))},
+                         "GPU0 is never in the DSDT")
+        if not build_flags()["J804_WINDOWS_GPU"]:
+            self.assertEqual(ssdts, [], "a non-GPU build carries no J804GPU0 SSDT")
+            return
+        self.assertEqual(len(ssdts), 1, "exactly one J804GPU0 SSDT in a GPU build")
+        check_gpu0_ssdt(self, ssdts[0], [gpu_sentinel(k) for k in range(1, 5)], GPU_SENTINEL_IPA)
+
+    def test_platform_ssdts(self) -> None:
+        flags = build_flags()
+        ids = sorted(t[16:24] for t in find_tables("SSDT"))
+        want = sorted(([b"J804XHC1"] if flags["J804_WINDOWS_USB"] else [])
+                      + ([b"J804GPU0"] if flags["J804_WINDOWS_GPU"] else []))
+        self.assertEqual(ids, want, f"platform SSDTs for build flags {flags}")
 
     def test_published_gsivs_are_legal(self) -> None:
         for key in ("J804_GSIV_XHC1", "J804_GSIV_ANS", "J804_GSIV_XHC2"):
@@ -395,6 +438,151 @@ def check_xhc1_ssdt(case: unittest.TestCase, ssdt: bytes, h: dict[str, int]) -> 
         case.assertNotIn(name, ssdt, f"XHC1 must not have {name.decode()}")
     for forbidden in (0x402430000, 0x412430000, 0x40A43C100):
         case.assertFalse(base <= forbidden < base + size, hex(forbidden))
+
+
+# Methods GPU0 must not have: the carrier owns the GPU's power (G0).
+GPU0_FORBIDDEN_METHODS = XHC1_FORBIDDEN_METHODS + (b"_PRS", b"_SRS", b"_DIS")
+
+
+def check_gpu0_ssdt(case: unittest.TestCase, ssdt: bytes, ranges: list[tuple[int, int, int]],
+                    ipa: int) -> None:
+    """The G0 SSDT, as a template (sentinels) or patched (ranges, ipa)."""
+    case.assertTrue(length_ok(ssdt))
+    case.assertTrue(checksum_ok(ssdt), "SSDT checksum")
+    case.assertEqual(ssdt[10:16], b"AURORA")
+    case.assertEqual(ssdt[16:24], b"J804GPU0")
+    devs = {d["name"]: d for d in devices(ssdt)}
+    case.assertEqual(set(devs), {"GPU0"}, "the SSDT declares GPU0 and nothing else")
+    gpu0 = devs["GPU0"]
+    hid = header_strings()["J804_GPU0_HID"]
+    case.assertEqual(gpu0["_HID"], hid)
+    case.assertEqual(gpu0["_UID"], 0)
+    case.assertEqual(gpu0["_CCA"], 1)
+    case.assertEqual(gpu0["_STA"], 0x0F)
+    case.assertEqual(resources(gpu0["_CRS"]), [("qword", *r) for r in ranges],
+                     "sgx window, GFX post-office page, pool, handoff page; no interrupt")
+    crs = gpu0["_CRS"]
+    # Type-specific flags: bit 0 read-write, bits 2:1 memory type (0 non-cacheable, 1 cacheable).
+    case.assertEqual([crs[5 + 46 * i] for i in range(4)], [0x01, 0x01, 0x03, 0x02],
+                     "sgx and mailbox non-cacheable RW, pool cacheable RW, handoff cacheable RO")
+    case.assertEqual(ssdt.count(b"\x0e" + struct.pack("<Q", ipa)), 1, "_DSD handoff IPA")
+    case.assertIn(b"aura,handoff-ipa\x00", ssdt)
+    for name in GPU0_FORBIDDEN_METHODS:
+        case.assertNotIn(name, ssdt, f"GPU0 must not have {name.decode()}")
+
+
+class J804WindowsGpuContract(unittest.TestCase):
+    """G0 GPU: J804Windows.h, J804GpuHandoff.h, the SSDT template, the DSC and the
+    patcher (no build)."""
+
+    def handoff_defines(self) -> dict[str, int]:
+        text = GPU_HANDOFF_H.read_text()
+        return {n: int(v.rstrip("ULul"), 0) for n, v in
+                re.findall(r"#define\s+(J804_GPU_\w+)\s+(0x[0-9A-Fa-f]+[ULul]*|\d+[ULul]*)\b", text)}
+
+    def test_header_values(self) -> None:
+        hid = header_strings()["J804_GPU0_HID"]
+        self.assertRegex(hid, r"^[A-Z]{4}[0-9A-F]{4}$", "an ACPI ID: four letters, four hex digits")
+        self.assertFalse(hid.startswith("NTAS"), "never an AuroraSilicon NTAS ID (D5)")
+        g = self.handoff_defines()
+        text = GPU_HANDOFF_H.read_text()
+        self.assertIn('#define J804_GPU_ADT_PROPERTY       "aura,windows-gpu-v1"', text)
+        self.assertLess(len("aura,windows-gpu-v1"), 32, "ADT property keys are 32 bytes")
+        # The carrier contract (G0-CARRIER-CONTRACT 7, gpu_t8152_admit.h).
+        self.assertEqual((g["J804_GPU_ADT_PROPERTY_SIZE"], g["J804_GPU_HANDOFF_MAGIC"],
+                          g["J804_GPU_HANDOFF_VERSION"], g["J804_GPU_HANDOFF_HEADER"],
+                          g["J804_GPU_HANDOFF_SIZE"], g["J804_GPU_RANGE_STRIDE"],
+                          g["J804_GPU_PERF_STRIDE"]),
+                         (16, 0x31484741, 1, 0x100, 0x4000, 32, 16))
+        self.assertEqual(struct.pack("<I", g["J804_GPU_HANDOFF_MAGIC"]), b"AGH1")
+        self.assertEqual([g[f"J804_GPU_HO_{n}"] for n in
+                          ("STATE", "RANGE_COUNT", "LINES", "MAILBOX_NUM", "POOL_BASE",
+                           "HANDOFF_IPA", "DRAM_SIZE", "RECEIPT")],
+                         [0x10, 0x1c, 0x34, 0x44, 0x50, 0x60, 0x78, 0x80])
+        self.assertEqual([g[f"J804_GPU_C_{n}"] for n in
+                          ("SGX", "SGX_HOLE", "ASC_CTRL", "ASC", "IOP_VBAR", "MAILBOX", "FW_RW",
+                           "FW_RO", "FW_TEXT", "POOL", "HANDOFF", "COUNT")], list(range(1, 13)))
+        self.assertEqual((g["J804_GPU_POOL_ALIGN"], g["J804_GPU_CHIP_ID"], g["J804_GPU_BOARD_ID"]),
+                         (32 << 20, 0x8152, 0x22))
+        self.assertEqual(g["J804_GPU_SENTINEL_IPA"], GPU_SENTINEL_IPA)
+
+    def test_template_sentinels(self) -> None:
+        asl = re.sub(r"//.*", "", SSDT_GPU0.read_text())
+        values = [int(v, 16) for v in re.findall(r"0x([0-9A-Fa-f]{16})\b", asl)]
+        want = []
+        for k in range(1, 5):
+            low, high, length = gpu_sentinel(k)
+            want += [low, high, length]
+        self.assertEqual(values, want + [GPU_SENTINEL_IPA],
+                         "the template's QWords are J804GpuHandoff.h's sentinels, in order")
+        self.assertNotIn("Interrupt", asl, "GPU0 lists no interrupt in G0")
+        for name in GPU0_FORBIDDEN_METHODS:
+            self.assertNotIn(name.decode(), asl)
+        self.assertIn("Name (_HID, J804_GPU0_HID)", asl)
+
+    def test_sources(self) -> None:
+        self.assertNotIn("GPU", (ACPI_SRC / "DSDT.asl").read_text().split("DefinitionBlock", 1)[1],
+                         "GPU0 is never in the DSDT")
+        inf = (ACPI_SRC / "J804Gpu0Ssdt.inf").read_text()
+        guid = re.search(r"FILE_GUID = ([0-9A-F-]+)", inf).group(1)
+        driver = (REPO / "Platform" / "MacBookPro2026Pkg" / "Drivers" / "J804GpuAcpiDxe"
+                  / "J804GpuAcpiDxe.c").read_text()
+        g = guid.split("-")
+        c_guid = (f"0x{g[0].lower()}, 0x{g[1].lower()}, 0x{g[2].lower()}, {{ "
+                  + ", ".join(f"0x{g[3][i:i + 2].lower()}" for i in (0, 2)) + ", "
+                  + ", ".join(f"0x{g[4][i:i + 2].lower()}" for i in range(0, 12, 2)) + " }")
+        self.assertIn(c_guid, driver, "J804GpuAcpiDxe installs the J804Gpu0Ssdt FILE_GUID")
+        prepi = (REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "PrePi" / "AdtParser.c").read_text()
+        self.assertIn("#define J804_GPU_HANDOFF_NO_SSDT\n#include <J804GpuHandoff.h>", prepi)
+        main = (REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "PrePi" / "PrePi.c").read_text()
+        self.assertIn("    MuCheckpoint(0x12); J804_GPU_RESERVE_POOL_HOB ();\n", main,
+                      "the pool HOB call shares an existing line: PrePi.c keeps its __LINE__s")
+        self.assertNotIn("J804_WINDOWS_GPU", main, "no GPU-only lines in PrePi.c")
+
+    def test_dsc_defaults_off(self) -> None:
+        dsc = DSC.read_text()
+        self.assertIn("!ifndef J804_WINDOWS_GPU\n  DEFINE J804_WINDOWS_GPU = FALSE\n!endif", dsc)
+        self.assertIn("!if $(J804_WINDOWS_GPU) == TRUE\n!if $(J804_WINDOWS_AHCI) == FALSE\n!error", dsc,
+                      "a GPU build needs the AHCI profile")
+        gpu_on, rest = dsc.split("!if $(J804_WINDOWS_GPU) == TRUE\n!if $(J804_WINDOWS_USB) == TRUE\n", 1)[1] \
+            .split("\n!else\n!if $(J804_WINDOWS_USB) == TRUE\n", 1)
+        self.assertEqual(gpu_on.count("-DJ804_WINDOWS_GPU=1"), 6)
+        self.assertNotIn("GPU", rest.split("  GCC:*_*_AARCH64_ASLPP_FLAGS", 1)[0],
+                         "without the flag the CC/PP flags are those of the AHCI/USB builds")
+        components = dsc.split("[Components.common]", 1)[1]
+        self.assertIn("!if $(J804_WINDOWS_GPU) == TRUE\n"
+                      "  MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf\n"
+                      "  MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf\n!endif",
+                      components)
+        fdf = FDF.read_text()
+        self.assertIn("!if $(J804_WINDOWS_GPU) == TRUE\n", fdf)
+        self.assertNotIn("J804GPU", fdf.split("0x000008000|", 1)[0], "no GPU FD marker")
+
+    @unittest.skipUnless(shutil.which("iasl") and shutil.which("cc") and shutil.which("make"),
+                         "needs cc, make and iasl")
+    def test_ssdt_compiles_and_patches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pre = Path(tmp) / "SsdtGpu0.asl"
+            subprocess.run(["cc", "-E", "-P", "-x", "c", "-I", str(HEADER.parent),
+                            str(SSDT_GPU0), "-o", str(pre)], check=True)
+            subprocess.run(["iasl", "-vs", "-p", str(Path(tmp) / "SsdtGpu0"), str(pre)],
+                           check=True, capture_output=True)
+            template = Path(tmp) / "SsdtGpu0.aml"
+            check_gpu0_ssdt(self, template.read_bytes(), [gpu_sentinel(k) for k in range(1, 5)],
+                            GPU_SENTINEL_IPA)
+            subprocess.run(["make", "-s", "-C", str(GPU_HOST_TEST)], check=True, capture_output=True)
+            patched = Path(tmp) / "patched.aml"
+            out = subprocess.run([str(GPU_HOST_TEST / "gpu_handoff_test"), str(template), str(patched)],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stdout)
+            self.assertIn("J804_GPU_HANDOFF_TEST PASS", out.stdout)
+            blob = patched.read_bytes()
+            check_gpu0_ssdt(self, blob, [(b, b + n - 1, n) for b, n in GPU_SYNTHETIC],
+                            GPU_SYNTHETIC[3][0])
+            # The patched table still disassembles and recompiles.
+            subprocess.run(["iasl", "-d", str(patched)], check=True, capture_output=True, cwd=tmp)
+            subprocess.run(["iasl", "-vs", "-p", str(Path(tmp) / "round"), str(Path(tmp) / "patched.dsl")],
+                           check=True, capture_output=True)
 
 
 class J804WindowsUsbContract(unittest.TestCase):
@@ -440,7 +628,8 @@ class J804WindowsUsbContract(unittest.TestCase):
         self.assertIn("!ifndef J804_WINDOWS_USB\n  DEFINE J804_WINDOWS_USB = FALSE\n!endif", dsc)
         self.assertIn('!if $(J804_WINDOWS_AHCI) == FALSE\n!error', dsc,
                       "a USB build needs the AHCI profile")
-        # The non-USB branch of the CC/PP flags never names USB.
+        # The non-USB branch of the CC/PP flags never names USB (after the GPU branch).
+        dsc = dsc.split("-DJ804_WINDOWS_GPU=1\n!endif\n!else\n", 1)[1]
         block = dsc.split("!if $(J804_WINDOWS_USB) == TRUE\n!if $(J804_WINDOWS_VUART)", 1)[1]
         usb_on, usb_off = block.split("\n!else\n!if $(J804_WINDOWS_AHCI) == TRUE\n", 1)
         self.assertEqual(usb_on.count("-DJ804_WINDOWS_USB=1"), 3)

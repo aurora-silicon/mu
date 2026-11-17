@@ -93,6 +93,22 @@ USB_FD_MARKER = b'J804USB1' + struct.pack('<II', 0x40A430000 >> 12, 995)
 USB_SSDT_OEM_TABLE_ID = b'J804XHC1'
 USB_FV_DRIVERS = ('J804XhciAcpiDxe',)
 USB_MARKERS = ['J804_WINDOWS_USB: XHC1 published', 'J804_WINDOWS_USB refused']
+# The G0 GPU build (J804_WINDOWS_GPU=TRUE): Device (\_SB.GPU0) in its own
+# platform SSDT template (OEM table ID J804GPU0), never in the DSDT, carrying
+# each patch sentinel of J804GpuHandoff.h exactly once (J804GpuAcpiDxe
+# replaces them from the carrier's handoff page); J804GpuAcpiDxe; PrePi's
+# pool carve. No FD marker: the launcher reads none for the GPU.
+GPU_FLAG = 'J804_WINDOWS_GPU'
+GPU_SSDT_OEM_TABLE_ID = b'J804GPU0'
+GPU_FV_DRIVERS = ('J804GpuAcpiDxe',)
+GPU_MARKERS = ['J804_WINDOWS_GPU: GPU0 published', 'J804_WINDOWS_GPU refused',
+               'J804_WINDOWS_GPU: pool']
+GPU_HID = b'AGHN0001'
+GPU_SENTINELS = ([0x5AA5000000000000 | (k << 40) for k in range(1, 5)]
+                 + [0x5A00000000 | (k << 28) for k in range(1, 5)]
+                 + [(0x5AA5000000000000 | (k << 40)) + (0x5A00000000 | (k << 28)) - 1
+                    for k in range(1, 5)]
+                 + [0x5AA5A55A5AA5A55A])
 # DBG2's namespace string for the vUART (ASCII, NUL-terminated; ACPI 6.4 DBG2
 # Device Information structure, NamespaceString).
 DBG2_COM0 = b'\\_SB.COM0\0'
@@ -308,12 +324,16 @@ def main():
     usb = flags.get(USB_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
     if usb == 'TRUE':
         wanted += USB_MARKERS
+    gpu = flags.get(GPU_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
+    if gpu == 'TRUE':
+        wanted += GPU_MARKERS
     markers = {}
     for marker in wanted:
         markers[marker] = [p.name for p in top if find_strings(p.read_bytes(), marker)]
     if args.profile in ('j804-m1', 'j804-windows'):
         for marker in (MARKERS[args.profile] + (AHCI_MARKERS if ahci == 'TRUE' else [])
-                       + (USB_MARKERS if usb == 'TRUE' else [])):
+                       + (USB_MARKERS if usb == 'TRUE' else [])
+                       + (GPU_MARKERS if gpu == 'TRUE' else [])):
             if not markers[marker]:
                 failures.append(f'marker {marker!r} not found in any PE')
 
@@ -366,22 +386,44 @@ def main():
             if (ahci == 'TRUE') != ahc0:
                 failures.append(f'{AHCI_FLAG}={ahci} but the DSDT '
                                 + ('declares' if ahc0 else 'lacks') + ' Device (\\_SB.AHC0)')
-        # XHC1 only ever in the J804XHC1 SSDT, which only a USB build carries.
+        # XHC1 only ever in the J804XHC1 SSDT, which only a USB build carries;
+        # GPU0 only in the J804GPU0 SSDT, which only a GPU build carries.
         ssdt = list({t['blob'] for t in acpi if t['signature'] == 'SSDT'})
-        if len(dsdt) == 1 and dsdt_has_sb_device(dsdt[0], 'XHC1'):
-            failures.append('the DSDT declares Device (\\_SB.XHC1); it belongs in the gated SSDT')
+        for name in ('XHC1', 'GPU0'):
+            if len(dsdt) == 1 and dsdt_has_sb_device(dsdt[0], name):
+                failures.append(f'the DSDT declares Device (\\_SB.{name}); it belongs in the '
+                                'gated SSDT')
         if usb not in ('TRUE', 'FALSE'):
             failures.append(f'--build-flag {USB_FLAG}=TRUE|FALSE expected, got {usb!r}')
-        elif usb == 'TRUE':
-            if len(ssdt) != 1:
-                failures.append(f'{USB_FLAG}=TRUE but FVMAIN carries {len(ssdt)} platform SSDTs, '
-                                'expected exactly 1')
-            elif (ssdt[0][16:24] != USB_SSDT_OEM_TABLE_ID
-                  or not dsdt_has_sb_device(ssdt[0], 'XHC1')):
-                failures.append(f'{USB_FLAG}=TRUE but the platform SSDT is not the '
-                                'J804XHC1 table declaring Device (\\_SB.XHC1)')
-        elif ssdt:
-            failures.append(f'{USB_FLAG}=FALSE but FVMAIN carries {len(ssdt)} platform SSDTs')
+        if gpu not in ('TRUE', 'FALSE'):
+            failures.append(f'--build-flag {GPU_FLAG}=TRUE|FALSE expected, got {gpu!r}')
+        wanted_ssdt = {USB_SSDT_OEM_TABLE_ID: ('XHC1', usb, USB_FLAG),
+                       GPU_SSDT_OEM_TABLE_ID: ('GPU0', gpu, GPU_FLAG)}
+        by_id = {}
+        for blob in ssdt:
+            by_id.setdefault(blob[16:24], []).append(blob)
+        for oem_id, blobs in sorted(by_id.items()):
+            if oem_id not in wanted_ssdt:
+                failures.append(f'FVMAIN carries an unexpected platform SSDT {oem_id!r}')
+        for oem_id, (device, value, flag) in wanted_ssdt.items():
+            blobs = by_id.get(oem_id, [])
+            if value == 'TRUE':
+                if len(blobs) != 1:
+                    failures.append(f'{flag}=TRUE but FVMAIN carries {len(blobs)} '
+                                    f'{oem_id.decode()} SSDTs, expected exactly 1')
+                elif not dsdt_has_sb_device(blobs[0], device):
+                    failures.append(f'{flag}=TRUE but the {oem_id.decode()} SSDT does not '
+                                    f'declare Device (\\_SB.{device})')
+            elif value == 'FALSE' and blobs:
+                failures.append(f'{flag}=FALSE but FVMAIN carries the {oem_id.decode()} SSDT')
+        for blob in by_id.get(GPU_SSDT_OEM_TABLE_ID, [])[:1]:
+            if GPU_HID not in blob:
+                failures.append(f'the J804GPU0 SSDT does not carry _HID {GPU_HID.decode()}')
+            for sentinel in GPU_SENTINELS:
+                count = blob.count(struct.pack('<Q', sentinel))
+                if count != 1:
+                    failures.append(f'the J804GPU0 SSDT carries sentinel {sentinel:#x} '
+                                    f'{count} times, expected exactly once')
     if leaks:
         failures.append(f'{len(leaks)} build-host paths in PE files or ACPI tables')
 
@@ -408,6 +450,12 @@ def main():
         for driver in USB_FV_DRIVERS:
             if (usb == 'TRUE') != (driver in names):
                 failures.append(f'{USB_FLAG}={usb} but FVMAIN '
+                                + ('carries ' if driver in names else 'lacks ') + driver)
+    if gpu in ('TRUE', 'FALSE'):
+        names = {f['name'] for f in fvmain}
+        for driver in GPU_FV_DRIVERS:
+            if (gpu == 'TRUE') != (driver in names):
+                failures.append(f'{GPU_FLAG}={gpu} but FVMAIN '
                                 + ('carries ' if driver in names else 'lacks ') + driver)
     startup = [f for f in fvmain if f['name'] == 'startup.nsh']
     startup_text = None

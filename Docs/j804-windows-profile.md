@@ -33,6 +33,14 @@ WM6_OUTPUT_ROOT=../out/j804-windows-usb sh Tools/build-j804-windows.sh`
 default, vUART and AHCI FDs are byte-identical to those built before the flag
 existed.
 
+The G0 GPU variant (the carrier-admitted G18 GPU as `\_SB.GPU0`, see below)
+is `WM6_CLEAN=1 WM6_J804_VUART=TRUE WM6_J804_AHCI=TRUE WM6_J804_USB=TRUE
+WM6_J804_GPU=TRUE WM6_OUTPUT_ROOT=../out/j804-windows-gpu sh
+Tools/build-j804-windows.sh` (`WM6_J804_GPU` needs `WM6_J804_AHCI`). With
+`J804_WINDOWS_GPU` FALSE the default, vUART, AHCI and USB FDs are
+byte-identical to those built before the flag existed. The build script also
+accepts a `j804-windows-*` topic branch.
+
 Status: built and host-tested only. Nothing here has run on hardware.
 
 ## What the image does
@@ -169,6 +177,73 @@ A `J804_WINDOWS_USB=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
   platform SSDT, `J804XHC1`, declaring `\_SB.XHC1`), no XHC1 in the DSDT,
   the marker and the driver against the `J804_WINDOWS_USB` build flag.
 
+## G0: the carrier-admitted GPU (`J804_WINDOWS_GPU`)
+
+Contract: `windows-m6/G0-CARRIER-CONTRACT.md` sections 6 to 8 and
+`AppleSiliconPkg/Include/J804GpuHandoff.h` (layout, rules, parser, SSDT
+patcher; header-only so PrePi, the driver and the host test share it). Unlike
+AHCI and USB, no GPU address, line or size is compiled in: the carrier admits
+the GPU firmware against the live ADT, lifts every value from it into a
+16 KiB read-only handoff page ("AGH1", version 1, CRC-32) outside guest RAM,
+and the launcher (`run_guest.py --windows-gpu admit|log`) writes
+`/chosen/aura,windows-gpu-v1` (16 bytes, little-endian: u64 page IPA, u64
+page size 0x4000) only after ADMIT returned 0. In G0 nothing is powered,
+started, passed through or published as an interrupt; the carrier only
+hooks (logs) the sgx window and the post-office page.
+
+A `J804_WINDOWS_GPU=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
+- PrePi (`AdtParser.c`, `PrePi.c`): the carrier carves the GPU pool from the
+  top of its guest RAM window, which is the boot_args window, exactly where
+  PrePi puts its stack and UEFI region. With the property present, PrePi
+  cleans and invalidates the page to the point of coherency (the MMU is off,
+  the reads are uncached), validates it (`J804GpuParseHandoff`) and, only if
+  it validates and the FD, the boot hand-off copies and the new UEFI region
+  all lie clear below the pool, lowers its RAM top to the pool base and adds
+  the pool as a reserved resource HOB (cache capabilities, neither PRESENT
+  nor INITIALIZED, so the DXE core never promotes it): the UEFI memory map
+  reports it as `EfiReservedMemoryType` and Mu never maps it. Without the
+  property, or with any failure, the RAM is unchanged.
+- `\_SB.GPU0` in its own SSDT template (`AcpiTables/SsdtGpu0.asl`, OEM table
+  ID `J804GPU0`, FFS `J804Gpu0Ssdt` 3C230D00-9C66-4CA9-BCAA-614E034EAAC2),
+  never in the DSDT: `_HID` `J804_GPU0_HID` (the project's own ID, owner
+  decision D5; not an AuroraSilicon NTAS ID), `_UID` 0, `_CCA` 1, `_STA` 0xF,
+  `_CRS` = four QWordMemory ranges whose values are unique 64-bit sentinels:
+  the sgx window (handoff classes 1..5 tiled into one range; non-cacheable
+  RW), the post-office page with both GFX windows (that 16 KiB page only;
+  non-cacheable RW), the pool (cacheable RW) and the handoff page (cacheable
+  RO); `_DSD` (device-properties UUID) `aura,handoff-ipa` (sentinel),
+  `aura,handoff-size` 0x4000, `aura,handoff-version` 1. No interrupt (state
+  bit 3 is clear in G0 and the lines' trigger type is unmeasured; completion
+  is polled), no power or wake methods (the carrier owns PSD). The UAT,
+  DATA and TEXT ranges are never listed.
+- `J804GpuAcpiDxe`: at EL1 on cpu6 of a J804 and only with the property, it
+  maps the handoff page write-back (coherent with the carrier's cached
+  writes; it is read-only at stage 2), re-validates it, refuses unless the
+  whole pool is reserved memory in the GCD map (proof that PrePi carved it)
+  and the sgx window, mailbox page and handoff page are not RAM, and unless
+  none of them overlaps the AHCI store; then it reads the template, replaces
+  each sentinel (each must occur exactly once) and installs it. Otherwise
+  Windows sees no GPU0. Mu never touches the GPU, the mailbox or the pool.
+- Page rules beyond the carrier's layout: the pool is the one class-10 range,
+  equal to the header's, 32 MiB aligned, ending exactly at the top of guest
+  RAM and at most half of it; every other range lies outside guest RAM; the
+  firmware classes inside DRAM, the sgx/ASC/mailbox classes outside it;
+  classes 1..5 tile one window; exactly one mailbox page and one handoff
+  page (equal to the handshake); state has the admitted bit and no unknown
+  bit; four distinct lines in [32, 1020) outside the carrier block
+  [980, 1000); reserved bytes zero; a printable receipt.
+- No FD marker: the launcher reads none for the GPU.
+- Host tests: `Tools/HostTests/J804GpuHandoff` (the property and page parser
+  against pages built field by field from the documented layout with zlib's
+  CRC, 66 refusal cases, and the SSDT patcher; ASan/UBSan; synthetic
+  addresses only) and the GPU checks in
+  `Tests/test_j804_windows_acpi_contract.py` (header constants against the
+  carrier contract, the template's sentinels, DSC defaults, the SSDT compiled
+  on its own with `cc -E` and `iasl`, patched by the host test and
+  disassembled and recompiled). The manifest checks the J804GPU0 SSDT (one,
+  declaring `\_SB.GPU0`, the HID, each sentinel once), no GPU0 in the DSDT,
+  `J804GpuAcpiDxe` and the PrePi strings against the `J804_WINDOWS_GPU` flag.
+
 ## ACPI tables
 
 | Table | Content |
@@ -180,6 +255,7 @@ A `J804_WINDOWS_USB=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
 | DBG2 | only with `J804_WINDOWS_VUART`: \_SB.COM0 at 0x331200000 |
 | DSDT AHC0 | only with `J804_WINDOWS_AHCI`: NTAS2010, `_CLS` 01/06/01, `_CCA` 1, ABAR 0xF40000000/0x4000, GSIV 990 level/high |
 | SSDT J804XHC1 | only with `J804_WINDOWS_USB`, installed only with the `/chosen/aura,windows-usb-v1` handshake: `\_SB.XHC1` PNP0D10, `_UID` 1, `_CCA` 1, 0x40A430000/0x8000, GSIV 995 level/high, no power methods |
+| SSDT J804GPU0 | only with `J804_WINDOWS_GPU`, patched from the carrier's handoff page and installed only with the `/chosen/aura,windows-gpu-v1` handshake: `\_SB.GPU0` `J804_GPU0_HID`, `_UID` 0, `_CCA` 1, sgx window, GFX post-office page, pool, handoff page; `_DSD` handoff IPA/size; no interrupt, no power methods |
 
 Not described, by design: speaker amps, i2c1, i2c3, AOP, ADMAC, the hpm
 USB-PD controllers, GPIO 0xca (193), the xHCI controllers (except XHC1 in
@@ -222,6 +298,7 @@ must match the carrier; neither side can discover the other's choice.
 | FD | 0x1E00000 bytes, entry at offset 0, 64 KiB aligned | `run_guest.py -r -E 0`, placed outside CTXR_D |
 | AHCI disk (D1, AHCI builds) | ABAR 0xF40000000/0x4000, GSIV 990 level/high, `_CCA` 1; FD marker at 0x110; acts only on `/chosen/aura,windows-ahci-v1` | hook the ABAR page (never map it), deliver SPI 990 as a level through GICD_IROUTER, keep the store outside guest RAM and stage 2; write the 40-byte property only after ATTACH; refuse an AHCI FD (marker present) without an attached disk |
 | USB (D4, USB builds) | XHC1 0x40A430000/0x8000, GSIV 995 level/high, `_CCA` 1, no power methods; FD marker at 0x120; XHC1 SSDT installed only on `/chosen/aura,windows-usb-v1` | map exactly [0x40A430000, 0x40A438000) Device-nGnRnE IPA == PA, nothing else of usb-drd1; alias AIC 1692 to level SPI 995; coherent Gen3 DART identity map of exactly the DMA window it writes into the property (the guest RAM window, never the AHCI store or carrier memory); dwc3 left as `j804_usb_prep` sets it; write the 40-byte property only after ATTACH succeeded, with port mask 0x2; refuse a USB FD (marker present) without ATTACH and `--windows-usb drd1` with an FD lacking the marker |
+| GPU (G0, GPU builds) | GPU0 SSDT installed only on `/chosen/aura,windows-gpu-v1` and a handoff page that validates (J804GpuHandoff.h); RAM top lowered to the pool base and the pool reserved by PrePi; no interrupt, no power methods | build the page from the live ADT outside guest RAM, map it read-only at IPA == PA, write the 16-byte property only after ADMIT returned 0; carve the pool from the very top of the guest RAM window (= boot_args top), 32 MiB aligned, at most half; with the pool the RAM top Mu uses is the pool base, so `pool base >= 0x10220204000 + 128 MiB` (UEFI region clear of the copies); clean the page to the point of coherency after building it (Mu also cleans it before its uncached PrePi read) |
 | Stage 2 | the default build enables no MMIO device: only guest RAM, the framebuffer shadow, AIC3 and the hooked vGIC window are used (SMC0 `_STA` 0, no ANS0) | aura-win's real policy: an allowlist of the guest RAM window, carrier-registered pages (BGRA shadow, read-only ADT alias) and the AIC (Device-nGnRnE), plus hooked MMIO; an ADT denylist (qspi, sep, aop, admac, i2c, audio, gpio, wdt, pmgr, spmi, dart, sart, ans, smc, mtp, spi, dcp, sio, usb-drd0, 0x331118000, region-id-218/-4) checked at map time and before entry; HCR_EL2.TWI set. Enabling SMC0 or ANS0 needs an explicit carrier allowlist (ANS: trapped windows only, see above) |
 
 ## Not verified
@@ -244,6 +321,12 @@ must match the carrier; neither side can discover the other's choice.
   Windows' ACPI handling of an SSDT-only XHC1, and whether the GCD RAM check
   of `J804XhciAcpiDxe` matches the RAM PrePi describes under the AHCI launch
   (it fails closed: no XHC1, with a log line).
+- G0: PrePi's uncached read of the carrier's page under the carrier (the
+  clean-and-invalidate before it, a read-only stage-2 page), the DXE
+  write-back mapping of a GCD-added page outside RAM, Windows' handling of an
+  SSDT-only device with a reserved-memory resource and a `_DSD`, and whether
+  a driver can map the pool cached. No driver binds `J804_GPU0_HID` yet.
+  "Admit once" is per carrier session on the carrier side.
 - D1: AtaAtapiPassThru, AtaBusDxe and storahci against the carrier's model;
   whether CpuDxe maps the GCD-added ABAR as expected on this TIANO
   (ArmSetMemoryAttributes on an unmapped range); `NTAS2010` against the IDs
