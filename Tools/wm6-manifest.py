@@ -109,6 +109,19 @@ GPU_SENTINELS = ([0x5AA5000000000000 | (k << 40) for k in range(1, 5)]
                  + [(0x5AA5000000000000 | (k << 40)) + (0x5A00000000 | (k << 28)) - 1
                     for k in range(1, 5)]
                  + [0x5AA5A55A5AA5A55A])
+# The I0 input build (J804_WINDOWS_INPUT=TRUE): Device (\_SB.INP0) in its own
+# platform SSDT (OEM table ID J804INP0), never in the DSDT, with _HID NTAS2040;
+# the raw contract marker at FD offset 0x140 ("J804INP1", page >> 12, GSIV;
+# J804Windows.h) and J804InputAcpiDxe, which installs the SSDT only with the
+# /chosen input handshake. A non-input FD has none of them and 0xFF at the
+# marker offset.
+INPUT_FLAG = 'J804_WINDOWS_INPUT'
+INPUT_FD_MARKER_OFFSET = 0x140
+INPUT_FD_MARKER = b'J804INP1' + struct.pack('<II', 0xF50000000 >> 12, 991)
+INPUT_SSDT_OEM_TABLE_ID = b'J804INP0'
+INPUT_FV_DRIVERS = ('J804InputAcpiDxe',)
+INPUT_MARKERS = ['J804_WINDOWS_INPUT: INP0 published', 'J804_WINDOWS_INPUT refused']
+INPUT_HID = b'NTAS2040'
 # DBG2's namespace string for the vUART (ASCII, NUL-terminated; ACPI 6.4 DBG2
 # Device Information structure, NamespaceString).
 DBG2_COM0 = b'\\_SB.COM0\0'
@@ -327,13 +340,17 @@ def main():
     gpu = flags.get(GPU_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
     if gpu == 'TRUE':
         wanted += GPU_MARKERS
+    inp = flags.get(INPUT_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
+    if inp == 'TRUE':
+        wanted += INPUT_MARKERS
     markers = {}
     for marker in wanted:
         markers[marker] = [p.name for p in top if find_strings(p.read_bytes(), marker)]
     if args.profile in ('j804-m1', 'j804-windows'):
         for marker in (MARKERS[args.profile] + (AHCI_MARKERS if ahci == 'TRUE' else [])
                        + (USB_MARKERS if usb == 'TRUE' else [])
-                       + (GPU_MARKERS if gpu == 'TRUE' else [])):
+                       + (GPU_MARKERS if gpu == 'TRUE' else [])
+                       + (INPUT_MARKERS if inp == 'TRUE' else [])):
             if not markers[marker]:
                 failures.append(f'marker {marker!r} not found in any PE')
 
@@ -387,9 +404,10 @@ def main():
                 failures.append(f'{AHCI_FLAG}={ahci} but the DSDT '
                                 + ('declares' if ahc0 else 'lacks') + ' Device (\\_SB.AHC0)')
         # XHC1 only ever in the J804XHC1 SSDT, which only a USB build carries;
-        # GPU0 only in the J804GPU0 SSDT, which only a GPU build carries.
+        # GPU0 only in the J804GPU0 SSDT, which only a GPU build carries;
+        # INP0 only in the J804INP0 SSDT, which only an input build carries.
         ssdt = list({t['blob'] for t in acpi if t['signature'] == 'SSDT'})
-        for name in ('XHC1', 'GPU0'):
+        for name in ('XHC1', 'GPU0', 'INP0'):
             if len(dsdt) == 1 and dsdt_has_sb_device(dsdt[0], name):
                 failures.append(f'the DSDT declares Device (\\_SB.{name}); it belongs in the '
                                 'gated SSDT')
@@ -397,8 +415,11 @@ def main():
             failures.append(f'--build-flag {USB_FLAG}=TRUE|FALSE expected, got {usb!r}')
         if gpu not in ('TRUE', 'FALSE'):
             failures.append(f'--build-flag {GPU_FLAG}=TRUE|FALSE expected, got {gpu!r}')
+        if inp not in ('TRUE', 'FALSE'):
+            failures.append(f'--build-flag {INPUT_FLAG}=TRUE|FALSE expected, got {inp!r}')
         wanted_ssdt = {USB_SSDT_OEM_TABLE_ID: ('XHC1', usb, USB_FLAG),
-                       GPU_SSDT_OEM_TABLE_ID: ('GPU0', gpu, GPU_FLAG)}
+                       GPU_SSDT_OEM_TABLE_ID: ('GPU0', gpu, GPU_FLAG),
+                       INPUT_SSDT_OEM_TABLE_ID: ('INP0', inp, INPUT_FLAG)}
         by_id = {}
         for blob in ssdt:
             by_id.setdefault(blob[16:24], []).append(blob)
@@ -424,6 +445,9 @@ def main():
                 if count != 1:
                     failures.append(f'the J804GPU0 SSDT carries sentinel {sentinel:#x} '
                                     f'{count} times, expected exactly once')
+        for blob in by_id.get(INPUT_SSDT_OEM_TABLE_ID, [])[:1]:
+            if INPUT_HID not in blob:
+                failures.append(f'the J804INP0 SSDT does not carry _HID {INPUT_HID.decode()}')
     if leaks:
         failures.append(f'{len(leaks)} build-host paths in PE files or ACPI tables')
 
@@ -456,6 +480,17 @@ def main():
         for driver in GPU_FV_DRIVERS:
             if (gpu == 'TRUE') != (driver in names):
                 failures.append(f'{GPU_FLAG}={gpu} but FVMAIN '
+                                + ('carries ' if driver in names else 'lacks ') + driver)
+    if inp in ('TRUE', 'FALSE'):
+        marker = data[INPUT_FD_MARKER_OFFSET:INPUT_FD_MARKER_OFFSET + len(INPUT_FD_MARKER)]
+        expected = INPUT_FD_MARKER if inp == 'TRUE' else b'\xff' * len(INPUT_FD_MARKER)
+        if marker != expected:
+            failures.append(f'{INPUT_FLAG}={inp} but FD offset 0x{INPUT_FD_MARKER_OFFSET:x} '
+                            f'holds {marker.hex()} (expected {expected.hex()})')
+        names = {f['name'] for f in fvmain}
+        for driver in INPUT_FV_DRIVERS:
+            if (inp == 'TRUE') != (driver in names):
+                failures.append(f'{INPUT_FLAG}={inp} but FVMAIN '
                                 + ('carries ' if driver in names else 'lacks ') + driver)
     startup = [f for f in fvmain if f['name'] == 'startup.nsh']
     startup_text = None

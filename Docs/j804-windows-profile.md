@@ -41,6 +41,16 @@ Tools/build-j804-windows.sh` (`WM6_J804_GPU` needs `WM6_J804_AHCI`). With
 byte-identical to those built before the flag existed. The build script also
 accepts a `j804-windows-*` topic branch.
 
+The I0 input variant (the carrier's keyboard and pointer mailbox as
+`\_SB.INP0`, see below) is `WM6_CLEAN=1 WM6_J804_VUART=TRUE
+WM6_J804_AHCI=TRUE WM6_J804_USB=TRUE WM6_J804_GPU=TRUE WM6_J804_INPUT=TRUE
+WM6_OUTPUT_ROOT=../out/j804-windows-next sh Tools/build-j804-windows.sh`
+(`WM6_J804_INPUT` needs `WM6_J804_AHCI`; branch `j804-windows-next` carries
+AHCI, vUART, USB, GPU and input). With `J804_WINDOWS_INPUT` FALSE the
+default, vUART, AHCI, USB and GPU FDs are byte-identical to those built
+before the flag existed: the flag adds no C or ASL define, only the marker
+block, one SSDT and one driver.
+
 Status: built and host-tested only. Nothing here has run on hardware.
 
 ## What the image does
@@ -244,6 +254,49 @@ A `J804_WINDOWS_GPU=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
   declaring `\_SB.GPU0`, the HID, each sentinel once), no GPU0 in the DSDT,
   `J804GpuAcpiDxe` and the PrePi strings against the `J804_WINDOWS_GPU` flag.
 
+## I0: keyboard and pointer for Windows (`J804_WINDOWS_INPUT`)
+
+Contract: `windows-m6/INPUT-DESIGN.md` (sections 1.3, 1.4 and 1.6), aura-win
+`docs/windows-t8152.md` ("The Mu side") and `J804Windows.h` (`J804_INPUT_*`,
+`J804_GSIV_INPUT`). The carrier emulates one 16 KiB MMIO mailbox page at IPA
+0xF50000000 (hooked and never mapped, every access trapped; 256 MiB above
+the AHCI ABAR in the same `/arm-io` gap) and raises the purely virtual level
+SPI 991 while reports are queued. It translates every source (Mac-fed frames
+on the vUART RX first; the internal keyboard and trackpad later) into fixed
+HID reports for our own `m6input.sys` HID minidriver. The device does no
+DMA.
+
+A `J804_WINDOWS_INPUT=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
+- `\_SB.INP0` in its own SSDT (`AcpiTables/SsdtInp0.asl`, OEM table ID
+  `J804INP0`, FFS `J804Inp0Ssdt` 021B562E-3BD3-4324-BB92-25DB0ED09223), never
+  in the DSDT: `_HID` NTAS2040 (`J804_INPUT_HID`, project-local; not
+  AuroraSilicon's NTAS0050, which their AppleMtpHid binds, nor the Neo
+  AURA0700), `_UID` 0, `_CCA` 1, `_STA` 0xF, QWordMemory
+  0xF50000000-0xF50003FFF (0x4000) and Interrupt {991} level, active-high,
+  exclusive. No `_PSx`, `_PRx`, `_PRW`, `_DSW`, `_S0W`, `_DSD` or `_DMA`.
+- `J804InputAcpiDxe`, which installs that SSDT only at EL1 on cpu6 of a J804
+  and only when the launcher wrote `/chosen/aura,windows-input-v1` (24 bytes,
+  little-endian `<QIIII>`: u64 page base 0xF50000000, u32 size 0x4000, u32
+  GSIV 991, u32 feature mask, u32 version 1) after the carrier's input
+  ATTACH returned 0. The feature mask must have all four report bits 0-3
+  (keyboard, absolute pointer, relative pointer, consumer), bits 4-15 and
+  24-31 clear, and at least one source bit in 16-23 (`--windows-input host`
+  writes 0x1000F). It also refuses unless the whole page is NonExistent in
+  the GCD map. Without the property, or with any refusal (logged), Windows
+  sees no INP0 and never touches the page, so an input FD is safe under a
+  launcher with input off. Mu itself never touches the page and has no input
+  driver: host frames sent while Mu runs only update the carrier's state.
+- A raw marker at FD offset 0x140: `"J804INP1"`, u32 0x00F50000 (page >>
+  12), u32 991, for the launcher to check, in both directions, before it
+  attaches input. Non-input FDs have 0xFF there.
+- Host tests: `Tools/HostTests/J804InputHandshake` (the property parser,
+  ASan/UBSan, against bytes built field by field from the documented layout
+  and the launcher's literal `struct.pack` output) and the INP0/marker/DSC/
+  SSDT checks in `Tests/test_j804_windows_acpi_contract.py` (the SSDT is
+  also compiled on its own with `cc -E` and `iasl`). The manifest checks the
+  SSDT (one `J804INP0`, declaring `\_SB.INP0`, `_HID` NTAS2040), no INP0 in
+  the DSDT, the marker and the driver against the `J804_WINDOWS_INPUT` flag.
+
 ## ACPI tables
 
 | Table | Content |
@@ -255,6 +308,7 @@ A `J804_WINDOWS_GPU=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
 | DBG2 | only with `J804_WINDOWS_VUART`: \_SB.COM0 at 0x331200000 |
 | DSDT AHC0 | only with `J804_WINDOWS_AHCI`: NTAS2010, `_CLS` 01/06/01, `_CCA` 1, ABAR 0xF40000000/0x4000, GSIV 990 level/high |
 | SSDT J804XHC1 | only with `J804_WINDOWS_USB`, installed only with the `/chosen/aura,windows-usb-v1` handshake: `\_SB.XHC1` PNP0D10, `_UID` 1, `_CCA` 1, 0x40A430000/0x8000, GSIV 995 level/high, no power methods |
+| SSDT J804INP0 | only with `J804_WINDOWS_INPUT`, installed only with the `/chosen/aura,windows-input-v1` handshake: `\_SB.INP0` NTAS2040, `_UID` 0, `_CCA` 1, 0xF50000000/0x4000, GSIV 991 level/high, no power methods, no `_DSD` |
 | SSDT J804GPU0 | only with `J804_WINDOWS_GPU`, patched from the carrier's handoff page and installed only with the `/chosen/aura,windows-gpu-v1` handshake: `\_SB.GPU0` `J804_GPU0_HID`, `_UID` 0, `_CCA` 1, sgx window, GFX post-office page, pool, handoff page; `_DSD` handoff IPA/size; no interrupt, no power methods |
 
 Not described, by design: speaker amps, i2c1, i2c3, AOP, ADMAC, the hpm
@@ -299,6 +353,7 @@ must match the carrier; neither side can discover the other's choice.
 | AHCI disk (D1, AHCI builds) | ABAR 0xF40000000/0x4000, GSIV 990 level/high, `_CCA` 1; FD marker at 0x110; acts only on `/chosen/aura,windows-ahci-v1` | hook the ABAR page (never map it), deliver SPI 990 as a level through GICD_IROUTER, keep the store outside guest RAM and stage 2; write the 40-byte property only after ATTACH; refuse an AHCI FD (marker present) without an attached disk |
 | USB (D4, USB builds) | XHC1 0x40A430000/0x8000, GSIV 995 level/high, `_CCA` 1, no power methods; FD marker at 0x120; XHC1 SSDT installed only on `/chosen/aura,windows-usb-v1` | map exactly [0x40A430000, 0x40A438000) Device-nGnRnE IPA == PA, nothing else of usb-drd1; alias AIC 1692 to level SPI 995; coherent Gen3 DART identity map of exactly the DMA window it writes into the property (the guest RAM window, never the AHCI store or carrier memory); dwc3 left as `j804_usb_prep` sets it; write the 40-byte property only after ATTACH succeeded, with port mask 0x2; refuse a USB FD (marker present) without ATTACH and `--windows-usb drd1` with an FD lacking the marker |
 | GPU (G0, GPU builds) | GPU0 SSDT installed only on `/chosen/aura,windows-gpu-v1` and a handoff page that validates (J804GpuHandoff.h); RAM top lowered to the pool base and the pool reserved by PrePi; no interrupt, no power methods | build the page from the live ADT outside guest RAM, map it read-only at IPA == PA, write the 16-byte property only after ADMIT returned 0; carve the pool from the very top of the guest RAM window (= boot_args top), 32 MiB aligned, at most half; with the pool the RAM top Mu uses is the pool base, so `pool base >= 0x10220204000 + 128 MiB` (UEFI region clear of the copies); clean the page to the point of coherency after building it (Mu also cleans it before its uncached PrePi read) |
+| Input (I0, input builds) | INP0 0xF50000000/0x4000, GSIV 991 level/high, `_HID` NTAS2040; FD marker at 0x140; INP0 SSDT installed only on `/chosen/aura,windows-input-v1` | configure BIT(10), CAPS2 bit 3, `P_HV_WINDOWS_INPUT` 0xc89; hook the page (never map it), raise SPI 991 as a purely virtual level (`ENABLE && IRQ_EN && queue non-empty`); write the 24-byte property only after ATTACH returned 0; refuse an input FD (marker present) with `--windows-input off` and `--windows-input host` with an FD lacking the marker or naming another page or GSIV |
 | Stage 2 | the default build enables no MMIO device: only guest RAM, the framebuffer shadow, AIC3 and the hooked vGIC window are used (SMC0 `_STA` 0, no ANS0) | aura-win's real policy: an allowlist of the guest RAM window, carrier-registered pages (BGRA shadow, read-only ADT alias) and the AIC (Device-nGnRnE), plus hooked MMIO; an ADT denylist (qspi, sep, aop, admac, i2c, audio, gpio, wdt, pmgr, spmi, dart, sart, ans, smc, mtp, spi, dcp, sio, usb-drd0, 0x331118000, region-id-218/-4) checked at map time and before entry; HCR_EL2.TWI set. Enabling SMC0 or ANS0 needs an explicit carrier allowlist (ANS: trapped windows only, see above) |
 
 ## Not verified
@@ -327,6 +382,11 @@ must match the carrier; neither side can discover the other's choice.
   SSDT-only device with a reserved-memory resource and a `_DSD`, and whether
   a driver can map the pool cached. No driver binds `J804_GPU0_HID` yet.
   "Admit once" is per carrier session on the carrier side.
+- I0: Windows' handling of an SSDT-only INP0 and of a level SPI with no AIC
+  line behind it; `m6input.sys` has never been loaded; SPI 991 free on the
+  live ADT (980..999 were free except 984 in the last walk); whether the
+  page is NonExistent in the GCD map under the real launch (it fails closed:
+  no INP0, with a log line).
 - D1: AtaAtapiPassThru, AtaBusDxe and storahci against the carrier's model;
   whether CpuDxe maps the GCD-added ABAR as expected on this TIANO
   (ArmSetMemoryAttributes on an unmapped range); `NTAS2010` against the IDs

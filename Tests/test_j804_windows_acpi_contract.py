@@ -39,12 +39,18 @@ with the EL2 carrier in Platform/MacBookPro2026Pkg/Include/J804Windows.h:
     patched by the host test (Tools/HostTests/J804GpuHandoff) with a
     synthetic handoff and checked again. A non-GPU build has no J804GPU0
     SSDT; no DSDT ever declares GPU0.
+  * INP0 (I0, J804_WINDOWS_INPUT build): the platform SSDT with OEM table
+    ID J804INP0, declaring just \_SB.INP0: NTAS2040 (J804_INPUT_HID, not
+    AuroraSilicon's NTAS0050), _UID 0, _CCA 1, _STA 0xF, one QWord memory
+    range = the carrier's 16 KiB input page and one level, active-high
+    interrupt = J804_GSIV_INPUT, no power or wake methods and no _DSD. A
+    non-input build has no J804INP0 SSDT; no DSDT ever declares INP0.
 
 The build flags come from the stamp Tools/build-j804-windows.sh writes in
 the build tree (all FALSE when it is missing). Skips when no build is
-present. The D1 and D4 contract checks between J804Windows.h, the FDF marker
-blocks and the DSC need no build; the D4 SSDT is also compiled on its own
-with cc -E and iasl when both are installed. Host-only.
+present. The D1, D4 and I0 contract checks between J804Windows.h, the FDF marker
+blocks and the DSC need no build; the D4 and I0 SSDTs are also compiled on
+their own with cc -E and iasl when both are installed. Host-only.
 """
 
 from __future__ import annotations
@@ -68,6 +74,7 @@ DSC = REPO / "Platform" / "MacBookPro2026Pkg" / "MacBookPro2026.dsc"
 ACPI_SRC = REPO / "Platform" / "MacBookPro2026Pkg" / "AcpiTables"
 SSDT_XHC1 = ACPI_SRC / "SsdtXhc1.asl"
 SSDT_GPU0 = ACPI_SRC / "SsdtGpu0.asl"
+SSDT_INP0 = ACPI_SRC / "SsdtInp0.asl"
 GPU_HANDOFF_H = REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "Include" / "J804GpuHandoff.h"
 GPU_HOST_TEST = REPO / "Tools" / "HostTests" / "J804GpuHandoff"
 
@@ -85,6 +92,7 @@ CPU_EFFICIENCY = {**{m: EFF_E for m in range(6)},
 # Physical blocks that must never appear in a J804 windows DSDT.
 FORBIDDEN_QWORDS = {
     0x40A430000: "usb-drd1 xHCI (only in the gated J804XHC1 SSDT)",
+    0xF50000000: "carrier input page (only in the gated J804INP0 SSDT)",
     0x412430000: "usb-drd3 xHCI (no build describes it)",
     0x402430000: "usb-drd0 (aura console/proxy port)",
     0x331014000: "i2c1",
@@ -118,7 +126,7 @@ GPU_SYNTHETIC = [(0x440000000, 0x4000000), (0x360080000, 0x4000), (0x900000000, 
 
 def build_flags() -> dict[str, bool]:
     flags = {"J804_WINDOWS_ANS": False, "J804_WINDOWS_VUART": False, "J804_WINDOWS_AHCI": False,
-             "J804_WINDOWS_USB": False, "J804_WINDOWS_GPU": False}
+             "J804_WINDOWS_USB": False, "J804_WINDOWS_GPU": False, "J804_WINDOWS_INPUT": False}
     if FLAGS_STAMP.is_file():
         for item in FLAGS_STAMP.read_text().split():
             name, _, value = item.partition("=")
@@ -405,15 +413,26 @@ class J804WindowsAcpiContract(unittest.TestCase):
         self.assertEqual(len(ssdts), 1, "exactly one J804GPU0 SSDT in a GPU build")
         check_gpu0_ssdt(self, ssdts[0], [gpu_sentinel(k) for k in range(1, 5)], GPU_SENTINEL_IPA)
 
+    def test_inp0(self) -> None:
+        ssdts = [t for t in find_tables("SSDT") if t[16:24] == b"J804INP0"]
+        self.assertNotIn("INP0", {d["name"] for d in devices(find_table("DSDT"))},
+                         "INP0 is never in the DSDT")
+        if not build_flags()["J804_WINDOWS_INPUT"]:
+            self.assertEqual(ssdts, [], "a non-input build carries no J804INP0 SSDT")
+            return
+        self.assertEqual(len(ssdts), 1, "exactly one J804INP0 SSDT in an input build")
+        check_inp0_ssdt(self, ssdts[0], self.h)
+
     def test_platform_ssdts(self) -> None:
         flags = build_flags()
         ids = sorted(t[16:24] for t in find_tables("SSDT"))
         want = sorted(([b"J804XHC1"] if flags["J804_WINDOWS_USB"] else [])
-                      + ([b"J804GPU0"] if flags["J804_WINDOWS_GPU"] else []))
+                      + ([b"J804GPU0"] if flags["J804_WINDOWS_GPU"] else [])
+                      + ([b"J804INP0"] if flags["J804_WINDOWS_INPUT"] else []))
         self.assertEqual(ids, want, f"platform SSDTs for build flags {flags}")
 
     def test_published_gsivs_are_legal(self) -> None:
-        for key in ("J804_GSIV_XHC1", "J804_GSIV_ANS", "J804_GSIV_XHC2"):
+        for key in ("J804_GSIV_XHC1", "J804_GSIV_ANS", "J804_GSIV_XHC2", "J804_GSIV_INPUT"):
             self.assertTrue(32 <= self.h[key] < 1020, key)
 
 
@@ -438,6 +457,28 @@ def check_xhc1_ssdt(case: unittest.TestCase, ssdt: bytes, h: dict[str, int]) -> 
         case.assertNotIn(name, ssdt, f"XHC1 must not have {name.decode()}")
     for forbidden in (0x402430000, 0x412430000, 0x40A43C100):
         case.assertFalse(base <= forbidden < base + size, hex(forbidden))
+
+
+def check_inp0_ssdt(case: unittest.TestCase, ssdt: bytes, h: dict[str, int]) -> None:
+    """The I0 SSDT: only \\_SB.INP0, with the contract's resources."""
+    case.assertTrue(length_ok(ssdt))
+    case.assertTrue(checksum_ok(ssdt), "SSDT checksum")
+    case.assertEqual(ssdt[10:16], b"AURORA")
+    case.assertEqual(ssdt[16:24], b"J804INP0")
+    devs = {d["name"]: d for d in devices(ssdt)}
+    case.assertEqual(set(devs), {"INP0"}, "the SSDT declares INP0 and nothing else")
+    inp0 = devs["INP0"]
+    case.assertEqual(inp0["_HID"], "NTAS2040")
+    case.assertEqual(inp0["_HID"], header_strings()["J804_INPUT_HID"])
+    case.assertEqual(inp0["_UID"], 0)
+    case.assertEqual(inp0["_CCA"], 1)
+    case.assertEqual(inp0["_STA"], 0x0F)
+    base, size = h["J804_INPUT_BASE"], h["J804_INPUT_SIZE"]
+    case.assertEqual(resources(inp0["_CRS"]),
+                     [("qword", base, base + size - 1, size), ("irq", 0x01, [h["J804_GSIV_INPUT"]])],
+                     "the input page, then one consumer level active-high exclusive SPI")
+    for name in XHC1_FORBIDDEN_METHODS + (b"_DSD", b"_DMA", b"_PRS", b"_SRS", b"_DIS"):
+        case.assertNotIn(name, ssdt, f"INP0 must not have {name.decode()}")
 
 
 # Methods GPU0 must not have: the carrier owns the GPU's power (G0).
@@ -668,6 +709,103 @@ class J804WindowsUsbContract(unittest.TestCase):
             subprocess.run(["iasl", "-vs", "-p", str(Path(tmp) / "SsdtXhc1"), str(pre)],
                            check=True, capture_output=True)
             check_xhc1_ssdt(self, (Path(tmp) / "SsdtXhc1.aml").read_bytes(), self.h)
+
+
+class J804WindowsInputContract(unittest.TestCase):
+    """I0 values shared by J804Windows.h, the FDF marker, the DSC and the SSDT (no build)."""
+
+    def setUp(self) -> None:
+        self.h = header_defines()
+
+    def test_header_values(self) -> None:
+        h = self.h
+        # aura-win j804-windows-input proxyclient/aura/windows.py INPUT_*.
+        self.assertEqual((h["J804_INPUT_BASE"], h["J804_INPUT_SIZE"], h["J804_GSIV_INPUT"]),
+                         (0xF50000000, 0x4000, 991))
+        self.assertEqual(h["J804_INPUT_BASE"] % 0x4000, 0, "one 16 KiB stage-2 page")
+        self.assertEqual(h["J804_INPUT_BASE"] - h["J804_AHCI_BASE"], 0x10000000,
+                         "in the /arm-io gap, 256 MiB above the AHCI ABAR")
+        self.assertTrue(0xE80000000 <= h["J804_INPUT_BASE"]
+                        and h["J804_INPUT_BASE"] + h["J804_INPUT_SIZE"] <= 0x1000000000)
+        self.assertGreaterEqual(h["J804_INPUT_BASE"], h["J804_GICR_BASE"] + 12 * h["J804_GICR_FRAME_SIZE"])
+        self.assertNotIn(h["J804_GSIV_INPUT"], {h["J804_GSIV_AHCI"], h["J804_GSIV_XHC1"],
+                                                h["J804_GSIV_ANS"], h["J804_GSIV_XHC2"], 984})
+        self.assertTrue(980 <= h["J804_GSIV_INPUT"] < 1000, "the carrier's free 980..999 block")
+        strings = header_strings()
+        self.assertEqual(strings["J804_INPUT_HID"], "NTAS2040")
+        self.assertNotIn(strings["J804_INPUT_HID"], ("NTAS0050", "AURA0700"))
+        self.assertEqual(strings["J804_INPUT_ADT_PROPERTY"], "aura,windows-input-v1")
+        self.assertLess(len("aura,windows-input-v1"), 32, "ADT property keys are 32 bytes")
+        self.assertEqual(h["J804_INPUT_ADT_PROPERTY_SIZE"], struct.calcsize("<QIIII"))
+        self.assertEqual(h["J804_INPUT_VERSION"], 1)
+        self.assertEqual(h["J804_INPUT_FEATURES_REPORTS"], 0xF)
+        self.assertEqual(h["J804_INPUT_FEATURES_SOURCES"], 0xFF << 16)
+        self.assertEqual(h["J804_INPUT_FD_MARKER_OFFSET"], 0x140)
+
+    def test_fd_marker_block(self) -> None:
+        fdf = FDF.read_text()
+        m = re.search(r"!if \$\(J804_WINDOWS_INPUT\) == TRUE\n(?:#[^\n]*\n)*"
+                      r"(0x[0-9A-Fa-f]+)\|(0x[0-9A-Fa-f]+)\nDATA = \{(.*?)\}", fdf, re.S)
+        self.assertIsNotNone(m, "input marker region under !if J804_WINDOWS_INPUT")
+        offset, size = int(m.group(1), 16), int(m.group(2), 16)
+        data = bytes(int(b, 16) for b in re.findall(r"0x([0-9A-Fa-f]{2})\b",
+                                                     re.sub(r"#.*", "", m.group(3))))
+        self.assertEqual(offset, self.h["J804_INPUT_FD_MARKER_OFFSET"])
+        self.assertEqual(size, 0x10)
+        self.assertEqual(data, b"J804INP1" + struct.pack("<II", self.h["J804_INPUT_BASE"] >> 12,
+                                                         self.h["J804_GSIV_INPUT"]))
+        # After the USB block (0x120) and the slot kept for usb-drd3 (0x130),
+        # before the FV at 0x8000.
+        self.assertGreaterEqual(offset, self.h["J804_USB_FD_MARKER_OFFSET"] + 0x20)
+        self.assertLessEqual(offset + size, 0x8000)
+        regions = [int(o, 16) for o in re.findall(r"^(0x[0-9A-Fa-f]+)\|0x0+10$", fdf, re.M)]
+        self.assertEqual(len(regions), len(set(regions)), "no two FDF marker regions share an offset")
+
+    def test_dsc_defaults_off(self) -> None:
+        dsc = DSC.read_text()
+        self.assertIn("!ifndef J804_WINDOWS_INPUT\n  DEFINE J804_WINDOWS_INPUT = FALSE\n!endif", dsc)
+        self.assertIn("!if $(J804_WINDOWS_INPUT) == TRUE\n!if $(J804_WINDOWS_AHCI) == FALSE\n!error",
+                      dsc, "an input build needs the AHCI profile")
+        # No C or ASL define: with the flag off nothing compiled changes.
+        options = dsc.split("[BuildOptions.common]", 1)[1].split("!include", 1)[0]
+        self.assertNotIn("INPUT", options)
+        components = dsc.split("[Components.common]", 1)[1]
+        self.assertIn("!if $(J804_WINDOWS_INPUT) == TRUE\n"
+                      "  MacBookPro2026Pkg/AcpiTables/J804Inp0Ssdt.inf\n"
+                      "  MacBookPro2026Pkg/Drivers/J804InputAcpiDxe/J804InputAcpiDxe.inf\n!endif",
+                      components)
+
+    def test_sources(self) -> None:
+        dsdt = (ACPI_SRC / "DSDT.asl").read_text().split("DefinitionBlock", 1)[1]
+        self.assertNotIn("INP0", dsdt, "INP0 is never in the DSDT")
+        self.assertNotIn("J804_INPUT", dsdt)
+        asl = SSDT_INP0.read_text()
+        body = re.sub(r"//.*", "", asl)
+        for name in XHC1_FORBIDDEN_METHODS + (b"_DSD", b"_DMA"):
+            self.assertNotIn(name.decode(), body)
+        for macro in ("J804_INPUT_HID", "J804_INPUT_BASE", "J804_INPUT_SIZE", "J804_GSIV_INPUT"):
+            self.assertIn(macro, body)
+        inf = (ACPI_SRC / "J804Inp0Ssdt.inf").read_text()
+        guid = re.search(r"FILE_GUID = ([0-9A-F-]+)", inf).group(1)
+        driver = (REPO / "Platform" / "MacBookPro2026Pkg" / "Drivers" / "J804InputAcpiDxe"
+                  / "J804InputAcpiDxe.c").read_text()
+        g = guid.split("-")
+        c_guid = (f"0x{g[0].lower()}, 0x{g[1].lower()}, 0x{g[2].lower()}, {{ "
+                  + ", ".join(f"0x{g[3][i:i + 2].lower()}" for i in (0, 2)) + ", "
+                  + ", ".join(f"0x{g[4][i:i + 2].lower()}" for i in range(0, 12, 2)) + " }")
+        self.assertIn(c_guid, driver, "J804InputAcpiDxe installs the J804Inp0Ssdt FILE_GUID")
+        self.assertNotIn("MmioRead", driver, "Mu never touches the input page")
+        self.assertNotIn("MmioWrite", driver, "Mu never touches the input page")
+
+    @unittest.skipUnless(shutil.which("iasl") and shutil.which("cc"), "needs cc and iasl")
+    def test_ssdt_compiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pre = Path(tmp) / "SsdtInp0.asl"
+            subprocess.run(["cc", "-E", "-P", "-x", "c", "-I", str(HEADER.parent),
+                            str(SSDT_INP0), "-o", str(pre)], check=True)
+            subprocess.run(["iasl", "-vs", "-p", str(Path(tmp) / "SsdtInp0"), str(pre)],
+                           check=True, capture_output=True)
+            check_inp0_ssdt(self, (Path(tmp) / "SsdtInp0.aml").read_bytes(), self.h)
 
 
 class J804WindowsAhciContract(unittest.TestCase):
