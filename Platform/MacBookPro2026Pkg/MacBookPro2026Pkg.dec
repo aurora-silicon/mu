@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# J804 (MacBook Pro 14-inch, M6, T8152) Mu windows profile.
+[Defines]
+  DEC_SPECIFICATION = 0x00010005
+  PACKAGE_NAME = MacBookPro2026Pkg
+  PACKAGE_GUID = 710246C9-F72D-41DA-91A1-8A17D13CB7EB
+  PACKAGE_VERSION = 0.1
+
+[Includes]
+  Include

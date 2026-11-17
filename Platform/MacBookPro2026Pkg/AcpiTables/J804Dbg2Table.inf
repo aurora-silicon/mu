@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# J804 DBG2 table, only in J804_WINDOWS_VUART builds.
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804Dbg2Table
+  FILE_GUID = D888A31B-C636-4FD3-B63D-C2578ADADDF1
+  MODULE_TYPE = USER_DEFINED
+  VERSION_STRING = 1.0
+[Sources]
+  DBG2.aslc
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+[FixedPcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemRevision
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorRevision
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartBase

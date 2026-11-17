@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+//
+// J804 DBG2, built only when the carrier offers its virtual UART
+// (J804_WINDOWS_VUART). One serial port at the uart0 address, which the
+// carrier traps; the namespace path is the DSDT's \_SB.COM0.
+//
+// Port subtype 0x000A as in the J813 profile's DBG2 for the same emulated
+// Samsung UART. Whether a Windows debugger transport exists for it is not
+// verified.
+//
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi.h>
+#include <IndustryStandard/DebugPort2Table.h>
+#include <Acpi/AcpiHeader.h>
+
+#define J804_DBG2_UART_SUBTYPE   0x000A
+#define J804_DBG2_UART_SIZE      0x4000
+#define J804_DBG2_NAMESPACE      { '\\', '_', 'S', 'B', '.', 'C', 'O', 'M', '0', '\0' }
+#define J804_DBG2_NAMESPACE_LEN  10
+
+#pragma pack (1)
+typedef struct {
+  EFI_ACPI_DBG2_DEBUG_DEVICE_INFORMATION_STRUCT  Device;
+  EFI_ACPI_6_3_GENERIC_ADDRESS_STRUCTURE         BaseAddress;
+  UINT32                                         AddressSize;
+  UINT8                                          NameSpace[J804_DBG2_NAMESPACE_LEN];
+} J804_DBG2_DEVICE;
+
+typedef struct {
+  EFI_ACPI_DEBUG_PORT_2_DESCRIPTION_TABLE  Header;
+  J804_DBG2_DEVICE                         Port;
+} J804_DBG2;
+#pragma pack ()
+
+J804_DBG2  Dbg2 = {
+  {
+    __ACPI_HEADER (
+      EFI_ACPI_6_5_DEBUG_PORT_2_TABLE_SIGNATURE,
+      J804_DBG2,
+      EFI_ACPI_DBG2_DEBUG_DEVICE_INFORMATION_STRUCT_REVISION
+      ),
+    OFFSET_OF (J804_DBG2, Port),
+    1
+  },
+  {
+    {
+      EFI_ACPI_DBG2_DEBUG_DEVICE_INFORMATION_STRUCT_REVISION,
+      sizeof (J804_DBG2_DEVICE),
+      1,
+      J804_DBG2_NAMESPACE_LEN,
+      OFFSET_OF (J804_DBG2_DEVICE, NameSpace),
+      0,
+      0,
+      EFI_ACPI_DBG2_PORT_TYPE_SERIAL,
+      J804_DBG2_UART_SUBTYPE,
+      { EFI_ACPI_RESERVED_BYTE, EFI_ACPI_RESERVED_BYTE },
+      OFFSET_OF (J804_DBG2_DEVICE, BaseAddress),
+      OFFSET_OF (J804_DBG2_DEVICE, AddressSize)
+    },
+    ARM_GAS32 (FixedPcdGet64 (PcdAppleUartBase)),
+    J804_DBG2_UART_SIZE,
+    J804_DBG2_NAMESPACE
+  }
+};
+
+VOID *CONST  ReferenceAcpiTable = &Dbg2;

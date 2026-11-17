@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+//
+// J804 FADT: hardware-reduced ACPI, PSCI (SMC conduit, served by the
+// carrier), mobile power profile. No low-power S0 idle flag: sleep and
+// hibernation stay off for the windows profile.
+//
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+
+EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE  Fadt = {
+  .Header = __ACPI_HEADER (
+              EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_SIGNATURE,
+              EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE,
+              EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_REVISION
+              ),
+  .PreferredPmProfile = EFI_ACPI_6_4_PM_PROFILE_MOBILE,
+  .Flags              = EFI_ACPI_6_4_HW_REDUCED_ACPI,
+  .ArmBootArch        = EFI_ACPI_6_4_ARM_PSCI_COMPLIANT,
+  .MinorVersion       = EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_MINOR_REVISION,
+};
+
+VOID *CONST  ReferenceAcpiTable = &Fadt;

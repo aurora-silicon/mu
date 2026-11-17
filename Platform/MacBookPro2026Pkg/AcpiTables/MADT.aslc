@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+//
+// J804 MADT for the carrier's emulated GICv3 (hv_vgic.c).
+//
+// Twelve GICC entries, the boot CPU (ADT cpu6, MPIDR 0x10100) first as ACPI
+// requires. MPIDRs are the J804 CPU map from our t8152-j804.dts, checked
+// against the live ADT: E cores cpu0..5 = 0x0..0x5, P cores cpu6/7 =
+// 0x10100/0x10101, M cores cpu8..11 = 0x40102..0x40105. ACPI processor UIDs
+// equal the ADT CPU index and match the DSDT ACPI0007 _UIDs.
+//
+// Efficiency class (lower is faster): P = 0, M = 1, E = 2.
+// No PMU interrupt (the carrier does not describe one), no VGIC maintenance
+// interrupt, GicRBase 0 (redistributors are found through the GICR range).
+// No ITS: the carrier emulates none, and Windows initialises every ITS that
+// the MADT lists.
+//
+#include <Library/AcpiLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+#include <J804Windows.h>
+
+STATIC_ASSERT (FixedPcdGet64 (PcdGicDistributorBase) == J804_GICD_BASE,
+  "PcdGicDistributorBase must match the carrier vGIC distributor");
+STATIC_ASSERT (FixedPcdGet64 (PcdGicRedistributorsBase) == J804_GICR_BASE,
+  "PcdGicRedistributorsBase must match the carrier vGIC redistributors");
+
+#define J804_EFF_P  0
+#define J804_EFF_M  1
+#define J804_EFF_E  2
+
+#define J804_GICC(Uid, Mpidr, Efficiency) \
+  EFI_ACPI_6_3_GICC_STRUCTURE_INIT (Uid, Uid, Mpidr, EFI_ACPI_6_3_GIC_ENABLED, \
+    0, 0, 0, 0, 0, 0, Efficiency, 0)
+
+#pragma pack (1)
+typedef struct {
+  EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER  Header;
+  EFI_ACPI_6_3_GIC_STRUCTURE                           Cpu[J804_CPU_COUNT];
+  EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE               Distributor;
+  EFI_ACPI_6_4_GICR_STRUCTURE                          Redistributors;
+} J804_MADT;
+#pragma pack ()
+
+J804_MADT  Madt = {
+  {
+    __ACPI_HEADER (
+      EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+      J804_MADT,
+      EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION
+      ),
+    0,
+    0
+  },
+  {
+    J804_GICC (6,  J804_BOOT_CPU_MPIDR, J804_EFF_P),   // boot CPU first
+    J804_GICC (7,  0x10101, J804_EFF_P),
+    J804_GICC (8,  0x40102, J804_EFF_M),
+    J804_GICC (9,  0x40103, J804_EFF_M),
+    J804_GICC (10, 0x40104, J804_EFF_M),
+    J804_GICC (11, 0x40105, J804_EFF_M),
+    J804_GICC (0,  0x00000, J804_EFF_E),
+    J804_GICC (1,  0x00001, J804_EFF_E),
+    J804_GICC (2,  0x00002, J804_EFF_E),
+    J804_GICC (3,  0x00003, J804_EFF_E),
+    J804_GICC (4,  0x00004, J804_EFF_E),
+    J804_GICC (5,  0x00005, J804_EFF_E),
+  },
+  EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT (0, J804_GICD_BASE, 0, EFI_ACPI_6_0_GIC_V3),
+  {
+    EFI_ACPI_6_4_GICR,
+    sizeof (EFI_ACPI_6_4_GICR_STRUCTURE),
+    EFI_ACPI_RESERVED_WORD,
+    J804_GICR_BASE,
+    J804_CPU_COUNT * J804_GICR_FRAME_SIZE
+  },
+};
+
+VOID *CONST  ReferenceAcpiTable = &Madt;

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# J804 reset: PSCI SYSTEM_RESET at EL1 (carrier), WD1 at EL2, shutdown parks.
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804Wd1ResetSystemLib
+  FILE_GUID = 2F489A7A-5B9A-49E7-8633-5C3DA9FCE938
+  MODULE_TYPE = BASE
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = ResetSystemLib
+  LIBRARY_CLASS = HwResetSystemLib
+  CONSTRUCTOR = J804Wd1ResetSystemLibConstructor
+[Sources]
+  J804Wd1ResetSystemLib.c
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MdePkg/MdePkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec
+[LibraryClasses]
+  ArmMonitorLib
+  BaseLib
+  DebugLib
+  IoLib

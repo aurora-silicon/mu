@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804AcpiDxe
+  FILE_GUID = 15B37620-B068-46DA-A3E7-CDE047E842C1
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J804AcpiEntry
+[Sources]
+  J804AcpiDxe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  AcpiLib
+  AppleDTLib
+  ArmLib
+  BaseLib
+  DebugLib
+  PcdLib
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
+[Protocols]
+  gEfiAcpiTableProtocolGuid
+[Depex]
+  gEfiAcpiTableProtocolGuid

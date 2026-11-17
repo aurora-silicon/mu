@@ -1,0 +1,234 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+//
+// J804 (MacBook Pro 14-inch, M6) windows profile DSDT, for Mu running at EL1
+// under the EL2 carrier (aura WINDOWS=1 personality on T8152).
+//
+// Described: twelve CPUs in three ACPI0010 clusters, the SMC (read-only
+// sensor contract, NTAS2032) and the internal SSD controller (NTAS2004,
+// present but disabled unless the build sets J804_WINDOWS_ANS).
+//
+// Deliberately NOT described, whatever a driver might want: speaker amps,
+// i2c1, i2c3, AOP, ADMAC, the hpm USB-PD port controllers, GPIO pin 0xca
+// (193), the USB-C xHCI controllers (until the USB prerequisite of PLAN 0.6
+// holds), and anything that reaches the QSPI NVRAM (spi controller and NOR).
+//
+// Values shared with the carrier come from J804Windows.h.
+//
+#include <J804Windows.h>
+
+#ifndef J804_WINDOWS_ANS
+#define J804_WINDOWS_ANS 0
+#endif
+#ifndef J804_WINDOWS_SMC
+#define J804_WINDOWS_SMC 1
+#endif
+#ifndef J804_WINDOWS_VUART
+#define J804_WINDOWS_VUART 0
+#endif
+
+DefinitionBlock ("", "DSDT", 2, "AURORA", "J804WIN", 1)
+{
+    Scope (\_SB)
+    {
+        //
+        // E cluster: ADT cpu0..cpu5, MPIDR 0x0..0x5.
+        //
+        Device (CLU0)
+        {
+            Name (_HID, "ACPI0010")
+            Name (_UID, 0x100)
+            Name (_STA, 0x0F)
+            Device (CPU0)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 0)
+                Name (_STA, 0x0F)
+            }
+            Device (CPU1)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 1)
+                Name (_STA, 0x0F)
+            }
+            Device (CPU2)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 2)
+                Name (_STA, 0x0F)
+            }
+            Device (CPU3)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 3)
+                Name (_STA, 0x0F)
+            }
+            Device (CPU4)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 4)
+                Name (_STA, 0x0F)
+            }
+            Device (CPU5)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 5)
+                Name (_STA, 0x0F)
+            }
+        }
+
+        //
+        // P cluster: ADT cpu6 (the boot CPU) and cpu7, MPIDR 0x10100/0x10101.
+        //
+        Device (CLU1)
+        {
+            Name (_HID, "ACPI0010")
+            Name (_UID, 0x101)
+            Name (_STA, 0x0F)
+            Device (CPU6)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 6)
+                Name (_STA, 0x0F)
+            }
+            Device (CPU7)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 7)
+                Name (_STA, 0x0F)
+            }
+        }
+
+        //
+        // M cluster: ADT cpu8..cpu11, MPIDR 0x40102..0x40105.
+        //
+        Device (CLU2)
+        {
+            Name (_HID, "ACPI0010")
+            Name (_UID, 0x102)
+            Name (_STA, 0x0F)
+            Device (CPU8)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 8)
+                Name (_STA, 0x0F)
+            }
+            Device (CPU9)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 9)
+                Name (_STA, 0x0F)
+            }
+            Device (CP10)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 10)
+                Name (_STA, 0x0F)
+            }
+            Device (CP11)
+            {
+                Name (_HID, "ACPI0007")
+                Name (_UID, 11)
+                Name (_STA, 0x0F)
+            }
+        }
+
+        //
+        // SMC (ADT smc, iop,ascwrap-v8; same layout as J873, checked against
+        // our J804 DTS). Polled, no interrupt. Resource order is ASC, SMC
+        // SRAM, mailbox page (the driver adds the post-office offset 0x80,
+        // giving 0x30C710080).
+        //
+        Device (SMC0)
+        {
+            Name (_HID, "NTAS2032")
+            Name (_UID, Zero)
+            Name (_CCA, One)
+#if J804_WINDOWS_SMC
+            Name (_STA, 0x0F)
+#else
+            Name (_STA, Zero)
+#endif
+            Name (_CRS, ResourceTemplate ()
+            {
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x30C600000, 0x30C673FFF, 0, 0x74000)
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x30DE00000, 0x30DF1FFFF, 0, 0x120000)
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x30C710000, 0x30C713FFF, 0, 0x4000)
+            })
+        }
+
+        //
+        // Internal SSD: ANS2 (ADT ans). Resource order as the J873 profile:
+        // ASC, NVMe+NVMMU, SART v4, ANS mailbox page, PMGR page.
+        //
+        // Mailbox: the Linux-proven post-office window 3 at 0x316020300
+        // (our t8152-j804.dts ans_mbox, IRQs 302/262; NVMe works with it
+        // under Linux on J804). The page below is 0x316020000 and the driver
+        // adds +0x300. This is NOT the J873 profile's 0x316010000 page and is
+        // NOT taken from the live ADT: /arm-io/ans reg[2] maps
+        // 0x316000000 + 0x1c000, which does not cover 0x316020300, and the
+        // ADT post-office rule would give 0x316010300 instead (AUDIT-0.8 7.2,
+        // open question; unverified under Windows).
+        //
+        // NVMe interrupt: published GSIV 996, which the carrier must alias to
+        // physical AIC 1349 (ADT ans interrupts[3]).
+        //
+        // Disabled (_STA 0) unless the build sets J804_WINDOWS_ANS: M2 and M3
+        // run without any internal-storage driver.
+        //
+        Device (ANS0)
+        {
+            Name (_HID, "NTAS2004")
+            Name (_UID, Zero)
+            Name (_CCA, One)
+#if J804_WINDOWS_ANS
+            Name (_STA, 0x0F)
+#else
+            Name (_STA, Zero)
+#endif
+            Name (_CRS, ResourceTemplate ()
+            {
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x321600000, 0x321673FFF, 0, 0x74000)
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x325CC0000, 0x325D1FFFF, 0, 0x60000)
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x325C50000, 0x325C5BFFF, 0, 0xC000)
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x316020000, 0x316023FFF, 0, 0x4000)
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x300700000, 0x300703FFF, 0, 0x4000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) {J804_GSIV_ANS}
+            })
+        }
+
+#if J804_WINDOWS_VUART
+        //
+        // The carrier's virtual UART at the uart0 address (ADT uart0,
+        // uart-1,samsung, 0x331200000). Only built when the carrier offers
+        // it; the guest never reaches the physical block.
+        //
+        Device (COM0)
+        {
+            Name (_HID, "APPL8900")
+            Name (_UID, Zero)
+            Name (_CRS, ResourceTemplate ()
+            {
+                QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0,
+                    0x331200000, 0x331203FFF, 0, 0x4000)
+            })
+        }
+#endif
+    }
+}
