@@ -28,7 +28,16 @@ Standard library only.
 usage:
   j804-winpe-ramdisk.py build --media DIR --out-dir DIR [--index 1]
                               [--variant stay] [--variant reboot]
+  j804-winpe-ramdisk.py build-efi --efi APP.efi --name NAME --out-dir DIR
+                              [--file DST=SRC ...] [--label LABEL] [--size-mib 8]
   j804-winpe-ramdisk.py check --image WINPE.img --header hdr.bin
+
+build-efi makes the same GPT + one FAT Basic Data partition layout (and the
+same header) around any UEFI application, as \\EFI\\BOOT\\BOOTAA64.EFI, so
+that the windows FD boots it straight from the appended RAM disk (or, as a
+tiny AHCI disk, from --windows-ahci-boot disk). Small images use FAT12/16.
+The output is byte-reproducible: mtools runs with SOURCE_DATE_EPOCH (the
+application's own mtime is not used) and TZ=UTC, the serial is fixed.
 """
 
 import argparse
@@ -78,9 +87,9 @@ def die(msg):
     sys.exit(f"j804-winpe-ramdisk: {msg}")
 
 
-def run(cmd, log, **kw):
+def run(cmd, log, extra_env=None, **kw):
     log.append(" ".join(cmd))
-    env = dict(os.environ, MTOOLS_SKIP_CHECK="1", MTOOLS_NO_VFAT="0")
+    env = dict(os.environ, MTOOLS_SKIP_CHECK="1", MTOOLS_NO_VFAT="0", **(extra_env or {}))
     r = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw)
     if r.returncode:
         die(f"{cmd[0]} failed ({r.returncode}):\n{r.stdout.decode(errors='replace')[-2000:]}")
@@ -231,8 +240,8 @@ def gpt_header(current, backup, first_usable, last_usable, entry_lba, entries_cr
     return hdr.ljust(SECTOR, b"\0")
 
 
-def write_gpt(path, total_lbas, part_first, part_last):
-    entries = gpt_entry(BASIC_DATA, PART_GUID, part_first, part_last, VOLUME_LABEL)
+def write_gpt(path, total_lbas, part_first, part_last, part_name=VOLUME_LABEL):
+    entries = gpt_entry(BASIC_DATA, PART_GUID, part_first, part_last, part_name)
     entries = entries.ljust(GPT_ENTRIES * GPT_ENTRY_SIZE, b"\0")
     ecrc = zlib.crc32(entries) & 0xFFFFFFFF
     entry_sectors = len(entries) // SECTOR
@@ -492,6 +501,82 @@ def write_manifest(out_dir, a, info, inputs, results, log):
     (out_dir / "MANIFEST.txt").write_text("\n".join(L) + "\n")
 
 
+# ---------------------------------------------------------------- build-efi
+
+EFI_EPOCH = "1735689600"  # 2025-01-01 00:00:00 UTC: every FAT time stamp
+EFI_SERIAL = "4e544145"   # "NTAE"
+
+
+def cmd_build_efi(a):
+    out_dir = pathlib.Path(a.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for t in ("mformat", "mmd", "mcopy", "mdir"):
+        if not shutil.which(t):
+            die(f"{t} not found")
+    files = [("EFI/BOOT/BOOTAA64.EFI", pathlib.Path(a.efi))]
+    for spec in a.file or []:
+        if "=" not in spec:
+            die(f"--file {spec!r}: use DST=SRC")
+        dst, src = spec.split("=", 1)
+        files.append((dst.strip("/").replace("\\", "/"), pathlib.Path(src)))
+    for dst, src in files:
+        if not src.is_file():
+            die(f"{src} is not a file")
+    with open(files[0][1], "rb") as f:
+        if f.read(2) != b"MZ":
+            die(f"{files[0][1]} is not a PE image")
+    label = a.label.upper()
+    if not 1 <= len(label) <= 11 or not all(c.isalnum() or c in "_-" for c in label):
+        die("--label: 1-11 characters, A-Z 0-9 _ -")
+    part_bytes = a.size_mib * MIB
+    data = sum((p.stat().st_size + CLUSTER - 1) // CLUSTER * CLUSTER for _, p in files)
+    if data + MIB > part_bytes:
+        die(f"{data} bytes of files do not fit a {a.size_mib} MiB partition")
+    total_bytes = PART_START_LBA * SECTOR + part_bytes + MIB
+    part_first = PART_START_LBA
+    part_last = part_first + part_bytes // SECTOR - 1
+    env = {"SOURCE_DATE_EPOCH": EFI_EPOCH, "TZ": "UTC"}
+    log = []
+    img = out_dir / f"{a.name}.img"
+    with open(img, "wb") as f:
+        f.truncate(total_bytes)
+    spec = f"{img}@@{part_first * SECTOR}"
+    run(["mformat", "-i", spec, "-T", str(part_bytes // SECTOR), "-H", str(part_first),
+         "-N", EFI_SERIAL, "-v", label, "::"], log, env)
+    dirs = sorted({str(pathlib.PurePosixPath(dst).parents[i])
+                   for dst, _ in files for i in range(len(pathlib.PurePosixPath(dst).parents) - 1)},
+                  key=lambda s: (s.count("/"), s))
+    for d in dirs:
+        run(["mmd", "-i", spec, f"::/{d}"], log, env)
+    for dst, src in files:
+        run(["mcopy", "-i", spec, "-o", str(src), f"::/{dst}"], log, env)
+    write_gpt(img, total_bytes // SECTOR, part_first, part_last, label)
+    size = img.stat().st_size
+    crc = crc32_file(img, size)
+    hdr = struct.pack("<8sIIQI", HDR_SIGNATURE, HDR_VERSION, HDR_SIZE, size, crc)
+    hdr += struct.pack("<I", zlib.crc32(hdr) & 0xFFFFFFFF)
+    hdr_path = out_dir / f"hdr-{a.name}.bin"
+    hdr_path.write_bytes(hdr.ljust(HDR_SIZE, b"\0"))
+    chk = check_image(img, hdr_path)
+    listing = run(["mdir", "-i", spec, "-/", "::"], log, env)
+    L = [f"J804 EFI RAM disk {a.name} (j804-winpe-ramdisk.py build-efi)", ""]
+    L.append(f"  {sha256(img)}  {size:>9}  {img.name}")
+    L.append(f"  {sha256(hdr_path)}  {HDR_SIZE:>9}  {hdr_path.name}")
+    L.append(f"  header: NTASIRDK v2, ImageSize {size:#x}, ImageCrc32 {chk['image_crc32']:#010x}, "
+             f"HeaderCrc32 {chk['header_crc32']:#010x}; Mu reservation {chk['reservation']:#x}")
+    L.append(f"  GPT partition 1 LBA {part_first}-{part_last}, Basic Data, unique GUID "
+             f"{str(PART_GUID).upper()}, label {label}")
+    L.append("  host check (mirror of AppendedRamdisk.h validators): PASS")
+    L.append("  files:")
+    for dst, src in files:
+        L.append(f"    {sha256(src)}  {src.stat().st_size:>9}  {dst}")
+    L.append("")
+    L.append(listing.rstrip())
+    (out_dir / f"MANIFEST-{a.name}.txt").write_text("\n".join(L) + "\n")
+    print(f"{img.name}: {size} bytes, sha256 {sha256(img)}")
+    print(f"{hdr_path.name}: sha256 {sha256(hdr_path)}")
+
+
 def cmd_check(a):
     r = check_image(a.image, a.header)
     print(f"OK {a.image}: {r}")
@@ -510,6 +595,14 @@ def main():
     b.add_argument("--variant", action="append", choices=VARIANTS)
     b.add_argument("--keep-work", action="store_true")
     b.set_defaults(func=cmd_build)
+    e = sub.add_parser("build-efi")
+    e.add_argument("--efi", required=True, help="the UEFI application (\\EFI\\BOOT\\BOOTAA64.EFI)")
+    e.add_argument("--name", required=True, help="output names: NAME.img, hdr-NAME.bin")
+    e.add_argument("--out-dir", required=True)
+    e.add_argument("--file", action="append", help="extra file DST=SRC (DST inside the volume)")
+    e.add_argument("--label", default="J804EFI", help="FAT volume label and GPT partition name")
+    e.add_argument("--size-mib", type=int, default=8, help="FAT partition size (MiB)")
+    e.set_defaults(func=cmd_build_efi)
     c = sub.add_parser("check")
     c.add_argument("--image", required=True)
     c.add_argument("--header", required=True)
