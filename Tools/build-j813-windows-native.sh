@@ -50,6 +50,8 @@ test "$profile" != internal-storage-windows-n1 || n1_bus=TRUE
 # The GPU probe image is the N1 image plus the J813 G17 GPU device (AURA8170).
 g17_gpu=FALSE
 j813_disp=FALSE
+# Empty keeps the DSC's NTASI_DEBUG_PRINT_ERROR_LEVEL.
+debug_print_level=
 if test "$profile" = internal-storage-windows-n1-gpu; then
     n1_bus=TRUE
     g17_gpu=TRUE
@@ -59,6 +61,11 @@ if test "$profile" = internal-storage-windows-n1-gpu-disp; then
     n1_bus=TRUE
     g17_gpu=TRUE
     j813_disp=TRUE
+    # Errors, warnings, driver loads (DEBUG_LOAD) and one-shot milestones
+    # (DEBUG_INIT) only.  Under Aura every UART byte is a trapped status poll
+    # and a trapped write under the hypervisor's lock, about 8.5 us a byte;
+    # the full level cost about 15 s of boot 146's 19.6 s in Mu (1.8 MB).
+    debug_print_level=0x80000007
 fi
 ans_acpi=${ans_acpi:-FALSE}
 if test "$ans" = true; then
@@ -160,6 +167,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
     "BLD_*_NTASI_G17_GPU_PROBE=$g17_gpu" \
     "BLD_*_NTASI_J813_DISPLAY_DEVICE=$j813_disp" \
     "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
+    ${debug_print_level:+"BLD_*_NTASI_DEBUG_PRINT_ERROR_LEVEL=$debug_print_level"} \
     "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1; then
     # Homebrew llvm-rc parses an absolute POSIX input path beginning with '/' as
     # an option. Complete the deterministic HII resource step from its output
@@ -182,6 +190,7 @@ if ! "$venv/bin/stuart_build" -c "$platform_build" TOOL_CHAIN_TAG=CLANGPDB TARGE
             "BLD_*_NTASI_G17_GPU_PROBE=$g17_gpu" \
             "BLD_*_NTASI_J813_DISPLAY_DEVICE=$j813_disp" \
             "BLD_*_NTASI_AURA_WINDOWS=$aura_windows" \
+            ${debug_print_level:+"BLD_*_NTASI_DEBUG_PRINT_ERROR_LEVEL=$debug_print_level"} \
             "BLD_*_MTP_HID_BUILD=$mtp_hid_build" >> "$log" 2>&1 || {
             tail -80 "$log" >&2
             exit 1
@@ -202,13 +211,14 @@ clean=true
 test -z "$(git -C "$source_root" status --porcelain=v1 --untracked-files=no --ignore-submodules=none)" || clean=false
 manifest=$artifact_dir/manifest.json
 "$venv/bin/python" - "$manifest" "$commit" "$clean" "$profile" "$size" "$digest" \
-    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" "$n1_bus" "$g17_gpu" "$j813_disp" <<'PY'
+    "$ans_enable" "$ans_dxe" "$ans_block_io" "$ans_preserve" "$ans_acpi" "$n1_bus" "$g17_gpu" "$j813_disp" \
+    "$debug_print_level" <<'PY'
 import json
 import pathlib
 import sys
 
 (path, commit, clean, profile, size, digest, ans, ans_dxe, ans_block_io,
- ans_preserve, ans_acpi, n1_bus, g17_gpu, j813_disp) = sys.argv[1:]
+ ans_preserve, ans_acpi, n1_bus, g17_gpu, j813_disp, debug_print_level) = sys.argv[1:]
 enabled = lambda value: value == "TRUE"
 record = {
     "schema": "aurora.j813.mu-profile.v1",
@@ -260,6 +270,8 @@ record = {
         "sha256": digest,
     },
 }
+if debug_print_level:
+    record["build"]["pcds"]["PcdDebugPrintErrorLevel"] = debug_print_level
 pathlib.Path(path).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 PY
 
