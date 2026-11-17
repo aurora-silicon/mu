@@ -4,6 +4,10 @@ Mu for the MacBook Pro 14-inch, M6 (J804, T8152), running at EL1 as the guest
 of the EL2 carrier: aura's `WINDOWS=1` personality ported to T8152 (PLAN 0.5,
 option H1). Build: `sh Tools/build-j804-windows.sh` on branch `j804-windows`;
 output `../out/j804-windows/artifacts/J804WIN_EFI.fd` with `MANIFEST.txt`.
+The serial variant is `WM6_J804_VUART=TRUE WM6_OUTPUT_ROOT=../out/j804-windows-vuart
+sh Tools/build-j804-windows.sh`; `MANIFEST.txt` records the build flags, and
+the manifest check fails unless DBG2 and `\_SB.COM0` are present exactly when
+`J804_WINDOWS_VUART=TRUE`.
 
 Status: built and host-tested only. Nothing here has run on hardware.
 

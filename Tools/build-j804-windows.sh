@@ -78,6 +78,7 @@ cp "$fd" "$output_root/artifacts/J804WIN_EFI.fd"
 "$venv/bin/python" "$source_root/Tools/wm6-manifest.py" \
     --source-root "$source_root" --build-dir "$out" \
     --fd "$output_root/artifacts/J804WIN_EFI.fd" --profile j804-windows \
+    --build-flag "J804_WINDOWS_ANS=$ans" --build-flag "J804_WINDOWS_VUART=$vuart" \
     --out "$output_root/artifacts"
 # The build log names the checkout path; keep it out of the hand-over files.
 sed "s|$source_root|<mu>|g; s|$parent|<wm6>|g; s|$HOME|<home>|g" "$log" > "$log.tmp" && mv "$log.tmp" "$log"

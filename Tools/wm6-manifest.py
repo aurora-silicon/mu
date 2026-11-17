@@ -9,7 +9,8 @@ Host-only. Checks:
   * No build-host paths in any PE of the build output or in the uncompressed
     FVMAIN (the FD itself is LZMA-compressed, so it is not scanned directly).
 Writes MANIFEST.txt and manifest.json next to the FD:
-  sha256, POSIX cksum, size, git commit and dirty state, marker strings found
+  sha256, POSIX cksum, size, git commit and dirty state, the build flags the
+  build script passed (--build-flag NAME=VALUE), marker strings found
   in the PE files, the FVMAIN and FVMAIN_COMPACT file GUID/type/name lists,
   the startup.nsh that the FV carries and, for the windows profile, the ACPI
   tables the build produced (signature, length, sha256).
@@ -64,6 +65,9 @@ MARKERS = {
 J873_ONLY = {'J873-MU-005', 'J873_PROBE_READY', 'J873_PROBE_DONE'}
 # ACPI signatures the windows profile must produce, and those it must not.
 ACPI_REQUIRED = {'DSDT', 'FACP', 'APIC', 'GTDT'}
+# The windows profile's DBG2 (and the DSDT's COM0) exist only in a
+# J804_WINDOWS_VUART=TRUE build; a manifest must not let the two FDs be confused.
+VUART_FLAG = 'J804_WINDOWS_VUART'
 
 FFS_TYPES = {
     0x01: 'RAW', 0x02: 'FREEFORM', 0x03: 'SEC', 0x04: 'PEI_CORE',
@@ -154,8 +158,16 @@ def main():
     ap.add_argument('--fd', required=True, type=pathlib.Path)
     ap.add_argument('--profile', required=True)
     ap.add_argument('--out', required=True, type=pathlib.Path)
+    ap.add_argument('--build-flag', action='append', default=[], metavar='NAME=VALUE',
+                    help='a build define the script passed (recorded; repeatable)')
     args = ap.parse_args()
     failures = []
+    flags = {}
+    for item in args.build_flag:
+        name, sep, value = item.partition('=')
+        if not sep or not name or name in flags:
+            ap.error(f'bad or repeated --build-flag {item!r}')
+        flags[name] = value
 
     data = args.fd.read_bytes()
     if len(data) != FD_SIZE:
@@ -216,6 +228,19 @@ def main():
         found = {t['signature'] for t in acpi}
         for sig in sorted(ACPI_REQUIRED - found):
             failures.append(f'ACPI table {sig} not built')
+        vuart = flags.get(VUART_FLAG)
+        if vuart not in ('TRUE', 'FALSE'):
+            failures.append(f'--build-flag {VUART_FLAG}=TRUE|FALSE not given')
+        elif (vuart == 'TRUE') != ('DBG2' in found):
+            failures.append(f'{VUART_FLAG}={vuart} but DBG2 is '
+                            + ('built' if 'DBG2' in found else 'not built'))
+        dsdt = [t['file'] for t in acpi if t['signature'] == 'DSDT']
+        if vuart in ('TRUE', 'FALSE') and len(dsdt) == 1:
+            dsdt_blob = next(args.build_dir.joinpath('AARCH64', 'MacBookPro2026Pkg')
+                             .rglob(dsdt[0])).read_bytes()
+            if (vuart == 'TRUE') != (b'COM0' in dsdt_blob):
+                failures.append(f'{VUART_FLAG}={vuart} but the DSDT '
+                                + ('names' if b'COM0' in dsdt_blob else 'lacks') + ' COM0')
     if leaks:
         failures.append(f'{len(leaks)} build-host paths in PE files or ACPI tables')
 
@@ -245,6 +270,7 @@ def main():
                 cksum=crc, cksum_size=csize),
         source_commit=commit,
         source_status=status,
+        build_flags=flags,
         pe_files_scanned=len(scanned),
         path_leaks=leaks,
         markers=markers,
@@ -266,6 +292,7 @@ def main():
         f'cksum          {crc} {csize}',
         f'source commit  {commit}',
         'source status  ' + ('; '.join(s.strip() for s in status) or 'clean'),
+        'build flags    ' + (' '.join(f'{k}={v}' for k, v in flags.items()) or 'none recorded'),
         f'path check     {len(scanned)} PE/FV files scanned, '
         f'{len(leaks)} build-host paths found',
         '',
