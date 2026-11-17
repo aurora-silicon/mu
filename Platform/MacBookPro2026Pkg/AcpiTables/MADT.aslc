@@ -8,7 +8,13 @@
 // 0x10100/0x10101, M cores cpu8..11 = 0x40102..0x40105. ACPI processor UIDs
 // equal the ADT CPU index and match the DSDT ACPI0007 _UIDs.
 //
-// Efficiency class (lower is faster): P = 0, M = 1, E = 2.
+// Processor power efficiency class: ACPI 6.5 (MADT GICC "Processor Power
+// Efficiency Class") defines lower numbers as MORE power efficient, and
+// Windows' EfficiencyClass uses the same polarity (higher = faster). So
+// E = 0, M = 1, P = 2. The E < M < P order follows the cluster roles (M
+// shares the P cluster's performance domain in our t8152-j804.dts); it is
+// not measured on J804. Same polarity as the J813 fix
+// (codex/j813-cpu-efficiency, T6020J414sTopology.h: E = 0, P = 1).
 // No PMU interrupt (the carrier does not describe one), no VGIC maintenance
 // interrupt, GicRBase 0 (redistributors are found through the GICR range).
 // No ITS: the carrier emulates none, and Windows initialises every ITS that
@@ -25,9 +31,9 @@ STATIC_ASSERT (FixedPcdGet64 (PcdGicDistributorBase) == J804_GICD_BASE,
 STATIC_ASSERT (FixedPcdGet64 (PcdGicRedistributorsBase) == J804_GICR_BASE,
   "PcdGicRedistributorsBase must match the carrier vGIC redistributors");
 
-#define J804_EFF_P  0
+#define J804_EFF_E  0
 #define J804_EFF_M  1
-#define J804_EFF_E  2
+#define J804_EFF_P  2
 
 #define J804_GICC(Uid, Mpidr, Efficiency) \
   EFI_ACPI_6_3_GICC_STRUCTURE_INIT (Uid, Uid, Mpidr, EFI_ACPI_6_3_GIC_ENABLED, \

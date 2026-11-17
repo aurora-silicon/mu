@@ -5,7 +5,8 @@
     SYSTEM_RESET over SMC. The carrier owns the real reset: it shuts the NVMe
     controller down first and then restarts through WD1. The guest never
     touches WD1 itself, so it cannot bypass that ordering.
-  - At EL2 (no carrier above, e.g. the same FD started natively like M1):
+  - At EL2 (no carrier above; only an NTASI_AURA_WINDOWS=FALSE build may run
+    there, the default FD links AuraArmExceptionLib and is EL1-only):
     cold and warm reset write WD1 directly, the restart path aura and Linux
     use on J804. This firmware has no NVMe driver and writes nothing to disk.
     This path is boot-time only: no OS runs above this firmware at EL2.

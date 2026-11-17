@@ -178,19 +178,25 @@ DefinitionBlock ("", "DSDT", 2, "AURORA", "J804WIN", 1)
         // NVMe interrupt: published GSIV 996, which the carrier must alias to
         // physical AIC 1349 (ADT ans interrupts[3]).
         //
-        // Disabled (_STA 0) unless the build sets J804_WINDOWS_ANS: M2 and M3
-        // run without any internal-storage driver.
+        // Emitted only when the build sets J804_WINDOWS_ANS: M2 and M3 run
+        // without any internal-storage driver, and the default DSDT names
+        // none of the pages below.
         //
+        // The last two resources are SHARED pages and are NOT a stage-2
+        // mapping request (J804Windows.h, J804_ANS_*): the PMGR page holds
+        // ps_spi_p (+0xd40) and ps_qspi (+0x1140) next to ps_ans (+0x8a0),
+        // and the mailbox page holds the DCP mailbox at +0x500 (and other
+        // coprocessors' post-office windows). The carrier must never map
+        // either page; it traps them and passes through only ps_ans and the
+        // 0x80-byte mailbox window at +0x300.
+        //
+#if J804_WINDOWS_ANS
         Device (ANS0)
         {
             Name (_HID, "NTAS2004")
             Name (_UID, Zero)
             Name (_CCA, One)
-#if J804_WINDOWS_ANS
             Name (_STA, 0x0F)
-#else
-            Name (_STA, Zero)
-#endif
             Name (_CRS, ResourceTemplate ()
             {
                 QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
@@ -211,6 +217,7 @@ DefinitionBlock ("", "DSDT", 2, "AURORA", "J804WIN", 1)
                 Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) {J804_GSIV_ANS}
             })
         }
+#endif
 
 #if J804_WINDOWS_VUART
         //

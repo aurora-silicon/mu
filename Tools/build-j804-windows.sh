@@ -11,7 +11,7 @@
 #   WM6_OUTPUT_ROOT          output directory (default ../out/j804-windows)
 #   WM6_VENV                 venv made by Tools/wm6-env.sh (default ../venv)
 #   WM6_CLEAN=1              delete Build/MacBookPro2026-AARCH64 first
-#   WM6_J804_ANS=TRUE        ANS0 present (_STA 0xF) instead of disabled
+#   WM6_J804_ANS=TRUE        emit ANS0 (_STA 0xF); the default DSDT has no ANS0
 #   WM6_J804_VUART=TRUE      carrier vUART build (serial lib, COM0, DBG2)
 set -eu
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)

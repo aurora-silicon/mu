@@ -3,8 +3,9 @@
 // Install the J804 windows-profile ACPI tables, only where they are true:
 // at EL1 (a guest of the EL2 carrier that emulates the GIC, PSCI and the
 // timers these tables describe), on the boot CPU cpu6, on a J804 device
-// tree. Anywhere else (for example the same FD started natively at EL2) the
-// tables would describe hardware that is not there, so none are installed.
+// tree. Anywhere else the tables would describe hardware that is not there,
+// so none are installed. (This is a fail-safe, not EL2 support: the default
+// FD links AuraArmExceptionLib and must not be started natively at EL2.)
 // Derived from MacMini2026Pkg J873AcpiDxe.
 //
 #include <Uefi.h>

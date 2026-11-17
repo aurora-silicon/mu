@@ -12,8 +12,13 @@
 #   - an idle loop without WFI until Phase 3(a) measures WFI on T8152;
 #   - AIC timer reflection only at EL1 (AppleAicV2Dxe checks CurrentEL);
 #   - panel checkpoints.
-# The ACPI tables install only at EL1 on cpu6 of a J804 (J804AcpiDxe). Started
-# natively at EL2 the same FD runs like M1: shell, no ACPI, WD1 reset.
+# The ACPI tables install only at EL1 on cpu6 of a J804 (J804AcpiDxe). This FD
+# is for EL1 under the carrier only: with NTASI_AURA_WINDOWS (the default) it
+# links AuraArmExceptionLib, which AUDIT-0.8 forbids in a native-EL2 image
+# (its HVC forward has no CurrentEL check; at EL2 the HVC traps to EL2
+# itself). Start natively at EL2 only the M1 FD (build-j804-m1.sh), never this
+# one. An NTASI_AURA_WINDOWS=FALSE build drops the forwarding; it is not
+# tested at EL2 either.
 #
 [Defines]
   PLATFORM_NAME = MacBookPro2026
@@ -43,8 +48,12 @@
   DEFINE NTASI_AURA_WINDOWS = TRUE
 !endif
   #
-  # J804_WINDOWS_ANS: ANS0 (NTAS2004) _STA. FALSE for M2/M3 (no storage).
-  # J804_WINDOWS_SMC: SMC0 (NTAS2032) _STA.
+  # J804_WINDOWS_ANS: emits ANS0 (NTAS2004) at all. FALSE for M2/M3 (no
+  #   storage); the default DSDT then names no ANS, PMGR or mailbox page.
+  # J804_WINDOWS_SMC: SMC0 (NTAS2032) _STA. FALSE: the T8152 carrier's stage
+  #   2 is an allowlist (guest RAM, carrier pages, AIC) and its ADT denylist
+  #   holds every /arm-io smc* node, so a bound SMC driver would only take
+  #   stage-2 aborts. Enable only once the carrier allowlists the SMC pages.
   # J804_WINDOWS_VUART: the carrier offers a vUART at the uart0 address; adds
   #   the Samsung UART serial library, \_SB.COM0 and DBG2. FALSE = Null serial.
   # J804_WINDOWS_USB: refused until the USB prerequisite of PLAN 0.6 holds
@@ -54,7 +63,7 @@
   DEFINE J804_WINDOWS_ANS = FALSE
 !endif
 !ifndef J804_WINDOWS_SMC
-  DEFINE J804_WINDOWS_SMC = TRUE
+  DEFINE J804_WINDOWS_SMC = FALSE
 !endif
 !ifndef J804_WINDOWS_VUART
   DEFINE J804_WINDOWS_VUART = FALSE

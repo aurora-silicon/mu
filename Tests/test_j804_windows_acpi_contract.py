@@ -7,18 +7,21 @@ made by Tools/build-j804-windows.sh) against PLAN 0.6 and the values shared
 with the EL2 carrier in Platform/MacBookPro2026Pkg/Include/J804Windows.h:
 
   * MADT: twelve enabled GICCs, the boot CPU (MPIDR 0x10100) first, the J804
-    CPU map, UIDs 0..11, one GICv3 distributor and one redistributor range
-    at the carrier's bases, no ITS and no MSI frame;
+    CPU map, UIDs 0..11, efficiency classes E 0 < M 1 < P 2 per MPIDR (ACPI:
+    lower = more power efficient), one GICv3 distributor and one
+    redistributor range at the carrier's bases, no ITS and no MSI frame;
   * GTDT: physical/virtual timer INTIDs 17/18 as the carrier injects them,
     no secure, EL2 or platform timers;
   * FADT: hardware-reduced, PSCI over SMC, PreferredPmProfile MOBILE, no
     low-power S0 idle;
-  * DSDT: exactly the expected device set (three ACPI0010 clusters with
-    twelve ACPI0007 CPUs, SMC0 NTAS2032, ANS0 NTAS2004), ANS0 disabled by
-    default with the Linux-proven mailbox page and published GSIV 996, and
-    none of the forbidden blocks (USB controllers, i2c1/i2c3, the J873 ANS
-    mailbox page, the QSPI/NVRAM controller).
+  * DSDT (default build): exactly the expected device set (three ACPI0010
+    clusters with twelve ACPI0007 CPUs, SMC0 NTAS2032 with _STA 0 because
+    the T8152 carrier denies the SMC pages, no ANS0), and none of the
+    forbidden blocks (USB controllers, i2c1/i2c3, the J873 ANS mailbox page,
+    the QSPI/NVRAM controller, the PMGR SPI/QSPI power states, the DCP
+    mailbox). ANS0 checks run only on a J804_WINDOWS_ANS build.
 
+Checks the default build (Tools/build-j804-windows.sh without overrides).
 Skips when no build is present. Host-only.
 """
 
@@ -32,10 +35,19 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 BUILD = REPO / "Build" / "MacBookPro2026-AARCH64" / "DEBUG_CLANGPDB" / "AARCH64" / "MacBookPro2026Pkg"
 HEADER = REPO / "Platform" / "MacBookPro2026Pkg" / "Include" / "J804Windows.h"
+FAMILY_DSC = REPO / "Silicon" / "Apple" / "T8152FamilyPkg" / "T8152FamilyPkg.dsc.inc"
+J804M1_H = REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "Include" / "J804M1.h"
 
 CPU_MPIDR = {0: 0x0, 1: 0x1, 2: 0x2, 3: 0x3, 4: 0x4, 5: 0x5,
              6: 0x10100, 7: 0x10101,
              8: 0x40102, 9: 0x40103, 10: 0x40104, 11: 0x40105}
+
+# ACPI 6.5 MADT GICC Processor Power Efficiency Class: lower numbers are more
+# power efficient (Windows EfficiencyClass: higher = faster). E < M < P.
+EFF_E, EFF_M, EFF_P = 0, 1, 2
+CPU_EFFICIENCY = {**{m: EFF_E for m in range(6)},
+                  0x10100: EFF_P, 0x10101: EFF_P,
+                  **{m: EFF_M for m in range(0x40102, 0x40106)}}
 
 # Physical blocks that must never appear in a J804 windows DSDT.
 FORBIDDEN_QWORDS = {
@@ -46,7 +58,11 @@ FORBIDDEN_QWORDS = {
     0x33101C000: "i2c3",
     0x316010000: "J873 ANS mailbox page (J804 uses 0x316020000)",
     0x331118000: "QSPI NVRAM region",
+    0x300700D40: "PMGR ps_spi_p (SPI power domain)",
+    0x300701140: "PMGR ps_qspi (QSPI NOR power domain)",
+    0x316020500: "DCP mailbox (shared post-office page)",
 }
+
 
 
 def header_defines() -> dict[str, int]:
@@ -177,6 +193,7 @@ class J804WindowsAcpiContract(unittest.TestCase):
                 pmu = struct.unpack_from("<I", entry, 20)[0]
                 mpidr = struct.unpack_from("<Q", entry, 68)[0]
                 eff = entry[76]
+                self.assertEqual(entry[77:80], b"\0\0\0", "reserved bytes after the class")
                 gicc.append((uid, flags, pmu, mpidr, eff))
             elif kind == 0x0C:
                 gicd.append((struct.unpack_from("<Q", entry, 8)[0], entry[20]))
@@ -189,6 +206,11 @@ class J804WindowsAcpiContract(unittest.TestCase):
         self.assertEqual(gicc[0][3], self.h["J804_BOOT_CPU_MPIDR"], "boot CPU must be first")
         self.assertEqual(gicc[0][0], 6)
         self.assertEqual({g[0]: g[3] for g in gicc}, CPU_MPIDR)
+        self.assertEqual({g[3]: g[4] for g in gicc}, CPU_EFFICIENCY,
+                         "efficiency class per MPIDR (E 0 < M 1 < P 2)")
+        boot = [g for g in gicc if g[3] == self.h["J804_BOOT_CPU_MPIDR"]]
+        e_core = [g for g in gicc if g[3] == 0x0]
+        self.assertGreater(boot[0][4], e_core[0][4], "P core must not be more efficient than E")
         self.assertTrue(all(g[1] & 1 for g in gicc), "every GICC enabled")
         self.assertTrue(all(g[2] == 0 for g in gicc), "no PMU interrupt described")
         self.assertEqual(gicd, [(self.h["J804_GICD_BASE"], 3)])
@@ -224,8 +246,8 @@ class J804WindowsAcpiContract(unittest.TestCase):
         self.assertTrue(length_ok(dsdt))
         devs = {d["name"]: d for d in devices(dsdt)}
         cpus = {f"CPU{i}" if i < 10 else f"CP{i}" for i in range(12)}
-        self.assertEqual(set(devs), {"CLU0", "CLU1", "CLU2", "SMC0", "ANS0"} | cpus,
-                         "unexpected or missing DSDT devices")
+        self.assertEqual(set(devs), {"CLU0", "CLU1", "CLU2", "SMC0"} | cpus,
+                         "unexpected or missing DSDT devices (default build: no ANS0)")
         for name in ("CLU0", "CLU1", "CLU2"):
             self.assertEqual(devs[name]["_HID"], "ACPI0010")
         self.assertEqual(sorted(devs[n]["_UID"] for n in cpus), list(range(12)))
@@ -233,19 +255,17 @@ class J804WindowsAcpiContract(unittest.TestCase):
 
         smc = devs["SMC0"]
         self.assertEqual(smc["_HID"], "NTAS2032")
+        self.assertEqual(smc["_STA"], 0, "SMC0 disabled: the T8152 carrier denies the SMC pages")
         self.assertEqual([r[1:] for r in resources(smc["_CRS"])],
                          [(0x30C600000, 0x30C673FFF, 0x74000),
                           (0x30DE00000, 0x30DF1FFFF, 0x120000),
                           (0x30C710000, 0x30C713FFF, 0x4000)])
 
-        ans = devs["ANS0"]
-        self.assertEqual(ans["_HID"], "NTAS2004")
-        self.assertEqual(ans["_STA"], 0, "ANS0 disabled in the default build")
-        crs = resources(ans["_CRS"])
-        qwords = [r[1:] for r in crs if r[0] == "qword"]
-        self.assertIn((0x316020000, 0x316023FFF, 0x4000), qwords, "Linux-proven mailbox page")
-        self.assertEqual(qwords[0], (0x321600000, 0x321673FFF, 0x74000))
-        self.assertEqual([r[2] for r in crs if r[0] == "irq"], [[self.h["J804_GSIV_ANS"]]])
+        self.assertEqual(self.h["J804_ANS_PS_REG"] & ~0x3FFF, self.h["J804_ANS_PMGR_PAGE"])
+        self.assertEqual(self.h["J804_ANS_MBOX_WINDOW"] & ~0x3FFF, self.h["J804_ANS_MBOX_PAGE"])
+        self.assertEqual(self.h["J804_ANS_MBOX_WINDOW_SIZE"], 0x80)
+        for name in ("J804_PMGR_PS_SPI_P", "J804_PMGR_PS_QSPI", "J804_DCP_MBOX"):
+            self.assertIn(self.h[name], FORBIDDEN_QWORDS, name)
 
         for name, dev in devs.items():
             for res in resources(dev.get("_CRS", b"")):
@@ -259,6 +279,21 @@ class J804WindowsAcpiContract(unittest.TestCase):
     def test_published_gsivs_are_legal(self) -> None:
         for key in ("J804_GSIV_XHC1", "J804_GSIV_ANS", "J804_GSIV_XHC2"):
             self.assertTrue(32 <= self.h[key] < 1020, key)
+
+
+class J804WindowsHandoffContract(unittest.TestCase):
+    """J804Windows.h's hand-off range is what PrePi copies to (no build needed)."""
+
+    def test_handoff_range_matches_pcds(self) -> None:
+        h = header_defines()
+        dsc = FAMILY_DSC.read_text()
+        boot_args = int(re.search(r"PcdBootArgsPointer\|(0x[0-9A-Fa-f]+)", dsc).group(1), 16)
+        adt = int(re.search(r"PcdAdtPointer\|(0x[0-9A-Fa-f]+)", dsc).group(1), 16)
+        adt_max = int(re.search(r"#define\s+J804_M1_ADT_COPY_MAX\s+(0x[0-9A-Fa-f]+)",
+                                J804M1_H.read_text()).group(1), 16)
+        self.assertEqual(h["J804_HANDOFF_BASE"], boot_args)
+        self.assertEqual(adt, boot_args + 0x4000)
+        self.assertEqual(h["J804_HANDOFF_TOP"], adt + adt_max)
 
 
 if __name__ == "__main__":
