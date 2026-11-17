@@ -350,6 +350,48 @@ int main (int argc, char **argv)
     printf ("boot hand-off check: %u cases, ADT 0x%llx bytes\n", cases, sz);
   }
 
+  /* 6. Pre-copy source check (J804BootHandoffSourcesClear, J804_WINDOWS
+     PrePi): the aura load_raw layout for a guest RAM window that holds the
+     fixed copies passes; a source, the FD or a RAM edge on the copy range
+     fails closed. Window: base 0x10200000000, top J804_M1_RAM_TOP_LIMIT;
+     ADT at base + 16 MiB, FD at 64 KiB alignment after ADT and TrustCache,
+     boot_args after the FD and blobs. */
+  {
+    const UINT64 rb = 0x10200000000ULL, rt = J804_M1_RAM_TOP_LIMIT;
+    const UINT64 ba = 0x10220000000ULL, ad = 0x10220004000ULL;
+    const UINT64 adtsrc = rb + 0x1000000ULL, adtsz = (UINT64)size;
+    const UINT64 fdb = (adtsrc + 0x200000ULL + 0x100000ULL + 0xFFFFULL) & ~0xFFFFULL, fdsz = 0x1E00000ULL;
+    const UINT64 basrc = fdb + fdsz + 0x400000ULL, basz = 0x400;
+    unsigned cases = 0;
+#define SOURCES(expect, rbase, rtop, fbase, fsize, bs, bsz, as, asz, bc, ac, what) do { \
+      cases++; \
+      CHECK (J804BootHandoffSourcesClear (rbase, rtop, fbase, fsize, bs, bsz, as, asz, bc, ac) == (expect), \
+             "hand-off sources: %s", what); } while (0)
+    SOURCES (TRUE,  rb, rt, fdb, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "load_raw layout refused");
+    SOURCES (TRUE,  rb, rt, fdb, fdsz, basrc, basz, adtsrc, J804_M1_ADT_COPY_MAX, ba, ad, "2 MiB ADT source refused");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, basrc, basz, adtsrc, J804_M1_ADT_COPY_MAX + 1, ba, ad, "ADT source above the copy size accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, basrc, basz, adtsrc, 0, ba, ad, "zero ADT size accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, basrc, 0, adtsrc, adtsz, ba, ad, "zero boot_args size accepted");
+    SOURCES (FALSE, rb, rt, fdb, 0, basrc, basz, adtsrc, adtsz, ba, ad, "zero FD size accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, basrc, basz, ad + 0x1000, adtsz, ba, ad, "ADT source inside the ADT copy accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, basrc, basz, ba - 0x1000, adtsz, ba, ad, "ADT source over the boot_args copy accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, ba, basz, adtsrc, adtsz, ba, ad, "boot_args source on its own copy accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, ad + 0x1FFC00, basz, adtsrc, adtsz, ba, ad, "boot_args source at the ADT copy end accepted");
+    SOURCES (TRUE,  rb, rt, fdb, fdsz, ad + 0x200000, basz, adtsrc, adtsz, ba, ad, "boot_args source just past the ADT copy refused");
+    SOURCES (FALSE, rb, rt, ba - 0x1000000, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "FD across the copies accepted");
+    SOURCES (FALSE, rb, rt, ad + 0x1FC000, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "FD on the ADT copy tail accepted");
+    SOURCES (TRUE,  rb, rt, ad + 0x200000, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "FD just past the ADT copy refused");
+    SOURCES (FALSE, ba + 0x4000, rt, fdb, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "boot_args copy below RAM accepted");
+    SOURCES (FALSE, rb, ad + 0x100000, fdb, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "ADT copy past the RAM top accepted");
+    SOURCES (FALSE, rb, rb, fdb, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "empty RAM accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, basrc, basz, adtsrc, adtsz, ba, ba + 0x2000, "overlapping copies accepted");
+    SOURCES (FALSE, rb, rt, MAX_UINT64 - 0x1000, fdsz, basrc, basz, adtsrc, adtsz, ba, ad, "wrapping FD accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, MAX_UINT64 - 0x10, basz, adtsrc, adtsz, ba, ad, "wrapping boot_args source accepted");
+    SOURCES (FALSE, rb, rt, fdb, fdsz, basrc, basz, adtsrc, adtsz, MAX_UINT64 - 0x1000, ad, "wrapping boot_args copy accepted");
+#undef SOURCES
+    printf ("hand-off source check: %u cases\n", cases);
+  }
+
   printf ("%s (%d failures)\n", gFailures ? "FAILED" : "PASSED", gFailures);
   free (adt);
   return gFailures != 0;

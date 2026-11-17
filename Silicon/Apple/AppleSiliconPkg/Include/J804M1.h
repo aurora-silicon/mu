@@ -49,6 +49,12 @@
 // Linux header, or EarlySetup somehow returns, ModuleEntryPoint.S halts in a
 // branch-to-self loop without a block (gMuCheckpoint stage 0xEE).
 //
+// J804_WINDOWS only: before EarlySetup copies anything, a source/destination
+// clash (J804BootHandoffSourcesClear FALSE) stops in a loop without a block
+// (nothing has been copied, so the panel geometry is not readable yet) with
+// gMuCheckpoint stage J804_WIN_STAGE_HANDOFF_SOURCES.
+//
+#define J804_WIN_STAGE_HANDOFF_SOURCES  0xE6
 
 //
 // Largest device tree PrePi copies to PcdAdtPointer: the size MemoryInitPeiLib
@@ -354,6 +360,94 @@ J804BootHandoffIsSane (
 
   if (((BootArgsCopy < UefiTop) && (UefiBase < BootArgsTop)) ||
       ((AdtCopy < UefiTop) && (UefiBase < AdtTop)))
+  {
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**
+  J804 windows profile, before PrePi EarlySetup copies anything: the
+  launcher-placed sources and the running FD must stay clear of the fixed
+  copy destinations, and the destinations must lie inside boot_args RAM.
+
+  EarlySetup copies the boot_args source (BootArgsSrcSize bytes) to the
+  BootArgsCopy page, then the ADT source (AdtSrcSize bytes) to AdtCopy, and
+  keeps reading the boot_args source afterwards. Under the carrier the
+  sources come from the launcher (aura load_raw: ADT at guest RAM base +
+  16 MiB, boot_args after the FD and blobs), so nothing else guarantees that
+  a copy does not overwrite a source still to be read, or the FD that is
+  running. Fails closed on:
+    - an empty RAM range, a zero size, or any range that wraps;
+    - an ADT source larger than the J804_M1_ADT_COPY_MAX copy;
+    - a destination not wholly inside [RamBase, RamTop) or overlapping the
+      other destination;
+    - either source, or the FD, overlapping either destination.
+  Returns TRUE when the copies are safe to perform.
+**/
+STATIC inline
+BOOLEAN
+J804RangesOverlap (
+  IN UINT64  ABase,
+  IN UINT64  ATop,
+  IN UINT64  BBase,
+  IN UINT64  BTop
+  )
+{
+  return (ABase < BTop) && (BBase < ATop);
+}
+
+STATIC inline
+BOOLEAN
+J804BootHandoffSourcesClear (
+  IN UINT64  RamBase,
+  IN UINT64  RamTop,
+  IN UINT64  FdBase,
+  IN UINT64  FdSize,
+  IN UINT64  BootArgsSrc,
+  IN UINT64  BootArgsSrcSize,
+  IN UINT64  AdtSrc,
+  IN UINT64  AdtSrcSize,
+  IN UINT64  BootArgsCopy,
+  IN UINT64  AdtCopy
+  )
+{
+  CONST UINT64  BootArgsSize = 0x4000;
+  CONST UINT64  AdtSize      = J804_M1_ADT_COPY_MAX;
+  UINT64        BootArgsTop;
+  UINT64        AdtTop;
+
+  if ((RamTop <= RamBase) || (FdSize == 0) || (BootArgsSrcSize == 0) ||
+      (AdtSrcSize == 0) || (AdtSrcSize > AdtSize))
+  {
+    return FALSE;
+  }
+
+  if ((FdBase > MAX_UINT64 - FdSize) ||
+      (BootArgsSrc > MAX_UINT64 - BootArgsSrcSize) ||
+      (AdtSrc > MAX_UINT64 - AdtSrcSize) ||
+      (BootArgsCopy > MAX_UINT64 - BootArgsSize) ||
+      (AdtCopy > MAX_UINT64 - AdtSize))
+  {
+    return FALSE;
+  }
+
+  BootArgsTop = BootArgsCopy + BootArgsSize;
+  AdtTop      = AdtCopy + AdtSize;
+  if ((BootArgsCopy < RamBase) || (BootArgsTop > RamTop) ||
+      (AdtCopy < RamBase) || (AdtTop > RamTop) ||
+      J804RangesOverlap (BootArgsCopy, BootArgsTop, AdtCopy, AdtTop))
+  {
+    return FALSE;
+  }
+
+  if (J804RangesOverlap (BootArgsSrc, BootArgsSrc + BootArgsSrcSize, BootArgsCopy, BootArgsTop) ||
+      J804RangesOverlap (BootArgsSrc, BootArgsSrc + BootArgsSrcSize, AdtCopy, AdtTop) ||
+      J804RangesOverlap (AdtSrc, AdtSrc + AdtSrcSize, BootArgsCopy, BootArgsTop) ||
+      J804RangesOverlap (AdtSrc, AdtSrc + AdtSrcSize, AdtCopy, AdtTop) ||
+      J804RangesOverlap (FdBase, FdBase + FdSize, BootArgsCopy, BootArgsTop) ||
+      J804RangesOverlap (FdBase, FdBase + FdSize, AdtCopy, AdtTop))
   {
     return FALSE;
   }

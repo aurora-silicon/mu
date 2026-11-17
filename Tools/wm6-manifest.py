@@ -51,6 +51,7 @@ MARKERS = {
         'J804_M1: reserved',
         'J804_M1: chainload firmware block',
         'J804_M1: boot hand-off copies checked',
+        'J804_WINDOWS: boot hand-off sources',
         'J804_M1_CHECKPOINT_DXE',
         'J804_WINDOWS_ACPI',
         'J804_PROBE_READY',

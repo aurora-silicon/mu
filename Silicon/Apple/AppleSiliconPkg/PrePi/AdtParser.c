@@ -14,6 +14,21 @@
 #if defined(J804_M1)
 #include <J804M1.h>
 #include <Library/PanelCheckpointLib.h>
+#endif
+
+#if defined(J804_WINDOWS)
+#include <Library/ArmLib.h>
+
+typedef struct {
+  UINT64           Magic;
+  volatile UINT64  Stage;
+} J804_WIN_CHECKPOINT_RECORD;
+
+// PrePi.c MU_CHECKPOINT_RECORD (same layout).
+extern volatile J804_WIN_CHECKPOINT_RECORD  gMuCheckpoint;
+#endif
+
+#if defined(J804_M1)
 
 STATIC
 VOID
@@ -161,6 +176,31 @@ EarlySetup (
     PcdAdtDest,
     BootArgs->devtree_size
     ));
+
+#if defined(J804_WINDOWS)
+  //
+  // Nothing is copied yet, so the panel cannot be used (its geometry is read
+  // from the copy): stop in a loop with a checkpoint stage only.
+  //
+  if (!J804BootHandoffSourcesClear (
+         BootArgs->phys_base,
+         BootArgs->phys_base + BootArgs->mem_size,
+         PcdGet64 (PcdFdBaseAddress),
+         FixedPcdGet32 (PcdFdSize),
+         (UINT64)(UINTN)BootArgsAddr,
+         sizeof (struct boot_args),
+         (UINT64)(UINTN)AdtSource,
+         BootArgs->devtree_size,
+         (UINT64)(UINTN)PcdBootArgsDest,
+         (UINT64)(UINTN)PcdAdtDest
+         ))
+  {
+    DEBUG ((DEBUG_ERROR, "J804_WINDOWS: boot hand-off sources overlap the fixed copies, stopping\n"));
+    gMuCheckpoint.Stage = J804_WIN_STAGE_HANDOFF_SOURCES;
+    ArmDataMemoryBarrier ();
+    CpuDeadLoop ();
+  }
+#endif
 
   CopyMem(PcdBootArgsDest, BootArgsAddr, sizeof(struct boot_args));
   DEBUG ((DEBUG_ERROR, "J813 EARLY: boot args copied\n"));
