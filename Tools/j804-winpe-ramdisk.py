@@ -348,6 +348,8 @@ def build_variant(variant, media, base_wim, out_dir, work, log, mtime):
     log.append(f"(update commands: add winpeshl.ini and m6pe.cmd into /Windows/System32)")
     run(["wimlib-imagex", "update", str(wim), "1", "--rebuild", "--no-acls"], log,
         input=cmds.encode())
+    # Pin the WIM's mtime only: `mcopy -m` carries it into the FAT directory entry, so it
+    # is part of the image contents.  The output files themselves keep their real mtimes.
     os.utime(wim, (mtime, mtime))
 
     boot = find_ci(media, "efi/microsoft/boot")
@@ -404,8 +406,6 @@ def build_variant(variant, media, base_wim, out_dir, work, log, mtime):
     hdr += struct.pack("<I", zlib.crc32(hdr) & 0xFFFFFFFF)
     hdr_path = out_dir / f"hdr-{variant}.bin"
     hdr_path.write_bytes(hdr.ljust(HDR_SIZE, b"\0"))
-    os.utime(img, (mtime, mtime))
-    os.utime(hdr_path, (mtime, mtime))
     chk = check_image(img, hdr_path)
     listing = run(["mdir", "-i", spec, "-/", "::"], log)
     return {"variant": variant, "wim": wim, "image": img, "header": hdr_path, "check": chk,
