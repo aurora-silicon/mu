@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Check a MacMini2026/J804 M1 FD build and write its hand-over manifest.
+"""Check a MacMini2026 (J804 M1) or MacBookPro2026 (J804 windows) FD build and
+write its hand-over manifest.
 
 Host-only. Checks:
   * FD layout: exactly 0x1E00000 bytes, arm64 Image header magic at 0x38,
@@ -10,7 +11,8 @@ Host-only. Checks:
 Writes MANIFEST.txt and manifest.json next to the FD:
   sha256, POSIX cksum, size, git commit and dirty state, marker strings found
   in the PE files, the FVMAIN and FVMAIN_COMPACT file GUID/type/name lists,
-  and the startup.nsh that the FV carries.
+  the startup.nsh that the FV carries and, for the windows profile, the ACPI
+  tables the build produced (signature, length, sha256).
 Exit status is non-zero if any check fails.
 """
 import argparse
@@ -43,7 +45,24 @@ MARKERS = {
         'J804_M1: chainload firmware block',
         'J804_M1_CHECKPOINT_DXE',
     ],
+    'j804-windows': [
+        'J804-MU-WIN-001',
+        'J804_M1: untrimmed RAM top',
+        'J804_M1: reserved',
+        'J804_M1: chainload firmware block',
+        'J804_M1: boot hand-off copies checked',
+        'J804_M1_CHECKPOINT_DXE',
+        'J804_WINDOWS_ACPI',
+        'J804_PROBE_READY',
+        'J804_PROBE_DONE',
+        'J804 reset: EL2, restarting through WD1',
+        'SmbiosInfoDxe: ADT identity',
+    ],
 }
+# Common markers that belong to the J873 probe; not in the windows profile.
+J873_ONLY = {'J873-MU-005', 'J873_PROBE_READY', 'J873_PROBE_DONE'}
+# ACPI signatures the windows profile must produce, and those it must not.
+ACPI_REQUIRED = {'DSDT', 'FACP', 'APIC', 'GTDT'}
 
 FFS_TYPES = {
     0x01: 'RAW', 0x02: 'FREEFORM', 0x03: 'SEC', 0x04: 'PEI_CORE',
@@ -161,21 +180,43 @@ def main():
         for pat in PATH_PATTERNS:
             if pat in blob or pat.decode().encode('utf-16-le') in blob:
                 leaks.append(f'{path.relative_to(args.build_dir)}: {pat.decode()}')
-    if leaks:
-        failures.append(f'{len(leaks)} build-host paths in PE files')
 
     # Markers, by the module that carries them (top-level .efi copies only).
     top = sorted(args.build_dir.joinpath('AARCH64').glob('*.efi'))
     wanted = list(MARKERS['common'])
-    if args.profile == 'j804-m1':
-        wanted += MARKERS['j804-m1']
+    if args.profile == 'j804-windows':
+        wanted = [m for m in wanted if m not in J873_ONLY]
+    if args.profile in ('j804-m1', 'j804-windows'):
+        wanted += MARKERS[args.profile]
     markers = {}
     for marker in wanted:
         markers[marker] = [p.name for p in top if find_strings(p.read_bytes(), marker)]
-    if args.profile == 'j804-m1':
-        for marker in MARKERS['j804-m1']:
+    if args.profile in ('j804-m1', 'j804-windows'):
+        for marker in MARKERS[args.profile]:
             if not markers[marker]:
                 failures.append(f'marker {marker!r} not found in any PE')
+
+    acpi = []
+    if args.profile == 'j804-windows':
+        # Only the platform's own tables (the FV also carries RamDiskDxe's
+        # SSDT; AppleSiliconPkg's generic GTDT is built but not in the FV).
+        for path in sorted(args.build_dir.joinpath('AARCH64', 'MacBookPro2026Pkg').rglob('*')):
+            if path.suffix not in ('.aml', '.acpi') or not path.is_file():
+                continue
+            blob = path.read_bytes()
+            if len(blob) < 36:
+                continue
+            acpi.append(dict(file=path.name, signature=blob[:4].decode('ascii', 'replace'),
+                             length=struct.unpack_from('<I', blob, 4)[0],
+                             sha256=hashlib.sha256(blob).hexdigest()))
+            for pat in PATH_PATTERNS:
+                if pat in blob:
+                    leaks.append(f'{path.name}: {pat.decode()}')
+        found = {t['signature'] for t in acpi}
+        for sig in sorted(ACPI_REQUIRED - found):
+            failures.append(f'ACPI table {sig} not built')
+    if leaks:
+        failures.append(f'{len(leaks)} build-host paths in PE files or ACPI tables')
 
     fvmain = parse_fv(fvmain_path.read_bytes())
     compact = parse_fv(data[0x8000:])
@@ -185,7 +226,7 @@ def main():
         failures.append('FVMAIN does not carry exactly one startup.nsh RAW file')
     else:
         startup_text = startup[0]['raw'].decode('utf-8', 'replace')
-        if args.profile == 'j804-m1' and 'J804_MU_FIRMWARE_READY' not in startup_text:
+        if args.profile in ('j804-m1', 'j804-windows') and 'J804_MU_FIRMWARE_READY' not in startup_text:
             failures.append('startup.nsh does not print J804_MU_FIRMWARE_READY')
 
     root = args.source_root
@@ -206,6 +247,7 @@ def main():
         pe_files_scanned=len(scanned),
         path_leaks=leaks,
         markers=markers,
+        acpi_tables=acpi,
         startup_nsh=startup_text,
         fvmain_compact=[{k: v for k, v in f.items() if k != 'raw'} for f in compact],
         fvmain=[{k: v for k, v in f.items() if k != 'raw'} for f in fvmain],
@@ -230,6 +272,9 @@ def main():
     ]
     for marker, where in markers.items():
         lines.append(f'  {marker:36} {", ".join(where) if where else "NOT FOUND"}')
+    if acpi:
+        lines += ['', 'ACPI tables built (signature, length, sha256, file):']
+        lines += [f'  {t["signature"]}  {t["length"]:6}  {t["sha256"]}  {t["file"]}' for t in acpi]
     lines += ['', 'startup.nsh (FVMAIN RAW file):']
     lines += ['  ' + line for line in (startup_text or '').splitlines()]
     lines += ['', 'FVMAIN_COMPACT files (GUID, type, UI name):']
@@ -240,7 +285,8 @@ def main():
         lines += ['', 'FAILURES:'] + ['  ' + f for f in failures]
     (args.out / 'MANIFEST.txt').write_text('\n'.join(lines) + '\n')
 
-    tag = 'J804_M1_BUILT' if args.profile == 'j804-m1' else 'J873_BASELINE_BUILT'
+    tag = {'j804-m1': 'J804_M1_BUILT',
+           'j804-windows': 'J804_WINDOWS_BUILT'}.get(args.profile, 'J873_BASELINE_BUILT')
     if failures:
         for f in failures:
             print('FAIL:', f, file=sys.stderr)
@@ -252,6 +298,7 @@ def main():
 
 def profile_name(profile):
     return {'j804-m1': 'J804 M1 (J873 native + M1 changes)',
+            'j804-windows': 'J804 windows profile (MacBookPro2026Pkg, EL1 under the carrier)',
             'j873-native-baseline': 'J873 native baseline (J804_M1=FALSE)'}.get(profile, profile)
 
 
