@@ -20,6 +20,12 @@ DebuggerFeaturePkg's DebugAgentDxe, whose GDB stub reboot path
 transport; with the Null serial library the linker drops it. The debugger
 stays off (`PcdForceEnableDebugger` FALSE, no debugger-control HOB).
 
+The D1 AHCI variant (the carrier's emulated SATA disk, see below) is
+`WM6_CLEAN=1 WM6_J804_VUART=TRUE WM6_J804_AHCI=TRUE
+WM6_OUTPUT_ROOT=../out/j804-windows-ahci sh Tools/build-j804-windows.sh`.
+With `J804_WINDOWS_AHCI` FALSE (the default) the FDs are byte-identical to
+those built before the flag existed.
+
 Status: built and host-tested only. Nothing here has run on hardware.
 
 ## What the image does
@@ -39,7 +45,9 @@ Status: built and host-tested only. Nothing here has run on hardware.
   profile runs; at EL2 the native FIQ timer path is used.
 - Serial is the Null library unless the build sets `J804_WINDOWS_VUART`.
 - Variables are RAM-only (`PcdEmuVariableNvModeEnable`), Secure Boot is off,
-  there is no Mu storage driver, no USB driver and no NVRAM access.
+  there is no driver for any real storage device, no USB driver and no NVRAM
+  access. Only a `J804_WINDOWS_AHCI` build carries an ATA stack, and it only
+  ever talks to the carrier's emulated AHCI HBA (next section).
 - `J804AcpiDxe` installs the ACPI tables only at EL1, on cpu6 (MPIDR
   0x10100), on a J804 ADT.
 - EL1 under the carrier only. The default FD links `AuraArmExceptionLib`,
@@ -63,6 +71,54 @@ Status: built and host-tested only. Nothing here has run on hardware.
   `ver` and `map -r`, waits 30 s and resets. With an appended ramdisk,
   BootRamdiskHelperDxe boots `\EFI\BOOT\BOOTAA64.EFI` from it first.
 
+## D1: the carrier's AHCI disk (`J804_WINDOWS_AHCI`)
+
+Contract: `windows-m6/D1-AHCI-DESIGN.md` and `J804Windows.h`
+(`J804_AHCI_*`, `J804_GSIV_AHCI`). The carrier emulates one AHCI 1.3.1 HBA
+with one SATA port at ABAR 0xF40000000 (one hooked 16 KiB page), interrupt
+SPI 990 (level, active-high, no AIC line), backed by a DRAM store at the top
+of its guest RAM window that the guest never maps.
+
+A `J804_WINDOWS_AHCI=TRUE` build adds:
+- `\_SB.AHC0` in the DSDT: `_HID` NTAS2010 (project-local), `_CLS`
+  01/06/01 (Windows' compatible ID `ACPI\CLS_0001&SUBCLS_0006&PI_01`,
+  bound to storahci by mshdc.inf), `_CCA` 1, `_STA` 0xF, the ABAR page and
+  GSIV 990. `_STA` is constant, so the launcher must not start this FD
+  without an attached disk.
+- A raw marker at FD offset 0x110: `"J804AHC1"`, u32 0xF40000 (ABAR >> 12),
+  u32 990, for the launcher to check before it attaches a disk. Non-AHCI FDs
+  have 0xFF there.
+- `NonDiscoverablePciDeviceDxe`, `SataControllerDxe` (AtaAtapiPassThru
+  needs its IdeControllerInit protocol), `AtaAtapiPassThru`, `AtaBusDxe` and
+  `J804AhciDxe` in the FV; `PcdAtaSmartEnable` FALSE (the IDENTIFY data
+  reports no SMART).
+- `J804AhciDxe` (EL1 on a J804 only) acts only when the launcher wrote
+  `/chosen/aura,windows-ahci-v1` (40 bytes, little-endian: u64 ABAR, u64
+  ABAR size, u32 GSIV, u32 boot (0 disk, 1 ramdisk), u64 store base, u64
+  store top; a 24-byte form without the store range is accepted with a
+  warning) and every value matches `J804Windows.h`. It refuses the disk if
+  the store overlaps anything in the GCD map (the launcher passes
+  boot_args `mem_size` ending below the store, so Mu's memory map and the
+  map Windows receives never contain it). Then it adds the ABAR to the GCD
+  as uncached MMIO, registers it as a non-discoverable AHCI device (coherent
+  DMA, class 01/06/01, BAR 5), connects it and looks for
+  `\EFI\Microsoft\Boot\bootmgfw.efi`, then `\EFI\BOOT\BOOTAA64.EFI`, on
+  the disk's file systems. Boot = disk: the "Windows Boot Manager (AHCI)"
+  option goes first in BootOrder and becomes BootNext (overriding the
+  appended RAM disk). Boot = ramdisk: it goes last and becomes BootNext only
+  if BootRamdiskHelperDxe set none. No property, no disk, no loader: nothing
+  changes (appended RAM disk, then the shell).
+- It runs during DXE dispatch, not at EndOfDxe: BdsDxe reads BootNext before
+  `PlatformBootManagerBeforeConsole` signals EndOfDxe. Its depex
+  (`gEfiRamDiskProtocolGuid AND` the variable arch protocols) is a superset
+  of BootRamdiskHelperDxe's and the FDF lists it after the helper, so the
+  helper always runs first; the UEFI drivers it connects have no depex and
+  run in the first dispatch pass.
+- Host tests: `Tools/HostTests/J804AhciHandshake` (the property parser,
+  ASan/UBSan) and the AHC0/marker/DSC checks in
+  `Tests/test_j804_windows_acpi_contract.py`. The manifest checks AHC0, the
+  marker and the five drivers against the `J804_WINDOWS_AHCI` build flag.
+
 ## ACPI tables
 
 | Table | Content |
@@ -72,6 +128,7 @@ Status: built and host-tested only. Nothing here has run on hardware.
 | GTDT | EL1 physical timer INTID 17, virtual 18, level/high; no secure, EL2 or platform timers |
 | FADT | HW_REDUCED_ACPI, PSCI compliant (SMC), PreferredPmProfile MOBILE, no low-power S0 idle |
 | DBG2 | only with `J804_WINDOWS_VUART`: \_SB.COM0 at 0x331200000 |
+| DSDT AHC0 | only with `J804_WINDOWS_AHCI`: NTAS2010, `_CLS` 01/06/01, `_CCA` 1, ABAR 0xF40000000/0x4000, GSIV 990 level/high |
 
 Not described, by design: speaker amps, i2c1, i2c3, AOP, ADMAC, the hpm
 USB-PD controllers, GPIO 0xca (193), the xHCI controllers, the QSPI NVRAM
@@ -112,6 +169,7 @@ must match the carrier; neither side can discover the other's choice.
 | Boot hand-off copies | PrePi copies boot_args to 0x10220000000 (16 KiB) and the ADT to 0x10220004000 (2 MiB) before anything else; it stops if [0x10220000000, 0x10220204000) is not inside boot_args RAM or overlaps the boot_args or ADT source or the FD | T8152 profiles take no `reserved_memory`: `guest_ram {base, top}` is the whole guest, and load_raw packs ADT, TrustCache, the FD (64 KiB aligned), SEPFW/preoslog and boot_args upwards from base + 16 MiB (total L). So: base <= 0x10220000000 and top >= 0x10220204000 + 128 MiB (UEFI region at the top, clear of the copies), and the load clear of the copies: either base in [0x1021F204000, 0x10220000000] (copies in the first 16 MiB, load above them) or base + 16 MiB + L <= 0x10220000000; top <= 0x1059d600000. On the saved J804 ADT the gap 0x1013b2e4000..0x1059d600000 is free apart from region-id-24, which `hv_t8152_set_guest_ram` refuses to overlap. Nothing in the launcher checks the copy range; PrePi fails closed |
 | RAM top | PrePi stops above 0x1059d600000 | guest_ram top (the boot_args RAM top the guest sees) <= 0x1059d600000 |
 | FD | 0x1E00000 bytes, entry at offset 0, 64 KiB aligned | `run_guest.py -r -E 0`, placed outside CTXR_D |
+| AHCI disk (D1, AHCI builds) | ABAR 0xF40000000/0x4000, GSIV 990 level/high, `_CCA` 1; FD marker at 0x110; acts only on `/chosen/aura,windows-ahci-v1` | hook the ABAR page (never map it), deliver SPI 990 as a level through GICD_IROUTER, keep the store outside guest RAM and stage 2; write the 40-byte property only after ATTACH; refuse an AHCI FD (marker present) without an attached disk |
 | Stage 2 | the default build enables no MMIO device: only guest RAM, the framebuffer shadow, AIC3 and the hooked vGIC window are used (SMC0 `_STA` 0, no ANS0) | aura-win's real policy: an allowlist of the guest RAM window, carrier-registered pages (BGRA shadow, read-only ADT alias) and the AIC (Device-nGnRnE), plus hooked MMIO; an ADT denylist (qspi, sep, aop, admac, i2c, audio, gpio, wdt, pmgr, spmi, dart, sart, ans, smc, mtp, spi, dcp, sio, usb-drd0, 0x331118000, region-id-218/-4) checked at map time and before entry; HCR_EL2.TWI set. Enabling SMC0 or ANS0 needs an explicit carrier allowlist (ANS: trapped windows only, see above) |
 
 ## Not verified
@@ -130,3 +188,7 @@ must match the carrier; neither side can discover the other's choice.
   ANS0 enabled (no J804 NVMe driver exists; AuroraSilicon AppleNvme is
   reference-only and hard-codes J873).
 - Whether a Windows debugger transport exists for the DBG2 port subtype.
+- D1: AtaAtapiPassThru, AtaBusDxe and storahci against the carrier's model;
+  whether CpuDxe maps the GCD-added ABAR as expected on this TIANO
+  (ArmSetMemoryAttributes on an unmapped range); `NTAS2010` against the IDs
+  of other drivers that might be installed.

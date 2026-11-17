@@ -72,6 +72,16 @@ ACPI_REQUIRED = {'DSDT', 'FACP', 'APIC', 'GTDT'}
 # The windows profile's DBG2 (and the DSDT's COM0) exist only in a
 # J804_WINDOWS_VUART=TRUE build; a manifest must not let the two FDs be confused.
 VUART_FLAG = 'J804_WINDOWS_VUART'
+# The D1 AHCI build (J804_WINDOWS_AHCI=TRUE): Device (\_SB.AHC0) in the DSDT,
+# the raw contract marker at FD offset 0x110 ("J804AHC1", ABAR >> 12, GSIV;
+# J804Windows.h) and these FVMAIN drivers. A non-AHCI FD has none of them and
+# 0xFF at the marker offset.
+AHCI_FLAG = 'J804_WINDOWS_AHCI'
+AHCI_FD_MARKER_OFFSET = 0x110
+AHCI_FD_MARKER = b'J804AHC1' + struct.pack('<II', 0xF40000000 >> 12, 990)
+AHCI_FV_DRIVERS = ('NonDiscoverablePciDeviceDxe', 'SataController', 'AtaAtapiPassThruDxe',
+                   'AtaBusDxe', 'J804AhciDxe')
+AHCI_MARKERS = ['J804_WINDOWS_AHCI: BootNext=Boot', 'J804_WINDOWS_AHCI refused']
 # DBG2's namespace string for the vUART (ASCII, NUL-terminated; ACPI 6.4 DBG2
 # Device Information structure, NamespaceString).
 DBG2_COM0 = b'\\_SB.COM0\0'
@@ -179,13 +189,18 @@ def aml_extents(regex, blob):
 
 def dsdt_has_sb_com0(dsdt):
     """True if the DSDT AML declares Device (COM0) directly in Scope (\\_SB)."""
+    return dsdt_has_sb_device(dsdt, 'COM0')
+
+
+def dsdt_has_sb_device(dsdt, wanted):
+    """True if the DSDT AML declares Device (wanted) directly in Scope (\\_SB)."""
     found = aml_extents(AML_SCOPE, dsdt)
     devices = aml_extents(AML_DEVICE, dsdt)
     # \_SB_ anywhere, or _SB_ only at the root (not inside another object).
     scopes = [(n, s, e) for n, s, e in found
               if n == '\\' or not any(s2 < s and e <= e2 for _, s2, e2 in found + devices)]
     for name, start, end in devices:
-        if name != 'COM0':
+        if name != wanted:
             continue
         in_sb = any(s <= start and end <= e for _, s, e in scopes)
         nested = any(s < start and end <= e for n, s, e in devices if (n, s) != (name, start))
@@ -276,11 +291,14 @@ def main():
         wanted = [m for m in wanted if m not in J873_ONLY]
     if args.profile in ('j804-m1', 'j804-windows'):
         wanted += MARKERS[args.profile]
+    ahci = flags.get(AHCI_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
+    if ahci == 'TRUE':
+        wanted += AHCI_MARKERS
     markers = {}
     for marker in wanted:
         markers[marker] = [p.name for p in top if find_strings(p.read_bytes(), marker)]
     if args.profile in ('j804-m1', 'j804-windows'):
-        for marker in MARKERS[args.profile]:
+        for marker in MARKERS[args.profile] + (AHCI_MARKERS if ahci == 'TRUE' else []):
             if not markers[marker]:
                 failures.append(f'marker {marker!r} not found in any PE')
 
@@ -326,11 +344,29 @@ def main():
                                 + ('declares' if com0 else 'lacks') + ' Device (\\_SB.COM0)')
         if vuart == 'TRUE' and len(dbg2) == 1 and DBG2_COM0 not in dbg2[0]:
             failures.append('DBG2 does not name \\_SB.COM0')
+        if ahci not in ('TRUE', 'FALSE'):
+            failures.append(f'--build-flag {AHCI_FLAG}=TRUE|FALSE expected, got {ahci!r}')
+        elif len(dsdt) == 1:
+            ahc0 = dsdt_has_sb_device(dsdt[0], 'AHC0')
+            if (ahci == 'TRUE') != ahc0:
+                failures.append(f'{AHCI_FLAG}={ahci} but the DSDT '
+                                + ('declares' if ahc0 else 'lacks') + ' Device (\\_SB.AHC0)')
     if leaks:
         failures.append(f'{len(leaks)} build-host paths in PE files or ACPI tables')
 
     fvmain = parse_fv(fvmain_path.read_bytes())
     compact = parse_fv(data[0x8000:])
+    if ahci in ('TRUE', 'FALSE'):
+        marker = data[AHCI_FD_MARKER_OFFSET:AHCI_FD_MARKER_OFFSET + len(AHCI_FD_MARKER)]
+        expected = AHCI_FD_MARKER if ahci == 'TRUE' else b'\xff' * len(AHCI_FD_MARKER)
+        if marker != expected:
+            failures.append(f'{AHCI_FLAG}={ahci} but FD offset 0x{AHCI_FD_MARKER_OFFSET:x} '
+                            f'holds {marker.hex()} (expected {expected.hex()})')
+        names = {f['name'] for f in fvmain}
+        for driver in AHCI_FV_DRIVERS:
+            if (ahci == 'TRUE') != (driver in names):
+                failures.append(f'{AHCI_FLAG}={ahci} but FVMAIN '
+                                + ('carries ' if driver in names else 'lacks ') + driver)
     startup = [f for f in fvmain if f['name'] == 'startup.nsh']
     startup_text = None
     if len(startup) != 1 or startup[0]['raw'] is None:
