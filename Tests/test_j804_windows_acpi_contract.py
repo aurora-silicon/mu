@@ -542,7 +542,12 @@ class J804WindowsGpuContract(unittest.TestCase):
                          [0x10, 0x1c, 0x34, 0x44, 0x50, 0x60, 0x78, 0x80])
         self.assertEqual([g[f"J804_GPU_C_{n}"] for n in
                           ("SGX", "SGX_HOLE", "ASC_CTRL", "ASC", "IOP_VBAR", "MAILBOX", "FW_RW",
-                           "FW_RO", "FW_TEXT", "POOL", "HANDOFF", "COUNT")], list(range(1, 13)))
+                           "FW_RO", "FW_TEXT", "POOL", "HANDOFF", "FW_MMIO", "COUNT")],
+                         list(range(1, 14)))
+        # G2 (carrier gpu_t8152_admit.h GPU_HS_SGX_BOOT, GPU_HO_BOOT_CONTROL).
+        self.assertEqual((g["J804_GPU_S_SGX_BOOT"], g["J804_GPU_S_KNOWN"],
+                          g["J804_GPU_HO_BOOT_CONTROL"], g["J804_GPU_HO_RESERVED1"]),
+                         (0x80, 0xff, 0xec, 0xf0))
         self.assertEqual((g["J804_GPU_POOL_ALIGN"], g["J804_GPU_CHIP_ID"], g["J804_GPU_BOARD_ID"]),
                          (32 << 20, 0x8152, 0x22))
         self.assertEqual(g["J804_GPU_SENTINEL_IPA"], GPU_SENTINEL_IPA)

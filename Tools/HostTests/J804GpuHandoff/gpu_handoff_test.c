@@ -65,7 +65,9 @@ typedef struct {
   UINT32    RangeOffset, RangeStride, PerfOffset, PerfStride, Total;
   UINT32    PerfPad;
   UINT32    G1[11];        // 0xc0..0xec: ID words, CPU_CONTROL, CPU_STATUS
-  UINT8     G1Tail;        // written at 0xec
+  UINT8     G1Tail;        // written at 0xec (over the low byte of Boot)
+  UINT32    Boot;          // G2: 0xec, the boot-control value
+  UINT8     G2Tail;        // written at 0xf0
   UINT8     HeaderTail;    // written at 0xff
 } MODEL;
 
@@ -186,7 +188,12 @@ build (const MODEL *m, UINT8 *p)
     put (p, 0xc0 + 4 * i, m->G1[i], 4);
   }
 
-  p[0xec] = m->G1Tail;
+  put (p, 0xec, m->Boot, 4);
+  if (m->G1Tail != 0) {
+    p[0xec] = m->G1Tail;
+  }
+
+  p[0xf0] = m->G2Tail;
   p[0xff] = m->HeaderTail;
   for (UINT32 i = 0; i < m->RangeCount && roff + (i + 1) * 32 <= 0x4000; i++) {
     UINT32  o = roff + i * 32;
@@ -274,6 +281,10 @@ test_valid (void)
   MUTATE ("G1 readings when powered", J804GpuOk, (m.State = 0x75, m.G1[0] = 0x12345678, m.G1[6] = 0xfff,
                                                   m.G1[7] = 0x10, m.G1[8] = 0x10, m.G1[9] = 0xe, m.G1[10] = 0xe));
   MUTATE ("state admitted only", J804GpuOk, m.State = 0x1);
+  // G2 (carrier g2 mode): the boot-control bit with its value, every state bit.
+  MUTATE ("G2 boot control when powered", J804GpuOk, (m.State = 0xf5, m.Boot = 0x701));
+  MUTATE ("state 0xff", J804GpuOk, (m.State = 0xff, m.Boot = 0x701));
+  MUTATE ("G2 boot control bit, value zero", J804GpuOk, m.State = 0xf5);
   MUTATE ("pool of half of RAM", J804GpuOk, (m.PoolBase = RAM_TOP - 0x80000000ULL, m.PoolSize = 0x80000000ULL,
                                              m.Ranges[13].Base = m.PoolBase, m.Ranges[13].Size = m.PoolSize));
   MUTATE ("32 MiB pool", J804GpuOk, (m.PoolBase = RAM_TOP - 0x2000000, m.PoolSize = 0x2000000,
@@ -293,7 +304,10 @@ test_refusals (void)
   MUTATE ("chip", J804GpuBadIdentity, m.Chip = 0x8142);
   MUTATE ("board", J804GpuBadIdentity, m.Board = 0x24);
   MUTATE ("not admitted", J804GpuBadState, m.State = 0x2);
-  MUTATE ("unknown state bit", J804GpuBadState, m.State = 0x83);
+  MUTATE ("unknown state bit", J804GpuBadState, m.State = 0x103);
+  MUTATE ("boot control without power", J804GpuBadState, (m.State = 0x83, m.Boot = 0x701));
+  MUTATE ("boot control value without the bit", J804GpuBadReserved, (m.State = 0x75, m.Boot = 0x701));
+  MUTATE ("byte after the G2 fields", J804GpuBadReserved, (m.State = 0xf5, m.Boot = 0x701, m.G2Tail = 1));
   MUTATE ("reserved word", J804GpuBadReserved, m.Reserved0 = 1);
   MUTATE ("header tail", J804GpuBadReserved, m.HeaderTail = 1);
   MUTATE ("G1 readings before power-on", J804GpuBadReserved, (m.State = 0x3, m.G1[0] = 1));
@@ -314,7 +328,8 @@ test_refusals (void)
   MUTATE ("empty range", J804GpuBadRange, m.Ranges[9].Size = 0);
   MUTATE ("overflowing range", J804GpuBadRange, (m.Ranges[9].Base = 0xffffffffffffc000ULL, m.Ranges[9].Size = 0x8000));
   MUTATE ("class 0", J804GpuBadRange, m.Ranges[10].Class = 0);
-  MUTATE ("class 12", J804GpuBadRange, m.Ranges[10].Class = 12);
+  MUTATE ("class 13", J804GpuBadRange, m.Ranges[10].Class = 13);
+  MUTATE ("class 12 before table ranges", J804GpuBadFwMmio, m.Ranges[10].Class = 12);
   MUTATE ("overlap", J804GpuBadOverlap, m.Ranges[10].Base = 0x9ff800000ULL);
   MUTATE ("fw outside DRAM", J804GpuBadPlacement, m.Ranges[11].Base = 0x7f0000000ULL);
   MUTATE ("text in guest RAM", J804GpuBadPlacement, m.Ranges[12].Base = RAM_BASE + 0x100000);
@@ -366,6 +381,67 @@ test_refusals (void)
     CHECK (J804GpuParseHandoff (page, HANDOFF, RAM_TOP, RAM_BASE, &h) == J804GpuBadPropertyPage, "empty RAM");
     CHECK (J804GpuParseHandoff (NULL, HANDOFF, RAM_BASE, RAM_TOP, &h) == J804GpuBadPropertyPage, "NULL page");
   }
+}
+
+//
+// G2: class-12 firmware register windows, declared after every other range.
+// Synthetic windows: two overlapping ones in the first sgx page (unaligned,
+// as the firmware's are), one in the sgx hole's page, one outside the sgx
+// window (an interrupt controller page, say).
+//
+static void
+g2_model (MODEL *m)
+{
+  model (m);
+  m->State = 0xf5;
+  m->Boot  = 0x701;
+  add (m, SGX, 0x36000, J804_GPU_C_FW_MMIO, 17);
+  add (m, SGX + 0x1800, 0x27f8, J804_GPU_C_FW_MMIO, 29);
+  add (m, SGX + 0xd12200, 0xfc, J804_GPU_C_FW_MMIO, 30);
+  add (m, 0x280008000ULL, 0x4000, J804_GPU_C_FW_MMIO, 0);
+}
+
+#define G2_MUTATE(name, want, stmt)  \
+  do {                               \
+    MODEL  m;                        \
+    g2_model (&m);                   \
+    stmt;                            \
+    expect (name, &m, want);         \
+  } while (0)
+
+static void
+test_g2 (void)
+{
+  MODEL             m;
+  J804_GPU_HANDOFF  h;
+
+  g2_model (&m);
+  CHECK (parse (&m, &h) == J804GpuOk, "G2 page refused");
+  CHECK (h.FwMmioCount == 4 && h.RangeCount == 19, "G2 counts %u/%u", h.FwMmioCount, h.RangeCount);
+  CHECK (h.BootControl == 0x701 && h.State == 0xf5, "G2 boot control");
+  CHECK (h.SgxBase == SGX && h.SgxSize == SGX_SIZE, "G2 sgx window unchanged");
+  CHECK (h.MailboxBase == MBOX && h.PoolBase == POOL_BASE, "G2 mailbox and pool unchanged");
+  model (&m);
+  CHECK (parse (&m, &h) == J804GpuOk && h.FwMmioCount == 0 && h.BootControl == 0, "G1 page: no G2 fields");
+
+  G2_MUTATE ("fw-mmio without the boot bit", J804GpuOk, (m.State = 0x75, m.Boot = 0));
+  G2_MUTATE ("fw-mmio unaligned base", J804GpuBadFwMmio, m.Ranges[16].Base += 2);
+  G2_MUTATE ("fw-mmio unaligned size", J804GpuBadFwMmio, m.Ranges[16].Size = 0x27f9);
+  G2_MUTATE ("fw-mmio empty", J804GpuBadFwMmio, m.Ranges[16].Size = 0);
+  G2_MUTATE ("fw-mmio overflowing", J804GpuBadFwMmio, m.Ranges[18].Base = 0xfffffffffffff000ULL);
+  G2_MUTATE ("fw-mmio in DRAM", J804GpuBadFwMmio, m.Ranges[18].Base = 0x808000000ULL);
+  G2_MUTATE ("fw-mmio in guest RAM", J804GpuBadFwMmio, m.Ranges[18].Base = RAM_BASE + 0x8000);
+  G2_MUTATE ("fw-mmio page touches the mailbox", J804GpuBadFwMmio, (m.Ranges[18].Base = MBOX + 0x3f00,
+                                                                     m.Ranges[18].Size = 0x10));
+  G2_MUTATE ("fw-mmio touches CPU_CONTROL", J804GpuBadFwMmio, m.Ranges[18].Base = SGX + 0x2600000);
+  G2_MUTATE ("fw-mmio page touches iop-vbar", J804GpuBadFwMmio, (m.Ranges[18].Base = SGX + 0x2053ff0,
+                                                                   m.Ranges[18].Size = 0x10));
+  G2_MUTATE ("fw-mmio touches the rest of an ASC", J804GpuBadFwMmio, m.Ranges[18].Base = SGX + 0x2604000);
+  G2_MUTATE ("fw-mmio pad", J804GpuBadReserved, m.Ranges[17].Pad = 1);
+  G2_MUTATE ("table range after fw-mmio", J804GpuBadFwMmio,
+             (m.Ranges[19] = m.Ranges[14], m.Ranges[14] = m.Ranges[18], m.Ranges[18] = m.Ranges[19],
+              m.RangeCount = 19));
+  G2_MUTATE ("too many ranges with fw-mmio", J804GpuBadLayout, m.RangeCount = 129);
 }
 
 static void
@@ -544,6 +620,7 @@ main (int argc, char **argv)
   test_property ();
   test_valid ();
   test_refusals ();
+  test_g2 ();
   model (&m);
   if (parse (&m, &h) != J804GpuOk) {
     printf ("FAIL: the valid model does not parse\n");

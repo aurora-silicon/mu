@@ -82,7 +82,14 @@
 #define J804_GPU_HO_CPU_STATUS    0xe4         // u32[2]
 #define J804_GPU_HO_G1_END        0xec
 #define J804_GPU_ID_WORDS         7
-#define J804_GPU_HO_RESERVED1     0xec         // to the header end, zero
+//
+// G2 (carrier --windows-gpu g2 with the boot-control grant): the value the
+// carrier read back after its one sgx boot-control step at power-on. Zero
+// unless state bit J804_GPU_S_SGX_BOOT is set.
+//
+#define J804_GPU_HO_BOOT_CONTROL  0xec         // u32
+#define J804_GPU_HO_G2_END        0xf0
+#define J804_GPU_HO_RESERVED1     0xf0         // to the header end, zero
 
 //
 // Range classes (carrier enum gpu_class).
@@ -98,7 +105,15 @@
 #define J804_GPU_C_FW_TEXT   9   // __TEXT, never mapped
 #define J804_GPU_C_POOL      10  // GPU pool inside guest RAM
 #define J804_GPU_C_HANDOFF   11  // this page
-#define J804_GPU_C_COUNT     12
+//
+// G2: a register window the GPU firmware's own page tables may map (the
+// carrier declares it, never maps it to the guest CPU). Published after every
+// other range; base and size are the firmware's (4-byte aligned, not page
+// aligned); may overlap the sgx classes and other class-12 ranges; never part
+// of GPU0's _CRS.
+//
+#define J804_GPU_C_FW_MMIO   12
+#define J804_GPU_C_COUNT     13
 
 //
 // State bits (offset 0x10): what the carrier has done.
@@ -110,7 +125,8 @@
 #define J804_GPU_S_ASC_RUN    0x10
 #define J804_GPU_S_MMIO_PASS  0x20
 #define J804_GPU_S_FW_MAPPED  0x40
-#define J804_GPU_S_KNOWN      0x7f
+#define J804_GPU_S_SGX_BOOT   0x80         // G2: boot-control step done (needs POWERED)
+#define J804_GPU_S_KNOWN      0xff
 
 //
 // Interrupt lines: GIC SPIs below the GSIV limit, outside the carrier's own
@@ -134,6 +150,8 @@ typedef struct {
   UINT32    PerfCount;
   UINT32    Lines[J804_GPU_LINES];
   UINT32    MailboxNum[2];
+  UINT32    FwMmioCount;      // G2: class-12 declarations (after every other range)
+  UINT32    BootControl;      // G2: header 0xec, with J804_GPU_S_SGX_BOOT
   UINT64    SgxBase;          // union of classes 1..5: one contiguous window
   UINT64    SgxSize;
   UINT64    MailboxBase;      // the one class-6 page
@@ -166,6 +184,7 @@ typedef enum {
   J804GpuBadHandoff,
   J804GpuBadLines,
   J804GpuBadReceipt,
+  J804GpuBadFwMmio,
   J804GpuStatusCount
 } J804_GPU_STATUS;
 
@@ -192,7 +211,8 @@ typedef enum {
   "pool is not one 32 MiB-aligned block at the top of guest RAM, at most half of it",       \
   "handoff range or header IPA differs from the handshake",                                 \
   "interrupt lines or mailbox numbers out of range or repeated",                            \
-  "receipt is not NUL-terminated printable ASCII"
+  "receipt is not NUL-terminated printable ASCII",                                         \
+  "a class-12 firmware register window is misplaced, unaligned, in DRAM or guest RAM, or overlaps a non-sgx range"
 
 //
 // Little-endian read of Count bytes, one byte at a time (never merged into a
@@ -314,7 +334,10 @@ J804GpuParseProperty (
     - every other range lies outside guest RAM; the firmware classes lie
       inside DRAM; the sgx, ASC and mailbox classes outside it;
     - classes 1..5 tile one contiguous window (the sgx window of _CRS);
-    - exactly one class-6 page and one class-11 page (= the handshake IPA).
+    - exactly one class-6 page and one class-11 page (= the handshake IPA);
+    - G2 class-12 declarations come last, are 4-byte aligned, lie outside DRAM
+      and guest RAM, and their 16 KiB pages touch only sgx-class ranges and
+      other declarations (they are not part of _CRS and nothing maps them).
 **/
 STATIC
 J804_GPU_STATUS
@@ -337,7 +360,10 @@ J804GpuParseHandoff (
   UINT32            Pools;
   UINT32            Handoffs;
   UINT32            SgxCount;
+  UINT32            OtherClass;
   UINT64            Base;
+  UINT64            PageBase;
+  UINT64            PageTop;
   UINT64            Size;
   UINT64            Top;
   UINT64            SgxTop;
@@ -412,6 +438,18 @@ J804GpuParseHandoff (
   }
 
   //
+  // G2: the boot-control step happens at power-on; its value is zero without it.
+  //
+  if (((Parsed.State & J804_GPU_S_SGX_BOOT) != 0) && ((Parsed.State & J804_GPU_S_POWERED) == 0)) {
+    return J804GpuBadState;
+  }
+
+  Parsed.BootControl = (UINT32)J804GpuLe (Page + J804_GPU_HO_BOOT_CONTROL, 4);
+  if (((Parsed.State & J804_GPU_S_SGX_BOOT) == 0) && (Parsed.BootControl != 0)) {
+    return J804GpuBadReserved;
+  }
+
+  //
   // Tables: ranges right after the header, perf states right after the
   // ranges, ending at the total.
   //
@@ -465,6 +503,54 @@ J804GpuParseHandoff (
     Size  = J804GpuLe (Entry + 8, 8);
     Class = (UINT32)J804GpuLe (Entry + 16, 4);
     Top   = Base + Size;
+    if (Class == J804_GPU_C_FW_MMIO) {
+      //
+      // G2 declaration: 4-byte aligned, outside DRAM and guest RAM, and its
+      // 16 KiB pages (what a page table can map) touch only sgx-class ranges
+      // and other declarations. Declarations come after every other range.
+      //
+      if ((Size == 0) || (Top < Base) || (((Base | Size) & 3) != 0) ||
+          (Top > (UINT64)0 - J804_GPU_PAGE))
+      {
+        return J804GpuBadFwMmio;
+      }
+
+      if (J804GpuLe (Entry + 28, 4) != 0) {
+        return J804GpuBadReserved;
+      }
+
+      PageBase = Base & ~(J804_GPU_PAGE - 1);
+      PageTop  = (Top + J804_GPU_PAGE - 1) & ~(J804_GPU_PAGE - 1);
+      if (J804GpuOverlap (PageBase, PageTop, Parsed.DramBase, DramTop) ||
+          J804GpuOverlap (PageBase, PageTop, GuestRamBase, GuestRamTop))
+      {
+        return J804GpuBadFwMmio;
+      }
+
+      for (Other = 0; Other < Index; Other++) {
+        OtherEntry = Page + RangeOffset + Other * J804_GPU_RANGE_STRIDE;
+        OtherClass = (UINT32)J804GpuLe (OtherEntry + 16, 4);
+        if ((OtherClass != J804_GPU_C_SGX) && (OtherClass != J804_GPU_C_SGX_HOLE) &&
+            (OtherClass != J804_GPU_C_FW_MMIO) &&
+            J804GpuOverlap (
+              PageBase,
+              PageTop,
+              J804GpuLe (OtherEntry, 8),
+              J804GpuLe (OtherEntry, 8) + J804GpuLe (OtherEntry + 8, 8)
+              ))
+        {
+          return J804GpuBadFwMmio;
+        }
+      }
+
+      Parsed.FwMmioCount++;
+      continue;
+    }
+
+    if (Parsed.FwMmioCount != 0) {
+      return J804GpuBadFwMmio;    // a table range after a declaration
+    }
+
     if ((Size == 0) || (Top < Base) || (((Base | Size) & (J804_GPU_PAGE - 1)) != 0) ||
         (Class == 0) || (Class >= J804_GPU_C_COUNT))
     {
