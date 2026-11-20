@@ -84,6 +84,12 @@
   #   at 0x140. No Mu input driver and no C or ASL define: Mu never touches
   #   the page. Needs J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the
   #   AHCI, USB or GPU image, unchanged.
+  # J804_WINDOWS_SCANOUT: G6-S, the carrier's scanout service (J804Windows.h,
+  #   aura-win docs/windows-t8152.md "G6-S"): the GPU0 variant J804Gpu0ScnSsdt
+  #   (resources 5 and 6: the page and SPI 992), J804GpuAcpiDxe built with
+  #   -DJ804_GPU_SCANOUT=1 so it installs that variant when the launcher's
+  #   /chosen scanout handshake validates, and the FD marker block at 0x150.
+  #   Needs J804_WINDOWS_GPU. FALSE = every other image, byte for byte.
   #
 !ifndef J804_WINDOWS_ANS
   DEFINE J804_WINDOWS_ANS = FALSE
@@ -106,6 +112,9 @@
 !ifndef J804_WINDOWS_INPUT
   DEFINE J804_WINDOWS_INPUT = FALSE
 !endif
+!ifndef J804_WINDOWS_SCANOUT
+  DEFINE J804_WINDOWS_SCANOUT = FALSE
+!endif
 !if $(J804_WINDOWS_USB) == TRUE
 !if $(J804_WINDOWS_AHCI) == FALSE
 !error "J804_WINDOWS_USB builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
@@ -119,6 +128,11 @@
 !if $(J804_WINDOWS_INPUT) == TRUE
 !if $(J804_WINDOWS_AHCI) == FALSE
 !error "J804_WINDOWS_INPUT builds on the D1 AHCI profile: set J804_WINDOWS_AHCI = TRUE as well"
+!endif
+!endif
+!if $(J804_WINDOWS_SCANOUT) == TRUE
+!if $(J804_WINDOWS_GPU) == FALSE
+!error "J804_WINDOWS_SCANOUT adds resources to GPU0: set J804_WINDOWS_GPU = TRUE as well"
 !endif
 !endif
 !if $(SECURE_BOOT_ENABLE) == TRUE
@@ -299,7 +313,15 @@
 !endif
 !if $(J804_WINDOWS_GPU) == TRUE
   MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf
+!if $(J804_WINDOWS_SCANOUT) == TRUE
+  MacBookPro2026Pkg/AcpiTables/J804Gpu0ScnSsdt.inf
+  MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf {
+    <BuildOptions>
+      GCC:*_*_AARCH64_CC_FLAGS = -DJ804_GPU_SCANOUT=1
+  }
+!else
   MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf
+!endif
 !endif
 !if $(J804_WINDOWS_INPUT) == TRUE
   MacBookPro2026Pkg/AcpiTables/J804Inp0Ssdt.inf

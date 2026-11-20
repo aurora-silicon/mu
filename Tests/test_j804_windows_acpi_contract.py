@@ -45,6 +45,12 @@ with the EL2 carrier in Platform/MacBookPro2026Pkg/Include/J804Windows.h:
     range = the carrier's 16 KiB input page and one level, active-high
     interrupt = J804_GSIV_INPUT, no power or wake methods and no _DSD. A
     non-input build has no J804INP0 SSDT; no DSDT ever declares INP0.
+  * GPU0 with the scanout service (G6-S, J804_WINDOWS_SCANOUT build): a
+    second J804GPU0 template (J804Gpu0ScnSsdt), the same GPU0 plus resource 5
+    = the carrier's 16 KiB scanout page and resource 6 = one level,
+    active-high interrupt J804_GSIV_SCANOUT, and the scanout values in _DSD.
+    J804GpuAcpiDxe installs one of the two; a non-scanout build carries only
+    the plain template and 0xFF at the FD marker offset 0x150.
 
 The build flags come from the stamp Tools/build-j804-windows.sh writes in
 the build tree (all FALSE when it is missing). Skips when no build is
@@ -75,6 +81,8 @@ ACPI_SRC = REPO / "Platform" / "MacBookPro2026Pkg" / "AcpiTables"
 SSDT_XHC1 = ACPI_SRC / "SsdtXhc1.asl"
 SSDT_GPU0 = ACPI_SRC / "SsdtGpu0.asl"
 SSDT_INP0 = ACPI_SRC / "SsdtInp0.asl"
+SSDT_GPU0_SCN = ACPI_SRC / "SsdtGpu0Scn.asl"
+SCANOUT_HOST_TEST = REPO / "Tools" / "HostTests" / "J804ScanoutHandshake"
 GPU_HANDOFF_H = REPO / "Silicon" / "Apple" / "AppleSiliconPkg" / "Include" / "J804GpuHandoff.h"
 GPU_HOST_TEST = REPO / "Tools" / "HostTests" / "J804GpuHandoff"
 
@@ -126,7 +134,8 @@ GPU_SYNTHETIC = [(0x440000000, 0x4000000), (0x360080000, 0x4000), (0x900000000, 
 
 def build_flags() -> dict[str, bool]:
     flags = {"J804_WINDOWS_ANS": False, "J804_WINDOWS_VUART": False, "J804_WINDOWS_AHCI": False,
-             "J804_WINDOWS_USB": False, "J804_WINDOWS_GPU": False, "J804_WINDOWS_INPUT": False}
+             "J804_WINDOWS_USB": False, "J804_WINDOWS_GPU": False, "J804_WINDOWS_INPUT": False,
+             "J804_WINDOWS_SCANOUT": False}
     if FLAGS_STAMP.is_file():
         for item in FLAGS_STAMP.read_text().split():
             name, _, value = item.partition("=")
@@ -410,8 +419,17 @@ class J804WindowsAcpiContract(unittest.TestCase):
         if not build_flags()["J804_WINDOWS_GPU"]:
             self.assertEqual(ssdts, [], "a non-GPU build carries no J804GPU0 SSDT")
             return
-        self.assertEqual(len(ssdts), 1, "exactly one J804GPU0 SSDT in a GPU build")
-        check_gpu0_ssdt(self, ssdts[0], [gpu_sentinel(k) for k in range(1, 5)], GPU_SENTINEL_IPA)
+        sentinels = [gpu_sentinel(k) for k in range(1, 5)]
+        if not build_flags()["J804_WINDOWS_SCANOUT"]:
+            self.assertEqual(len(ssdts), 1, "exactly one J804GPU0 SSDT in a GPU build")
+            check_gpu0_ssdt(self, ssdts[0], sentinels, GPU_SENTINEL_IPA)
+            return
+        self.assertEqual(len(ssdts), 2, "the plain and the scanout J804GPU0 SSDT")
+        scn = [t for t in ssdts if struct.pack("<Q", 0xF60000000) in t]
+        plain = [t for t in ssdts if t not in scn]
+        self.assertEqual((len(scn), len(plain)), (1, 1))
+        check_gpu0_ssdt(self, plain[0], sentinels, GPU_SENTINEL_IPA)
+        check_gpu0_ssdt(self, scn[0], sentinels, GPU_SENTINEL_IPA, scanout=self.h)
 
     def test_inp0(self) -> None:
         ssdts = [t for t in find_tables("SSDT") if t[16:24] == b"J804INP0"]
@@ -428,6 +446,7 @@ class J804WindowsAcpiContract(unittest.TestCase):
         ids = sorted(t[16:24] for t in find_tables("SSDT"))
         want = sorted(([b"J804XHC1"] if flags["J804_WINDOWS_USB"] else [])
                       + ([b"J804GPU0"] if flags["J804_WINDOWS_GPU"] else [])
+                      + ([b"J804GPU0"] if flags["J804_WINDOWS_SCANOUT"] else [])
                       + ([b"J804INP0"] if flags["J804_WINDOWS_INPUT"] else []))
         self.assertEqual(ids, want, f"platform SSDTs for build flags {flags}")
 
@@ -486,8 +505,9 @@ GPU0_FORBIDDEN_METHODS = XHC1_FORBIDDEN_METHODS + (b"_PRS", b"_SRS", b"_DIS")
 
 
 def check_gpu0_ssdt(case: unittest.TestCase, ssdt: bytes, ranges: list[tuple[int, int, int]],
-                    ipa: int) -> None:
-    """The G0 SSDT, as a template (sentinels) or patched (ranges, ipa)."""
+                    ipa: int, scanout: dict[str, int] | None = None) -> None:
+    """The G0 SSDT, as a template (sentinels) or patched (ranges, ipa); with `scanout` (the
+    header values) the G6-S variant: the same plus the scanout page and its SPI."""
     case.assertTrue(length_ok(ssdt))
     case.assertTrue(checksum_ok(ssdt), "SSDT checksum")
     case.assertEqual(ssdt[10:16], b"AURORA")
@@ -500,8 +520,19 @@ def check_gpu0_ssdt(case: unittest.TestCase, ssdt: bytes, ranges: list[tuple[int
     case.assertEqual(gpu0["_UID"], 0)
     case.assertEqual(gpu0["_CCA"], 1)
     case.assertEqual(gpu0["_STA"], 0x0F)
-    case.assertEqual(resources(gpu0["_CRS"]), [("qword", *r) for r in ranges],
-                     "sgx window, GFX post-office page, pool, handoff page; no interrupt")
+    extra = []
+    if scanout is not None:
+        base, size = scanout["J804_SCANOUT_BASE"], scanout["J804_SCANOUT_SIZE"]
+        extra = [("qword", base, base + size - 1, size),
+                 ("irq", 0x01, [scanout["J804_GSIV_SCANOUT"]])]
+        for key in (b"aura,scanout-ipa\x00", b"aura,scanout-gsiv\x00", b"aura,scanout-size\x00",
+                    b"aura,scanout-version\x00"):
+            case.assertIn(key, ssdt)
+    else:
+        case.assertNotIn(b"aura,scanout", ssdt)
+    case.assertEqual(resources(gpu0["_CRS"]), [("qword", *r) for r in ranges] + extra,
+                     "sgx window, GFX post-office page, pool, handoff page; with the scanout "
+                     "service its page and one level active-high SPI")
     crs = gpu0["_CRS"]
     # Type-specific flags: bit 0 read-write, bits 2:1 memory type (0 non-cacheable, 1 cacheable).
     case.assertEqual([crs[5 + 46 * i] for i in range(4)], [0x01, 0x01, 0x03, 0x02],
@@ -598,7 +629,15 @@ class J804WindowsGpuContract(unittest.TestCase):
         components = dsc.split("[Components.common]", 1)[1]
         self.assertIn("!if $(J804_WINDOWS_GPU) == TRUE\n"
                       "  MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf\n"
-                      "  MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf\n!endif",
+                      "!if $(J804_WINDOWS_SCANOUT) == TRUE\n"
+                      "  MacBookPro2026Pkg/AcpiTables/J804Gpu0ScnSsdt.inf\n"
+                      "  MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf {\n"
+                      "    <BuildOptions>\n"
+                      "      GCC:*_*_AARCH64_CC_FLAGS = -DJ804_GPU_SCANOUT=1\n"
+                      "  }\n"
+                      "!else\n"
+                      "  MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf\n"
+                      "!endif\n!endif",
                       components)
         fdf = FDF.read_text()
         self.assertIn("!if $(J804_WINDOWS_GPU) == TRUE\n", fdf)
@@ -629,6 +668,69 @@ class J804WindowsGpuContract(unittest.TestCase):
             subprocess.run(["iasl", "-d", str(patched)], check=True, capture_output=True, cwd=tmp)
             subprocess.run(["iasl", "-vs", "-p", str(Path(tmp) / "round"), str(Path(tmp) / "patched.dsl")],
                            check=True, capture_output=True)
+
+
+class J804WindowsScanoutContract(unittest.TestCase):
+    """G6-S values shared by J804Windows.h, the FDF marker, the DSC, the SSDT variant and the
+    handshake parser (no build)."""
+
+    def setUp(self) -> None:
+        self.h = header_defines()
+
+    def test_header_values(self) -> None:
+        h = self.h
+        self.assertEqual((h["J804_SCANOUT_BASE"], h["J804_SCANOUT_SIZE"], h["J804_GSIV_SCANOUT"]),
+                         (0xF60000000, 0x4000, 992))
+        self.assertEqual(h["J804_SCANOUT_BASE"] - h["J804_INPUT_BASE"], 0x10000000)
+        self.assertEqual((h["J804_SCANOUT_ADT_PROPERTY_SIZE"], h["J804_SCANOUT_VERSION"],
+                          h["J804_SCANOUT_FD_MARKER_OFFSET"]), (32, 1, 0x150))
+        self.assertEqual(header_strings()["J804_SCANOUT_ADT_PROPERTY"], "aura,windows-scanout-v1")
+        gsivs = [h[k] for k in ("J804_GSIV_AHCI", "J804_GSIV_INPUT", "J804_GSIV_SCANOUT",
+                                "J804_GSIV_XHC1", "J804_GSIV_ANS", "J804_GSIV_XHC2")]
+        self.assertEqual(len(set(gsivs)), len(gsivs))
+
+    def test_fd_marker_block(self) -> None:
+        fdf = FDF.read_text()
+        block = fdf.split("!if $(J804_WINDOWS_SCANOUT) == TRUE\n", 1)[1].split("!endif", 1)[0]
+        self.assertIn("0x000000150|0x000000010", block)
+        data = bytes(int(b, 16) for b in re.findall(r"0x([0-9a-f]{2})\b", block.split("DATA", 1)[1]))
+        self.assertEqual(data, b"J804SCN1" + struct.pack("<II", 0xF60000000 >> 12, 992))
+
+    def test_dsc_defaults_off(self) -> None:
+        dsc = DSC.read_text()
+        self.assertIn("!ifndef J804_WINDOWS_SCANOUT\n  DEFINE J804_WINDOWS_SCANOUT = FALSE\n!endif",
+                      dsc)
+        self.assertIn("!if $(J804_WINDOWS_SCANOUT) == TRUE\n!if $(J804_WINDOWS_GPU) == FALSE\n!error",
+                      dsc, "a scanout build needs the GPU build")
+
+    @unittest.skipUnless(shutil.which("iasl") and shutil.which("cc") and shutil.which("make"),
+                         "needs cc, make and iasl")
+    def test_ssdt_compiles_and_patches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pre = Path(tmp) / "SsdtGpu0Scn.asl"
+            subprocess.run(["cc", "-E", "-P", "-x", "c", "-I", str(HEADER.parent),
+                            str(SSDT_GPU0_SCN), "-o", str(pre)], check=True)
+            subprocess.run(["iasl", "-vs", "-p", str(Path(tmp) / "SsdtGpu0Scn"), str(pre)],
+                           check=True, capture_output=True)
+            template = Path(tmp) / "SsdtGpu0Scn.aml"
+            check_gpu0_ssdt(self, template.read_bytes(), [gpu_sentinel(k) for k in range(1, 5)],
+                            GPU_SENTINEL_IPA, scanout=self.h)
+            # The G0 patcher takes the variant unchanged: every sentinel once.
+            subprocess.run(["make", "-s", "-C", str(GPU_HOST_TEST)], check=True, capture_output=True)
+            patched = Path(tmp) / "patched.aml"
+            out = subprocess.run([str(GPU_HOST_TEST / "gpu_handoff_test"), str(template), str(patched)],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stdout)
+            check_gpu0_ssdt(self, patched.read_bytes(), [(b, b + n - 1, n) for b, n in GPU_SYNTHETIC],
+                            GPU_SYNTHETIC[3][0], scanout=self.h)
+
+    @unittest.skipUnless(shutil.which("cc") and shutil.which("make"), "needs cc and make")
+    def test_handshake_parser(self) -> None:
+        subprocess.run(["make", "-s", "-C", str(SCANOUT_HOST_TEST)], check=True, capture_output=True)
+        out = subprocess.run([str(SCANOUT_HOST_TEST / "scanout_handshake_test")],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertIn("PASS: 0 failure(s)", out.stdout)
 
 
 class J804WindowsUsbContract(unittest.TestCase):

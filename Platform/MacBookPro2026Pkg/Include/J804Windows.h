@@ -268,4 +268,51 @@
 //
 #define J804_INPUT_FD_MARKER_OFFSET    0x140
 
+//
+// G6-S scanout service (aura-win j804-windows-g6-scanout, hv_scanout.h;
+// docs/windows-t8152.md "G6-S"). Only a J804_WINDOWS_SCANOUT build uses these.
+// The carrier emulates one 16 KiB register page (hooked, never mapped) in the
+// same /arm-io gap, 0x10000000 above the input page, and raises a purely
+// virtual level SPI (no AIC line) for vblank, flip done and flip error. It
+// gives the WDDM driver a virtual vblank from the system counter and flips
+// copied into the iBoot scanout; the DCP is never touched. 992 is in no
+// "interrupts" property of the J804 ADT and is neither 990/991 nor a published
+// AIC alias. Mu never touches the page: with a valid handshake below (and the
+// GPU handshake) J804GpuAcpiDxe installs the GPU0 variant (J804Gpu0ScnSsdt)
+// whose _CRS adds resource 5 (the page) and resource 6 (Interrupt 992), so the
+// one WDDM adapter owns both.
+//
+#define J804_SCANOUT_BASE          0xF60000000
+#define J804_SCANOUT_SIZE          0x4000
+#define J804_GSIV_SCANOUT          992
+
+//
+// Run-time handshake: the launcher writes this /chosen property into the
+// guest ADT only after the carrier's scanout ATTACH returned 0 (page hooked,
+// SPI 992 owned). Without it, or with any value that differs from this
+// contract, GPU0 carries no scanout resources. Little-endian, 32 bytes:
+//   +0x00 u64 page base (J804_SCANOUT_BASE)
+//   +0x08 u32 page size (J804_SCANOUT_SIZE)
+//   +0x0C u32 GSIV (J804_GSIV_SCANOUT)
+//   +0x10 u32 FEATURES (the page's: at least J804_SCANOUT_FEATURES_REQUIRED,
+//             nothing outside J804_SCANOUT_FEATURES_KNOWN)
+//   +0x14 u32 refresh in mHz (J804_SCANOUT_MIN_MHZ..J804_SCANOUT_MAX_MHZ)
+//   +0x18 u32 version (J804_SCANOUT_VERSION)
+//   +0x1C u32 zero
+//
+#define J804_SCANOUT_ADT_PROPERTY        "aura,windows-scanout-v1"
+#define J804_SCANOUT_ADT_PROPERTY_SIZE   32
+#define J804_SCANOUT_VERSION             1
+#define J804_SCANOUT_FEATURES_REQUIRED   0x00000003   // timer vblank, copy flip
+#define J804_SCANOUT_FEATURES_KNOWN      0x0000007F
+#define J804_SCANOUT_MIN_MHZ             1000
+#define J804_SCANOUT_MAX_MHZ             240000
+
+//
+// Raw FD marker (MacBookPro2026.fdf region 0x150|0x10, scanout builds only),
+// read by the launcher before it attaches the service: "J804SCN1", u32
+// J804_SCANOUT_BASE >> 12, u32 J804_GSIV_SCANOUT. A non-scanout FD has 0xFF.
+//
+#define J804_SCANOUT_FD_MARKER_OFFSET    0x150
+
 #endif

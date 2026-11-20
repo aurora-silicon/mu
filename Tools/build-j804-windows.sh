@@ -22,6 +22,10 @@
 #   WM6_J804_GPU=TRUE        G0 GPU build (needs WM6_J804_AHCI=TRUE): PrePi
 #                            reserves the GPU pool, the GPU0 SSDT template and
 #                            J804GpuAcpiDxe (only with the /chosen GPU handshake)
+#   WM6_J804_SCANOUT=TRUE    G6-S scanout build (needs WM6_J804_GPU=TRUE): the
+#                            GPU0 variant with the scanout page and SPI 992,
+#                            J804GpuAcpiDxe with -DJ804_GPU_SCANOUT, FD marker
+#                            at 0x150. FALSE builds are unchanged byte for byte.
 #   WM6_J804_INPUT=TRUE      I0 input build (needs WM6_J804_AHCI=TRUE): the INP0
 #                            SSDT, J804InputAcpiDxe, FD marker at 0x140
 set -eu
@@ -52,7 +56,8 @@ ahci=${WM6_J804_AHCI:-FALSE}
 usb=${WM6_J804_USB:-FALSE}
 gpu=${WM6_J804_GPU:-FALSE}
 input=${WM6_J804_INPUT:-FALSE}
-for flag in "$ans" "$vuart" "$ahci" "$usb" "$gpu" "$input"; do
+scanout=${WM6_J804_SCANOUT:-FALSE}
+for flag in "$ans" "$vuart" "$ahci" "$usb" "$gpu" "$input" "$scanout"; do
     case "$flag" in TRUE|FALSE) ;; *) echo "WM6_J804_* must be TRUE or FALSE" >&2; exit 1 ;; esac
 done
 if test "$usb" = TRUE && test "$ahci" != TRUE; then
@@ -63,6 +68,13 @@ if test "$gpu" = TRUE && test "$ahci" != TRUE; then
     echo "WM6_J804_GPU=TRUE needs WM6_J804_AHCI=TRUE" >&2
     exit 1
 fi
+if test "$scanout" = TRUE && test "$gpu" != TRUE; then
+    echo "WM6_J804_SCANOUT=TRUE needs WM6_J804_GPU=TRUE" >&2
+    exit 1
+fi
+# Named only when set, so every older variant keeps its flags stamp and manifest.
+scanout_flag=
+test "$scanout" = TRUE && scanout_flag=" J804_WINDOWS_SCANOUT=TRUE"
 if test "$input" = TRUE && test "$ahci" != TRUE; then
     echo "WM6_J804_INPUT=TRUE needs WM6_J804_AHCI=TRUE" >&2
     exit 1
@@ -86,7 +98,7 @@ build_dir=$source_root/Build/MacBookPro2026-AARCH64
 # The default, vUART, AHCI, USB, GPU and input variants share build_dir, and the manifest scans every
 # PE and ACPI table in it: never build one variant over the other's output.
 flags_stamp=$build_dir/.wm6-j804-windows-flags
-build_flags="J804_WINDOWS_ANS=$ans J804_WINDOWS_VUART=$vuart J804_WINDOWS_AHCI=$ahci J804_WINDOWS_USB=$usb J804_WINDOWS_GPU=$gpu J804_WINDOWS_INPUT=$input"
+build_flags="J804_WINDOWS_ANS=$ans J804_WINDOWS_VUART=$vuart J804_WINDOWS_AHCI=$ahci J804_WINDOWS_USB=$usb J804_WINDOWS_GPU=$gpu J804_WINDOWS_INPUT=$input$scanout_flag"
 if test "${WM6_CLEAN:-0}" = 1; then
     rm -rf "$build_dir"
 elif test -d "$build_dir" && test "$(cat "$flags_stamp" 2>/dev/null)" != "$build_flags"; then
@@ -105,6 +117,7 @@ log=$output_root/build.log
     "BLD_*_J804_WINDOWS_ANS=$ans" "BLD_*_J804_WINDOWS_VUART=$vuart" \
     "BLD_*_J804_WINDOWS_AHCI=$ahci" "BLD_*_J804_WINDOWS_USB=$usb" \
     "BLD_*_J804_WINDOWS_GPU=$gpu" "BLD_*_J804_WINDOWS_INPUT=$input" \
+    "BLD_*_J804_WINDOWS_SCANOUT=$scanout" \
     "BLD_*_SOURCE_PREFIX_MAP=$source_root" \
     > "$log" 2>&1 || {
     tail -50 "$log" >&2
@@ -120,6 +133,7 @@ cp "$fd" "$output_root/artifacts/J804WIN_EFI.fd"
     --build-flag "J804_WINDOWS_ANS=$ans" --build-flag "J804_WINDOWS_VUART=$vuart" \
     --build-flag "J804_WINDOWS_AHCI=$ahci" --build-flag "J804_WINDOWS_USB=$usb" \
     --build-flag "J804_WINDOWS_GPU=$gpu" --build-flag "J804_WINDOWS_INPUT=$input" \
+    ${scanout_flag:+--build-flag J804_WINDOWS_SCANOUT=TRUE} \
     --out "$output_root/artifacts"
 # The build log names the checkout path; keep it out of the hand-over files.
 sed "s|$source_root|<mu>|g; s|$parent|<wm6>|g; s|$HOME|<home>|g" "$log" > "$log.tmp" && mv "$log.tmp" "$log"

@@ -67,6 +67,19 @@ DATA = {
 }
 !endif
 
+!if $(J804_WINDOWS_SCANOUT) == TRUE
+# G6-S scanout contract marker (J804Windows.h J804_SCANOUT_FD_MARKER_OFFSET),
+# read by the launcher before it attaches the service: "J804SCN1", u32
+# J804_SCANOUT_BASE >> 12 (0xF60000), u32 J804_GSIV_SCANOUT (992).
+# Little-endian. Absent (0xFF) in non-scanout builds.
+0x000000150|0x000000010
+DATA = {
+  0x4a, 0x38, 0x30, 0x34, 0x53, 0x43, 0x4e, 0x31, # "J804SCN1"
+  0x00, 0x00, 0xf6, 0x00,                         # 0xF60000000 >> 12
+  0xe0, 0x03, 0x00, 0x00                          # GSIV 992
+}
+!endif
+
 0x000008000|0x001DF8000
 gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
 FV = FVMAIN_COMPACT
@@ -177,6 +190,11 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   # (J804GpuAcpiDxe).
   INF MacBookPro2026Pkg/Drivers/J804GpuAcpiDxe/J804GpuAcpiDxe.inf
   INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf
+!if $(J804_WINDOWS_SCANOUT) == TRUE
+  # G6-S: the GPU0 variant with the scanout page and SPI 992, installed
+  # instead of J804Gpu0Ssdt only with a valid /chosen scanout handshake.
+  INF RuleOverride=ACPITABLE MacBookPro2026Pkg/AcpiTables/J804Gpu0ScnSsdt.inf
+!endif
 !endif
 !if $(J804_WINDOWS_INPUT) == TRUE
   # I0: \_SB.INP0 in its own SSDT, installed only with the /chosen input

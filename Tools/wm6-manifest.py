@@ -122,6 +122,21 @@ INPUT_SSDT_OEM_TABLE_ID = b'J804INP0'
 INPUT_FV_DRIVERS = ('J804InputAcpiDxe',)
 INPUT_MARKERS = ['J804_WINDOWS_INPUT: INP0 published', 'J804_WINDOWS_INPUT refused']
 INPUT_HID = b'NTAS2040'
+# The G6-S scanout build (J804_WINDOWS_SCANOUT=TRUE, needs the GPU build): a
+# second J804GPU0 SSDT template, the same table plus resource 5 (the scanout
+# page, QWordMemory at 0xF60000000) and resource 6 (Interrupt 992), which
+# J804GpuAcpiDxe installs instead of the plain one only with the /chosen
+# scanout handshake; the raw contract marker at FD offset 0x150 ("J804SCN1",
+# page >> 12, GSIV; J804Windows.h). A non-scanout FD has 0xFF there and one
+# J804GPU0 SSDT (or none).
+SCANOUT_FLAG = 'J804_WINDOWS_SCANOUT'
+SCANOUT_FD_MARKER_OFFSET = 0x150
+SCANOUT_FD_MARKER = b'J804SCN1' + struct.pack('<II', 0xF60000000 >> 12, 992)
+SCANOUT_MARKERS = ['J804_WINDOWS_SCANOUT: page', 'J804_WINDOWS_SCANOUT refused']
+SCANOUT_PAGE = struct.pack('<Q', 0xF60000000)
+# ACPI 6.4 6.4.3.6 Extended Interrupt Descriptor: 0x89, length 6, flags, one
+# interrupt, then the GSIV.
+SCANOUT_IRQ = struct.pack('<I', 992)
 # DBG2's namespace string for the vUART (ASCII, NUL-terminated; ACPI 6.4 DBG2
 # Device Information structure, NamespaceString).
 DBG2_COM0 = b'\\_SB.COM0\0'
@@ -343,6 +358,11 @@ def main():
     inp = flags.get(INPUT_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
     if inp == 'TRUE':
         wanted += INPUT_MARKERS
+    scn = flags.get(SCANOUT_FLAG, 'FALSE') if args.profile == 'j804-windows' else None
+    if scn == 'TRUE':
+        wanted += SCANOUT_MARKERS
+        if gpu != 'TRUE':
+            failures.append(f'{SCANOUT_FLAG}=TRUE needs {GPU_FLAG}=TRUE')
     markers = {}
     for marker in wanted:
         markers[marker] = [p.name for p in top if find_strings(p.read_bytes(), marker)]
@@ -426,18 +446,31 @@ def main():
         for oem_id, blobs in sorted(by_id.items()):
             if oem_id not in wanted_ssdt:
                 failures.append(f'FVMAIN carries an unexpected platform SSDT {oem_id!r}')
+        if scn not in ('TRUE', 'FALSE'):
+            failures.append(f'--build-flag {SCANOUT_FLAG}=TRUE|FALSE expected, got {scn!r}')
         for oem_id, (device, value, flag) in wanted_ssdt.items():
             blobs = by_id.get(oem_id, [])
+            want = 2 if oem_id == GPU_SSDT_OEM_TABLE_ID and scn == 'TRUE' else 1
             if value == 'TRUE':
-                if len(blobs) != 1:
+                if len(blobs) != want:
                     failures.append(f'{flag}=TRUE but FVMAIN carries {len(blobs)} '
-                                    f'{oem_id.decode()} SSDTs, expected exactly 1')
-                elif not dsdt_has_sb_device(blobs[0], device):
+                                    f'{oem_id.decode()} SSDTs, expected exactly {want}')
+                elif not all(dsdt_has_sb_device(b, device) for b in blobs):
                     failures.append(f'{flag}=TRUE but the {oem_id.decode()} SSDT does not '
                                     f'declare Device (\\_SB.{device})')
             elif value == 'FALSE' and blobs:
                 failures.append(f'{flag}=FALSE but FVMAIN carries the {oem_id.decode()} SSDT')
-        for blob in by_id.get(GPU_SSDT_OEM_TABLE_ID, [])[:1]:
+        gpu_blobs = by_id.get(GPU_SSDT_OEM_TABLE_ID, [])
+        with_scanout = [b for b in gpu_blobs if SCANOUT_PAGE in b and
+                        any(b[i:i + 3] == b'\x89\x06\x00' and b[i + 4] == 1 and
+                            b[i + 5:i + 9] == SCANOUT_IRQ for i in range(len(b) - 9))]
+        if scn == 'TRUE' and len(with_scanout) != 1:
+            failures.append(f'{SCANOUT_FLAG}=TRUE but {len(with_scanout)} J804GPU0 SSDTs carry '
+                            'the scanout page and Interrupt 992, expected exactly 1')
+        if scn == 'FALSE' and with_scanout:
+            failures.append(f'{SCANOUT_FLAG}=FALSE but a J804GPU0 SSDT carries the scanout '
+                            'resources')
+        for blob in gpu_blobs:
             if GPU_HID not in blob:
                 failures.append(f'the J804GPU0 SSDT does not carry _HID {GPU_HID.decode()}')
             for sentinel in GPU_SENTINELS:
@@ -481,6 +514,12 @@ def main():
             if (gpu == 'TRUE') != (driver in names):
                 failures.append(f'{GPU_FLAG}={gpu} but FVMAIN '
                                 + ('carries ' if driver in names else 'lacks ') + driver)
+    if scn in ('TRUE', 'FALSE'):
+        marker = data[SCANOUT_FD_MARKER_OFFSET:SCANOUT_FD_MARKER_OFFSET + len(SCANOUT_FD_MARKER)]
+        expected = SCANOUT_FD_MARKER if scn == 'TRUE' else b'\xff' * len(SCANOUT_FD_MARKER)
+        if marker != expected:
+            failures.append(f'{SCANOUT_FLAG}={scn} but FD offset 0x{SCANOUT_FD_MARKER_OFFSET:x} '
+                            f'holds {marker.hex()} (expected {expected.hex()})')
     if inp in ('TRUE', 'FALSE'):
         marker = data[INPUT_FD_MARKER_OFFSET:INPUT_FD_MARKER_OFFSET + len(INPUT_FD_MARKER)]
         expected = INPUT_FD_MARKER if inp == 'TRUE' else b'\xff' * len(INPUT_FD_MARKER)

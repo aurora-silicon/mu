@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# J804 \_SB.GPU0 SSDT template with the G6-S scanout resources, only in
+# J804_WINDOWS_SCANOUT builds; patched like J804Gpu0Ssdt and installed by
+# J804GpuAcpiDxe instead of it only with valid GPU and scanout handshakes.
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J804Gpu0ScnSsdt
+  FILE_GUID = 6B1D3A52-2F0E-4E61-9C7A-0A6E5C3B9D41
+  MODULE_TYPE = USER_DEFINED
+  VERSION_STRING = 1.0
+[Sources]
+  SsdtGpu0Scn.asl
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  MacBookPro2026Pkg/MacBookPro2026Pkg.dec

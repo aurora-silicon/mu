@@ -42,6 +42,9 @@
 #include <J804Windows.h>
 #include <J804AhciHandshake.h>
 #include <J804GpuHandoff.h>
+#ifdef J804_GPU_SCANOUT
+  #include <J804ScanoutHandshake.h>
+#endif
 
 //
 // MacBookPro2026Pkg/AcpiTables/J804Gpu0Ssdt.inf FILE_GUID.
@@ -49,6 +52,33 @@
 STATIC CONST EFI_GUID  mJ804Gpu0Ssdt = {
   0x3c230d00, 0x9c66, 0x4ca9, { 0xbc, 0xaa, 0x61, 0x4e, 0x03, 0x4e, 0xaa, 0xc2 }
 };
+
+#ifdef J804_GPU_SCANOUT
+//
+// MacBookPro2026Pkg/AcpiTables/J804Gpu0ScnSsdt.inf FILE_GUID: GPU0 with the
+// G6-S scanout page and SPI as resources 5 and 6.
+//
+STATIC CONST EFI_GUID  mJ804Gpu0ScnSsdt = {
+  0x6b1d3a52, 0x2f0e, 0x4e61, { 0x9c, 0x7a, 0x0a, 0x6e, 0x5c, 0x3b, 0x9d, 0x41 }
+};
+
+STATIC CONST CHAR8  *CONST  mJ804ScanoutStatusText[] = {
+  J804_SCANOUT_HANDSHAKE_STATUS_TEXT
+};
+
+//
+// The template J804GpuInstallSsdt reads: the scanout variant only after
+// J804GpuScanoutUsable accepted the handshake.
+//
+STATIC CONST EFI_GUID  *mJ804Gpu0Template = &mJ804Gpu0Ssdt;
+  #define J804_GPU0_TEMPLATE  mJ804Gpu0Template
+  #define J804_GPU0_IRQ_TEXT  "%a"
+  #define J804_GPU0_IRQ_ARG   (mJ804Gpu0Template == &mJ804Gpu0Ssdt) ? "no interrupts" : "scanout page + SPI 992",
+#else
+  #define J804_GPU0_TEMPLATE  &mJ804Gpu0Ssdt
+  #define J804_GPU0_IRQ_TEXT  "no interrupts"
+  #define J804_GPU0_IRQ_ARG
+#endif
 
 STATIC CONST CHAR8  *CONST  mJ804GpuStatusText[] = {
   J804_GPU_STATUS_TEXT
@@ -237,6 +267,58 @@ J804GpuCheckAhciStore (
   return EFI_SUCCESS;
 }
 
+#ifdef J804_GPU_SCANOUT
+/**
+  G6-S: may GPU0 carry the scanout page and SPI? Only when the launcher wrote
+  /chosen/aura,windows-scanout-v1 (after the carrier's ATTACH returned 0), it
+  matches J804Windows.h, and the page is not RAM in the GCD map. Any failure
+  publishes the plain GPU0 (the driver then has no vblank, but the GPU works).
+**/
+STATIC
+BOOLEAN
+J804GpuScanoutUsable (
+  IN dt_node_t  *Chosen
+  )
+{
+  J804_SCANOUT_HANDSHAKE           Scanout;
+  J804_SCANOUT_HANDSHAKE_STATUS    Parsed;
+  EFI_GCD_MEMORY_SPACE_DESCRIPTOR  Desc;
+  CONST VOID                       *Value;
+  size_t                           Length;
+  EFI_STATUS                       Status;
+
+  Length = 0;
+  Value  = dt_prop (Chosen, J804_SCANOUT_ADT_PROPERTY, &Length);
+  if (Value == NULL) {
+    DEBUG ((DEBUG_INFO, "J804_WINDOWS_SCANOUT: no /chosen/%a, GPU0 without the scanout service\n", J804_SCANOUT_ADT_PROPERTY));
+    return FALSE;
+  }
+
+  Parsed = J804ScanoutParseHandshake (Value, Length, &Scanout);
+  if (Parsed != J804ScanoutHandshakeOk) {
+    DEBUG ((DEBUG_ERROR, "J804_WINDOWS_SCANOUT refused: /chosen/%a (%u bytes): %a\n", J804_SCANOUT_ADT_PROPERTY, (UINT32)Length, mJ804ScanoutStatusText[Parsed]));
+    return FALSE;
+  }
+
+  Status = gDS->GetMemorySpaceDescriptor (Scanout.Base, &Desc);
+  if (!EFI_ERROR (Status) &&
+      (J804GpuGcdIsRam (Desc.GcdMemoryType) ||
+       (Desc.BaseAddress + Desc.Length < Scanout.Base + Scanout.Size)))
+  {
+    Status = EFI_ACCESS_DENIED;
+  }
+
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "J804_WINDOWS_SCANOUT refused: the page 0x%lx is RAM or split in the GCD map: %r\n", Scanout.Base, Status));
+    return FALSE;
+  }
+
+  DEBUG ((DEBUG_INFO, "J804_WINDOWS_SCANOUT: page 0x%lx GSIV %u features 0x%x refresh %u mHz\n", Scanout.Base, Scanout.Gsiv, Scanout.Features, Scanout.RefreshMhz));
+  return TRUE;
+}
+
+#endif
+
 /**
   Read the template from the FV, patch it from the validated handoff and
   install it. Nothing is installed when the file is not the J804GPU0 SSDT or
@@ -261,7 +343,7 @@ J804GpuInstallSsdt (
 
   Table  = NULL;
   Size   = 0;
-  Status = GetSectionFromAnyFv (&mJ804Gpu0Ssdt, EFI_SECTION_RAW, 0, (VOID **)&Table, &Size);
+  Status = GetSectionFromAnyFv (J804_GPU0_TEMPLATE, EFI_SECTION_RAW, 0, (VOID **)&Table, &Size);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "J804_WINDOWS_GPU refused: no GPU0 SSDT template in the FV: %r\n", Status));
     return Status;
@@ -368,10 +450,16 @@ J804GpuAcpiEntry (
     return Status;
   }
 
+#ifdef J804_GPU_SCANOUT
+  if (J804GpuScanoutUsable (Chosen)) {
+    mJ804Gpu0Template = &mJ804Gpu0ScnSsdt;
+  }
+
+#endif
   Status = J804GpuInstallSsdt (&mHandoff);
   DEBUG ((
     DEBUG_INFO,
-    "J804_WINDOWS_GPU: GPU0 published: sgx 0x%lx+0x%lx mailbox 0x%lx pool 0x%lx+0x%lx handoff 0x%lx state 0x%x %a, no interrupts: %r\n",
+    "J804_WINDOWS_GPU: GPU0 published: sgx 0x%lx+0x%lx mailbox 0x%lx pool 0x%lx+0x%lx handoff 0x%lx state 0x%x %a, " J804_GPU0_IRQ_TEXT ": %r\n",
     mHandoff.SgxBase,
     mHandoff.SgxSize,
     mHandoff.MailboxBase,
@@ -380,6 +468,7 @@ J804GpuAcpiEntry (
     mHandoff.HandoffIpa,
     mHandoff.State,
     mHandoff.Receipt,
+    J804_GPU0_IRQ_ARG
     Status
     ));
   return Status;
