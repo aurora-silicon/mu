@@ -8,6 +8,28 @@
 
 #include <PrePi.h>
 
+STATIC PRE_PI_PROGRESS_CALLBACK  mPrePiProgressCallback;
+
+VOID
+EFIAPI
+SetPrePiProgressCallback (
+  IN PRE_PI_PROGRESS_CALLBACK  ProgressCallback OPTIONAL
+  )
+{
+  mPrePiProgressCallback = ProgressCallback;
+}
+
+STATIC
+VOID
+PrePiProgress (
+  IN UINT64  Stage
+  )
+{
+  if (mPrePiProgressCallback != NULL) {
+    mPrePiProgressCallback (Stage);
+  }
+}
+
 //
 // Hack to work in NT32
 //
@@ -131,14 +153,17 @@ LoadDxeCoreFromFfsFile (
   VOID                  *Hob;
   EFI_FV_FILE_INFO      FvFileInfo;
 
+  PrePiProgress (0x22);
   Status = FfsFindSectionDataWithHook (EFI_SECTION_PE32, NULL, FileHandle, &PeCoffImage, NULL);
   if (EFI_ERROR (Status)) {
     return Status;
   }
+  PrePiProgress (0x23);
 
   Status = LoadPeCoffImage (PeCoffImage, &ImageAddress, &ImageSize, &EntryPoint);
   // For NT32 Debug  Status = SecWinNtPeiLoadFile (PeCoffImage, &ImageAddress, &ImageSize, &EntryPoint);
   ASSERT_EFI_ERROR (Status);
+  PrePiProgress (0x24);
 
   //
   // Extract the DxeCore GUID file name.
@@ -147,6 +172,7 @@ LoadDxeCoreFromFfsFile (
   ASSERT_EFI_ERROR (Status);
 
   BuildModuleHob (&FvFileInfo.FileName, (EFI_PHYSICAL_ADDRESS)(UINTN)ImageAddress, EFI_SIZE_TO_PAGES ((UINT32)ImageSize) * EFI_PAGE_SIZE, EntryPoint);
+  PrePiProgress (0x25);
 
   DEBUG ((DEBUG_INFO | DEBUG_LOAD, "Loading DxeCore at 0x%10p EntryPoint=0x%10p\n", (VOID *)(UINTN)ImageAddress, (VOID *)(UINTN)EntryPoint));
 
@@ -154,6 +180,7 @@ LoadDxeCoreFromFfsFile (
   if (StackSize == 0) {
     // User the current stack
 
+    PrePiProgress (0x26);
     ((DXE_CORE_ENTRY_POINT)(UINTN)EntryPoint)(Hob);
   } else {
     //
@@ -200,6 +227,7 @@ LoadDxeCoreFromFv (
   EFI_PEI_FV_HANDLE    VolumeHandle;
   EFI_PEI_FILE_HANDLE  FileHandle = NULL;
 
+  PrePiProgress (0x20);
   if (FvInstance != NULL) {
     //
     // Caller passed in a specific FV to try, so only try that one
@@ -213,6 +241,7 @@ LoadDxeCoreFromFv (
   }
 
   if (!EFI_ERROR (Status)) {
+    PrePiProgress (0x21);
     return LoadDxeCoreFromFfsFile (FileHandle, StackSize);
   }
 

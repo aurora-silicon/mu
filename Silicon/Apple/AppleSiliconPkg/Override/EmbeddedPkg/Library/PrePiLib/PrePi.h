@@ -14,6 +14,7 @@
 
 #include <Library/BaseLib.h>
 #include <Library/PrePiLib.h>
+#include <Library/PrePiLibProgress.h>
 #include <Library/PcdLib.h>
 #include <Library/DebugLib.h>
 #include <Library/BaseMemoryLib.h>

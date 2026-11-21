@@ -439,7 +439,7 @@
 
   DtPlatformDtbLoaderLib|EmbeddedPkg/Library/DxeDtPlatformDtbLoaderLibDefault/DxeDtPlatformDtbLoaderLibDefault.inf
   ExtractGuidedSectionLib|EmbeddedPkg/Library/PrePiExtractGuidedSectionLib/PrePiExtractGuidedSectionLib.inf
-  PrePiLib|EmbeddedPkg/Library/PrePiLib/PrePiLib.inf
+  PrePiLib|AppleSiliconPkg/Override/EmbeddedPkg/Library/PrePiLib/PrePiLib.inf
 
   FmpAuthenticationLib|SecurityPkg/Library/FmpAuthenticationLibPkcs7/FmpAuthenticationLibPkcs7.inf
 

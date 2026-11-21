@@ -19,6 +19,7 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/HobLib.h>
 #include <Library/SerialPortLib.h>
+#include <Library/PrePiLibProgress.h>
 
 EFI_STATUS
 EFIAPI
