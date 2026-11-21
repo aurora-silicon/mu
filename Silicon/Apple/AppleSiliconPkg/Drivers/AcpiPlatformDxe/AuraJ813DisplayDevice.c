@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * J813 display coprocessor device (Platform/MacBookAir2026Pkg/AcpiTables/
+ * J813 display coprocessor device (Platform/J813BoardPkg/AcpiTables/
  * DISP.asl, ACPI\AURA8180).
  *
  * The SSDT is admitted only in images built with PcdAppleJ813DisplayDevice,

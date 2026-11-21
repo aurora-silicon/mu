@@ -14,7 +14,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
-TABLES = ROOT / "Platform/MacBookAir2026Pkg/AcpiTables"
+TABLES = ROOT / "Platform/J813BoardPkg/AcpiTables"
 ASL = TABLES / "DISP.asl"
 SOURCE = ROOT / "Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/AuraJ813DisplayDevice.c"
 # The display-owner selection the admission code consults (no marker: legacy).

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * J813 G17 GPU device (Platform/MacBookAir2026Pkg/AcpiTables/GPU.asl).
+ * J813 G17 GPU device (Platform/J813BoardPkg/AcpiTables/GPU.asl).
  *
  * The SSDT is admitted only in images built with PcdAppleG17GpuProbe, on
  * chip 0x8142 / board 0x24, when every one of the six iBoot GPU regions in

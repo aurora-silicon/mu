@@ -11,7 +11,7 @@ import subprocess
 
 ROOT=Path(__file__).resolve().parents[2]
 SOURCE='Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/AcpiPlatform.c'
-ASL='Platform/MacBookAir2026Pkg/AcpiTables/MTP.asl'
+ASL='Platform/J813BoardPkg/AcpiTables/MTP.asl'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     parser=argparse.ArgumentParser(description=__doc__)

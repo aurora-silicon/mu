@@ -7,7 +7,7 @@ AcpiPlatform.c, and AuraG17GpuDevice.c, AuraJ813DisplayDevice.c and (where the
 revision has it) AuraJ813UnifiedDisplay.c are compiled verbatim beside them.
 Firmware services (FV2 ReadSection, FreePool, the ACPI table protocol, the
 ADT, the GCD map) are the modeled boundary in acpi-table-loop-host.c.  The
-device SSDTs are compiled with iasl from Platform/MacBookAir2026Pkg/AcpiTables
+device SSDTs are compiled with iasl from Platform/J813BoardPkg/AcpiTables
 and stored in the J813 order; DBG2, FACP and the DSDT are fillers.
 
 Runs: the working tree (every case must pass); the quiet image's source
@@ -55,7 +55,7 @@ SOURCE = pathlib.Path('Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/Acp
 DXE = SOURCE.parent
 UNITS = {'g17': 'AuraG17GpuDevice.c', 'disp': 'AuraJ813DisplayDevice.c',
          'unified': 'AuraJ813UnifiedDisplay.c'}
-ASL = pathlib.Path('Platform/MacBookAir2026Pkg/AcpiTables')
+ASL = pathlib.Path('Platform/J813BoardPkg/AcpiTables')
 HOST = pathlib.Path('Tests/e2e/acpi-table-loop-host.c')
 HOST_H = pathlib.Path('Tests/e2e/acpi-table-loop-host.h')
 QUIET = '7ad68ebf88463054ebc8faca9b16a51f9ecd4e1f'

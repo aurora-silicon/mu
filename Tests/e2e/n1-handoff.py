@@ -27,7 +27,7 @@ SOURCES = [
     SILICON / "Drivers/AcpiPlatformDxe/AuraN1Handoff.c",
     SILICON / "Drivers/AcpiPlatformDxe/AcpiPlatform.c",
     SILICON / "Include/IndustryStandard/AuraN1Handoff.h",
-    Path("Platform/MacBookAir2026Pkg/AcpiTables/N1.asl"),
+    Path("Platform/J813BoardPkg/AcpiTables/N1.asl"),
 ]
 CASES = """success prefetch64 prefetch32 bar-io bar-below1m bar-reserved prefetch-high radios-present missing truncated version flags identity stream
 resource read-failure link-down root-id control-id bme bar bar-high rom geometry
@@ -77,7 +77,7 @@ def main():
         assert result["case"] == name and result["result"] == "passed", result
         cases.append(result)
 
-    asl = "Platform/MacBookAir2026Pkg/AcpiTables/N1.asl"
+    asl = "Platform/J813BoardPkg/AcpiTables/N1.asl"
     run(["iasl", "-ve", "-p", str(out / "N1"), asl], "iasl.log")
     run(["iasl", "-ve", "-p", str(out / "N1-repeat"), asl], "iasl-repeat.log")
     aml = (out / "N1.aml").read_bytes()

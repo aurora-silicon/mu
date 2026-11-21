@@ -53,7 +53,7 @@ def main():
     report = {"result": "incomplete", "scope": "offline; not hardware qualification",
               "sources": {str(p.relative_to(ROOT)): sha(p) for p in
                           [SOURCE, SELECTION, HERE / "harness.c", HERE / "run.py",
-                           ROOT / "Platform/MacBookAir2026Pkg/AcpiTables/GPU.asl"]},
+                           ROOT / "Platform/J813BoardPkg/AcpiTables/GPU.asl"]},
               "built_aml": {"path": str(AML.relative_to(ROOT)), "sha256": sha(AML)},
               "commands": []}
 
