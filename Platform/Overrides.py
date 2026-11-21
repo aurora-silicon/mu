@@ -81,6 +81,10 @@ class Patch:
     module_dir: str     # module directory inside the submodule
     patch: str          # workspace-relative patch file
     output: str         # workspace-relative generated module directory
+    # Files from the submodule (same gitlink) copied into the generated module
+    # directory: headers the module takes from its own package's private
+    # [Includes.Common.Private], which a module outside that package cannot see.
+    extra: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,7 @@ DXE_CORE_PATCH = Patch(
     module_dir="MdeModulePkg/Core/Dxe",
     patch=OVERRIDE_ROOT + "/Patches/MU_BASECORE/MdeModulePkg-Core-Dxe.patch",
     output=GENERATED_ROOT + "/MdeModulePkg/Core/Dxe",
+    extra=("MdeModulePkg/Core/PrivateInclude/MemoryBin.h",),
 )
 
 PATCHES = (DXE_CORE_PATCH,)
@@ -255,13 +260,19 @@ def generate(workspace: Path, log=print) -> int:
     for p in PATCHES:
         commit = gitlink(workspace, p.submodule)
         archive = _git("-C", str(workspace / p.submodule), "archive", "--format=tar",
-                       commit, p.module_dir)
+                       commit, p.module_dir, *p.extra)
         output = workspace / p.output
         with tempfile.TemporaryDirectory(prefix="mu-override-") as tmp:
             # Outside any repository, so git apply acts on plain files.
             with tarfile.open(fileobj=BytesIO(archive)) as tar:
                 tar.extractall(tmp, filter="data")
             root = Path(tmp) / p.module_dir
+            for extra in p.extra:
+                target = root / Path(extra).name
+                if target.exists():
+                    log(f"error: {extra} would replace {target.name} in {p.module_dir}")
+                    return 1
+                shutil.copyfile(Path(tmp) / extra, target)
             for f in root.rglob("*"):
                 if f.is_file():
                     data = f.read_bytes()
