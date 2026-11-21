@@ -567,7 +567,7 @@
   # TODO: should we not skip PEI phase?
   #
 
-  MdeModulePkg/Core/Dxe/DxeMain.inf {
+  AppleSiliconPkg/Override/Generated/MdeModulePkg/Core/Dxe/DxeMain.inf {
     <LibraryClasses>
     NULL|MdeModulePkg/Library/DxeCrc32GuidedSectionExtractLib/DxeCrc32GuidedSectionExtractLib.inf
     NULL|MdeModulePkg/Library/DxeCrc32GuidedSectionExtractLib/DxeCrc32GuidedSectionExtractLib.inf

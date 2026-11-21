@@ -141,10 +141,18 @@ if ! mkdir "$lock_dir" 2>/dev/null; then
 fi
 
 cleanup() {
+    status=$?
+    # No build may write into a submodule (Platform/Overrides.py), failed
+    # builds included.
+    "$mu_python" "$source_root/Platform/Overrides.py" clean "$source_root" >&2 || {
+        echo "error: a submodule is dirty after the build" >&2
+        status=1
+    }
     test "$(readlink "$source_root/Build" 2>/dev/null || true)" != "$build_dir" || rm "$source_root/Build"
     test "$(readlink "$source_root/Conf" 2>/dev/null || true)" != "$conf_dir" || rm "$source_root/Conf"
     rmdir "$lock_dir" 2>/dev/null || true
     rmdir "$source_link_lock_dir" 2>/dev/null || true
+    exit $status
 }
 trap cleanup EXIT HUP INT TERM
 if test ! -d "$build_dir"; then

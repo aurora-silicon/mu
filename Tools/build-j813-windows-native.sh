@@ -90,6 +90,16 @@ test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64 || {
     exit 1
 }
 cd "$source_root"
+# Overrides are built from copies inside AppleSiliconPkg and the DXE core is
+# patched outside MU_BASECORE (Platform/Overrides.py), so no build writes into
+# a submodule. Check that on every exit, failed builds included.
+submodules_clean() {
+    python3 "$source_root/Platform/Overrides.py" clean "$source_root" >&2 || {
+        echo "error: a submodule is dirty after the build" >&2
+        exit 1
+    }
+}
+trap submodules_clean EXIT
 if test "$aura_windows" = TRUE; then
     python3 Tools/check-j813-exception-base.py
     python3 Tools/check-j813-phase-policy.py

@@ -27,6 +27,7 @@
 ##
 import logging
 import os
+import pathlib
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from edk2toolext.environment import shell_environment
 
 import Features
+import Overrides
 from edk2toolext.invocables.edk2_setup import RequiredSubmodule
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -220,10 +222,28 @@ class ApplePlatformBuilder:
             self.env.SetValue(define, value, "Selected by feature set")
 
     def PlatformPreBuild(self):
-        return 0
+        # Before the plugins' do_pre_build, so OverrideValidation already sees
+        # the generated DXE core (and its #Override tag). See Overrides.py.
+        return Overrides.generate(pathlib.Path(WORKSPACE_ROOT), log=logging.info)
 
     def PlatformPostBuild(self):
-        return 0
+        # A dropped override still builds; prove from the report that it did not.
+        report = self.env.GetValue("BUILDREPORT_FILE")
+        output_base = self.env.GetValue("BUILD_OUTPUT_BASE")
+        if not report or not os.path.isfile(report):
+            logging.critical("override proof: no build report at %s", report)
+            return 1
+        rc = Overrides.prove(pathlib.Path(report), pathlib.Path(WORKSPACE_ROOT),
+                             pathlib.Path(output_base) if output_base else None,
+                             log=logging.info)
+        if rc != 0:
+            logging.critical("override proof failed; see %s",
+                             os.path.join(os.path.dirname(report), "OVERRIDE_PROOF.txt"))
+            return rc
+        errors = Overrides.check_submodules_clean(pathlib.Path(WORKSPACE_ROOT))
+        for error in errors:
+            logging.critical(error)
+        return 1 if errors else 0
 
     def FlashRomImage(self):
         return 0

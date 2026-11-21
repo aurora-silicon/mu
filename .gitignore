@@ -23,6 +23,8 @@ tags/
 BuildConfig.conf
 
 /Conf/
+# Build-time patched Microsoft modules (Platform/Overrides.py generate)
+Silicon/Apple/AppleSiliconPkg/Override/Generated/
 /MacStudio2022/
 /MacBookAir2020/
 /MacBookProEarly2023/
