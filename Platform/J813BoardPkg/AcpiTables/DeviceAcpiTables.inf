@@ -20,6 +20,7 @@
 [Sources]
   DBG2.aslc
   DSDT.asl
+  FADT.aslc
   MTP.asl
   SMCG.asl
   N1.asl
