@@ -41,6 +41,75 @@ extern UINTN                   gMaxExceptionNumber;
 extern EFI_EXCEPTION_CALLBACK  gExceptionHandlers[];
 extern PHYSICAL_ADDRESS        gExceptionVectorAlignmentMask;
 
+#if NTASI_J813_PMCCNTR_EMULATION
+// Apple M5 does not expose the architectural PMUv3 register bank to the EL1
+// guest, but Windows Boot Manager probes and initializes it before
+// ExitBootServices.  Supply the cycle counter from CNTPCT_EL0, report PMCR_EL0
+// as disabled, and accept the small set of PMU control writes used by
+// bootmgfw.efi.  Every other unknown instruction still reaches the normal
+// handler.
+STATIC
+BOOLEAN
+TryEmulateJ813PmuAccess (
+  IN     EFI_EXCEPTION_TYPE  ExceptionType,
+  IN OUT EFI_SYSTEM_CONTEXT  SystemContext
+  )
+{
+  EFI_SYSTEM_CONTEXT_AARCH64  *Context;
+  UINT32                      Instruction;
+  UINT32                      Opcode;
+  UINTN                       RegisterIndex;
+  UINT64                      RegisterValue;
+
+  Context = SystemContext.SystemContextAArch64;
+  if ((ExceptionType != EXCEPT_AARCH64_SYNCHRONOUS_EXCEPTIONS) ||
+      (Context->ESR != 0x02000000U)) {
+    return FALSE;
+  }
+
+  Instruction = *(volatile UINT32 *)(UINTN)Context->ELR;
+  Opcode = Instruction & 0xFFFFFFE0U;
+  RegisterIndex = Instruction & 0x1FU;
+
+  if (Opcode == 0xD53B9D00U) { // MRS Xt, PMCCNTR_EL0
+    if (RegisterIndex < 31U) {
+      ((UINT64 *)&Context->X0)[RegisterIndex] = ArmReadCntPct ();
+    }
+
+    Context->ELR += sizeof (Instruction);
+    DEBUG ((DEBUG_INFO, "J813: emulated MRS X%u, PMCCNTR_EL0 with CNTPCT_EL0\n", RegisterIndex));
+    return TRUE;
+  }
+
+  if (Opcode == 0xD53B9C00U) { // MRS Xt, PMCR_EL0
+    if (RegisterIndex < 31U) {
+      ((UINT64 *)&Context->X0)[RegisterIndex] = 0;
+    }
+
+    Context->ELR += sizeof (Instruction);
+    DEBUG ((DEBUG_INFO, "J813: emulated MRS X%u, PMCR_EL0 as disabled\n", RegisterIndex));
+    return TRUE;
+  }
+
+  switch (Opcode) {
+    case 0xD51B9C40U: // MSR PMCNTENCLR_EL0, Xt
+    case 0xD51B9C60U: // MSR PMOVSCLR_EL0, Xt
+    case 0xD5189E40U: // MSR PMINTENCLR_EL1, Xt
+    case 0xD51B9C00U: // MSR PMCR_EL0, Xt
+    case 0xD51BEFE0U: // MSR PMCCFILTR_EL0, Xt
+    case 0xD51B9C20U: // MSR PMCNTENSET_EL0, Xt
+    case 0xD51B9E00U: // MSR PMUSERENR_EL0, Xt
+      RegisterValue = (RegisterIndex < 31U) ?
+                      ((UINT64 *)&Context->X0)[RegisterIndex] : 0;
+      Context->ELR += sizeof (Instruction);
+      DEBUG ((DEBUG_INFO, "J813: ignored PMU MSR opcode 0x%08x from X%u=0x%Lx\n", Opcode, RegisterIndex, RegisterValue));
+      return TRUE;
+    default:
+      return FALSE;
+  }
+}
+#endif
+
 /**
 Initializes all CPU exceptions entries and provides the default exception handlers.
 
@@ -138,6 +207,12 @@ CommonCExceptionHandler (
   IN OUT EFI_SYSTEM_CONTEXT  SystemContext
   )
 {
+#if NTASI_J813_PMCCNTR_EMULATION
+  if (TryEmulateJ813PmuAccess (ExceptionType, SystemContext)) {
+    return;
+  }
+#endif
+
   if ((UINTN)ExceptionType <= gMaxExceptionNumber) {
     if (gExceptionHandlers[ExceptionType]) {
       gExceptionHandlers[ExceptionType](ExceptionType, SystemContext);

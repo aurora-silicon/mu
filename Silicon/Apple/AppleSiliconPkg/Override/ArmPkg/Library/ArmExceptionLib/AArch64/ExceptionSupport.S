@@ -109,7 +109,11 @@ GCC_ASM_EXPORT(CommonCExceptionHandler)
 // exception vector initialization method is used.
 //
 
-VECTOR_BASE(ExceptionHandlersStart)
+.section .text.ExceptionHandlersStart,"ax"
+.align  11
+.org    0x0
+GCC_ASM_EXPORT(ExceptionHandlersStart)
+ASM_PFX(ExceptionHandlersStart):
 
   .macro  ExceptionEntry, val, sp=SPx
   //
@@ -190,7 +194,16 @@ ASM_PFX(SErrorSP0):
 //
 VECTOR_ENTRY(ExceptionHandlersStart, ARM_VECTOR_CUR_SPX_SYNC)
 ASM_PFX(SynchronousExceptionSPx):
+#if NTASI_J813_PMCCNTR_EMULATION
+  // T8142 can expose SP_EL0 with its upper address bits cleared while the
+  // interrupted EL1h stack remains valid. Preserve the full-width SP_EL1 stack
+  // for the recoverable PMCCNTR trap instead of switching to broken SP_EL0.
+  ExceptionEntry  EXCEPT_AARCH64_SYNCHRONOUS_EXCEPTIONS
+#else
+  // Use the dedicated SP_EL0 exception stack so recoverable traps can safely
+  // return even when the interrupted image's active stack is protected.
   ExceptionEntry  EXCEPT_AARCH64_SYNCHRONOUS_EXCEPTIONS, SP0
+#endif
 
 VECTOR_ENTRY(ExceptionHandlersStart, ARM_VECTOR_CUR_SPX_IRQ)
 ASM_PFX(IrqSPx):
@@ -242,7 +255,8 @@ VECTOR_ENTRY(ExceptionHandlersStart, ARM_VECTOR_LOW_A32_SERR)
 ASM_PFX(SErrorA32):
   ExceptionEntry  EXCEPT_AARCH64_SERROR
 
-VECTOR_END(ExceptionHandlersStart)
+.org    0x800
+.section .text
 
 ASM_PFX(ExceptionHandlersEnd):
 

@@ -1,10 +1,11 @@
 /** SPDX-License-Identifier: BSD-2-Clause-Patent */
-// Reuse the pinned public dispatch unchanged under a private name. In
-// particular, a rejected Aura request must not fall back to the old PMU shim.
+// Reuse the ArmExceptionLib override's dispatch unchanged under a private
+// name. In particular, a rejected Aura request must not fall back to the old
+// PMU shim.
 #undef NTASI_J813_PMCCNTR_EMULATION
 #define NTASI_J813_PMCCNTR_EMULATION 0
 #define CommonCExceptionHandler AuraLocalExceptionHandler
-#include "../../../../ARM/TIANO/ArmPkg/Library/ArmExceptionLib/ArmExceptionLib.c"
+#include "../../Override/ArmPkg/Library/ArmExceptionLib/ArmExceptionLib.c"
 #undef CommonCExceptionHandler
 #include <Library/AuraExceptionForward.h>
 

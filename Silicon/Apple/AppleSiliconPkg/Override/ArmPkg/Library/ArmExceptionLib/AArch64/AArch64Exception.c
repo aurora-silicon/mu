@@ -19,7 +19,11 @@ EFI_EXCEPTION_CALLBACK  gExceptionHandlers[MAX_AARCH64_EXCEPTION + 1] = { 0 };
 PHYSICAL_ADDRESS        gExceptionVectorAlignmentMask                 = ARM_VECTOR_TABLE_ALIGNMENT;
 
 #define EL0_STACK_SIZE  EFI_PAGES_TO_SIZE(2)
+#if NTASI_J813_PMCCNTR_EMULATION
+STATIC VOID  *mAllocatedEl0Stack;
+#else
 STATIC UINTN  mNewStackBase[EL0_STACK_SIZE / sizeof (UINTN)];
+#endif
 
 VOID
 RegisterEl0Stack (
@@ -32,10 +36,26 @@ ArchVectorConfig (
   )
 {
   UINTN  HcrReg;
+  VOID   *El0StackBase;
+
+#if NTASI_J813_PMCCNTR_EMULATION
+  // ArmCpuDxe's image data can become read-protected before bootmgfw probes
+  // PMCCNTR_EL0. Keep the recoverable exception frame on dedicated RW pages.
+  if (mAllocatedEl0Stack == NULL) {
+    mAllocatedEl0Stack = AllocatePages (EFI_SIZE_TO_PAGES (EL0_STACK_SIZE));
+    if (mAllocatedEl0Stack == NULL) {
+      return RETURN_OUT_OF_RESOURCES;
+    }
+  }
+
+  El0StackBase = mAllocatedEl0Stack;
+#else
+  El0StackBase = mNewStackBase;
+#endif
 
   // Round down sp by 16 bytes alignment
   RegisterEl0Stack (
-    (VOID *)(((UINTN)mNewStackBase + EL0_STACK_SIZE) & ~0xFUL)
+    (VOID *)(((UINTN)El0StackBase + EL0_STACK_SIZE) & ~0xFUL)
     );
 
   if (ArmReadCurrentEL () == AARCH64_EL2) {

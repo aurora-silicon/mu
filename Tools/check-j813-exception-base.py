@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause-Patent
-"""Reject unreviewed or dirty public inputs to the J813 exception overlay."""
+"""Reject unreviewed or dirty inputs to the J813 exception overlay."""
 import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = ROOT / "Silicon/ARM/TIANO/ArmPkg/Library/ArmExceptionLib"
-# Public TIANO commit 7b3db1e6fe68d5d456512a88c217ec1dcde31e3b.
+BASE = ROOT / "Silicon/Apple/AppleSiliconPkg/Override/ArmPkg/Library/ArmExceptionLib"
+# The ArmExceptionLib override: Microsoft bd7850321a76 plus the J813 change
+# from mu_silicon_arm_tiano 7b3db1e6fe68 (LF, as the repository checks it out).
 EXPECTED = {
-    "ArmExceptionLib.c": "af01b3d6f21e866ee7f4d7eefc1dbf69f49be315d5dcc0cc5b4cbf1a1b06b033",
-    "AArch64/AArch64Exception.c": "dd0f0adaa06e7aa0128a5d0405f83717428b19fa99354db40c7d0749be5405a8",
-    "AArch64/ExceptionSupport.S": "576090cd5ea74943082f624cbc1f61be053190ac252b5d23f9768427af7f15e2",
+    "ArmExceptionLib.c": "a7b0273488abf5a50c9df11b4a32c81f2421d68f9623e15ff35a56a1bcf52c2f",
+    "AArch64/AArch64Exception.c": "079f7da5de1d954c4e41fe3ce42badd0efabfe8cd6208521cbf494b62eea4dd8",
+    "AArch64/ExceptionSupport.S": "ad268ca17c500cfb94de9c9423ab7fdae1ad5c547c93ab0c50fdb255d24edb96",
 }
 
 def main():
@@ -24,7 +25,7 @@ def main():
     # The root repository uses text=auto; tolerate Git's CRLF normalization.
     if body.replace(b"\r\n", b"\n") != public_body.replace(b"\r\n", b"\n"):
         raise SystemExit(f"unreviewed J813 exception assembly body: {assembly}")
-    print("J813 exception overlay: pinned public inputs verified")
+    print("J813 exception overlay: override inputs verified")
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,4 @@
-// Public pinned TIANO 7b3db1e6fe68d5d456512a88c217ec1dcde31e3b.
+// Copy of AppleSiliconPkg/Override/ArmPkg/Library/ArmExceptionLib/AArch64/ExceptionSupport.S
 // Keep body unchanged; EDK2 Trim drops assembly inside C preprocessor includes.
 // Select the existing J813 SP_EL1 entry.
 #undef NTASI_J813_PMCCNTR_EMULATION
