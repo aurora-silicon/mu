@@ -589,7 +589,7 @@
 
 
   # Processor Core Services
-  ArmPkg/Drivers/CpuDxe/CpuDxe.inf
+  AppleSiliconPkg/Override/ArmPkg/Drivers/CpuDxe/CpuDxe.inf
   ArmPkg/Drivers/TimerDxe/TimerDxe.inf
 !if $(AIC_BUILD) == FALSE
   ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf

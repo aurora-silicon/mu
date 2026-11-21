@@ -20,6 +20,30 @@ BOOLEAN  mIsFlushingGCD;
 STATIC BOOLEAN  mInterruptsEnabled;
 STATIC VOID     *mHardwareInterruptProtocolNotifyEventRegistration;
 
+typedef struct {
+  CHAR8           Magic[8];
+  volatile UINT64 Stage;
+  volatile UINT64 Value0;
+  volatile UINT64 Value1;
+  volatile UINT64 Status;
+} AURORA_CPU_NOTIFY_TRACE;
+
+STATIC volatile AURORA_CPU_NOTIFY_TRACE mAuroraCpuNotifyTrace = {
+  { 'A', 'U', 'R', 'C', 'P', 'U', '0', '1' },
+  0,
+  0,
+  0,
+  0
+};
+
+#define AURORA_CPU_NOTIFY_STAGE(StageValue, FirstValue, SecondValue, StatusValue) \
+  do {                                                                            \
+    mAuroraCpuNotifyTrace.Value0 = (UINT64)(FirstValue);                           \
+    mAuroraCpuNotifyTrace.Value1 = (UINT64)(SecondValue);                          \
+    mAuroraCpuNotifyTrace.Status = (UINT64)(StatusValue);                          \
+    mAuroraCpuNotifyTrace.Stage  = (UINT64)(StageValue);                           \
+  } while (0)
+
 /**
   Mark interrupts as enabled in the shadow variable but don't actually enable them yet.
 **/
@@ -376,7 +400,10 @@ HardwareInterruptProtocolNotify (
   VOID        *Protocol;
   EFI_STATUS  Status;
 
+  AURORA_CPU_NOTIFY_STAGE (1, Event, mInterruptsEnabled, 0);
+
   Status = gBS->LocateProtocol (&gHardwareInterruptProtocolGuid, NULL, &Protocol);
+  AURORA_CPU_NOTIFY_STAGE (2, Protocol, mInterruptsEnabled, Status);
   if (EFI_ERROR (Status)) {
     return;
   }
@@ -391,12 +418,17 @@ HardwareInterruptProtocolNotify (
   mCpu.EnableInterrupt   = CpuEnableInterrupt;
   mCpu.DisableInterrupt  = CpuDisableInterrupt;
   mCpu.GetInterruptState = CpuGetInterruptState;
+  AURORA_CPU_NOTIFY_STAGE (3, Protocol, mInterruptsEnabled, 0);
 
   if (mInterruptsEnabled) {
+    AURORA_CPU_NOTIFY_STAGE (4, Protocol, mInterruptsEnabled, 0);
     ArmEnableInterrupts ();
+    AURORA_CPU_NOTIFY_STAGE (5, Protocol, mInterruptsEnabled, 0);
   }
 
+  AURORA_CPU_NOTIFY_STAGE (6, Event, mInterruptsEnabled, 0);
   gBS->CloseEvent (Event);
+  AURORA_CPU_NOTIFY_STAGE (7, Event, mInterruptsEnabled, 0);
 }
 
 EFI_STATUS
@@ -475,15 +507,6 @@ CpuDxeInitialize (
   mIsFlushingGCD = TRUE;
   SyncCacheConfig (&mCpu);
   mIsFlushingGCD = FALSE;
-
-  // MU_CHANGE START: Install blank protocol to signal the end of the GCD sync
-  gBS->InstallMultipleProtocolInterfaces (
-         &ImageHandle,
-         &gEdkiiGcdSyncCompleteProtocolGuid,
-         NULL,
-         NULL
-         );
-  // MU_CHANGE END
 
   //
   // Setup a callback for idle events
