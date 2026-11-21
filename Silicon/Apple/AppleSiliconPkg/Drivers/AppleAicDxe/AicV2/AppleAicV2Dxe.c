@@ -241,8 +241,36 @@ STATIC EFI_STATUS EFIAPI AppleAicV2EndOfInterrupt(
 
 
 /**
+ * Read one AICv3 offset property: the u32 at index 0, or Default when the
+ * property is absent or shorter than one u32.
+ *
+ * dt_node_u32()'s third argument is an index, not a default, and it asserts
+ * when the property is shorter than (index + 1) * 4 bytes. The ADT publishes
+ * each of these offsets as a single u32.
+ *
+ * @param Node     - the AIC node
+ * @param Property - property name
+ * @param Default  - value used when the ADT does not give one
+ * @return the offset
+ */
+STATIC UINT32 AppleAicV3ReadOffset(
+    IN dt_node_t *Node,
+    IN CONST CHAR8 *Property,
+    IN UINT32 Default
+)
+{
+    size_t Size = 0;
+    UINT32 *Value = dt_node_prop(Node, Property, &Size);
+
+    if ((Value == NULL) || (Size < sizeof(UINT32))) {
+        return Default;
+    }
+    return *Value;
+}
+
+/**
  * Calculate the AIC register offsets on the platform.
- * 
+ *
  * @return EFI_SUCCESS if successful, EFI_ERROR(-1) if an error occurred.
  */
 STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
@@ -276,12 +304,11 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
     UINT32 V3Cap0Offset      = AIC_V2_INFO_REG1;
     UINT32 V3MaxNumIrqOffset = AIC_V2_INFO_REG3;
     if (mAicVersion == APPLE_AIC_VERSION_3) {
-        // AppleDTLib treats an absent property as a contract violation even
-        // when a caller supplies a fallback. Never ask an AICv1/v2 ADT for
-        // AICv3-only fields: J414s is AICv2 and intentionally has neither.
-        V3Cap0Offset = (UINT32)dt_node_u32(
+        // Never ask an AICv1/v2 ADT for AICv3-only fields: J414s is AICv2 and
+        // intentionally has neither.
+        V3Cap0Offset = AppleAicV3ReadOffset(
             InterruptControllerNode, "cap0-offset", AIC_V2_INFO_REG1);
-        V3MaxNumIrqOffset = (UINT32)dt_node_u32(
+        V3MaxNumIrqOffset = AppleAicV3ReadOffset(
             InterruptControllerNode, "maxnumirq-offset", AIC_V2_INFO_REG3);
         AppleAicV3SetDynamicOffsets(V3Cap0Offset, V3MaxNumIrqOffset);
     }
@@ -375,8 +402,8 @@ STATIC EFI_STATUS EFIAPI AppleAicV2CalculateRegisterOffsets(IN VOID)
         // AICv3 moves the IRQ_CFG block to 0x10000 (ADT-relocatable via
         // extint-baseaddress). Its event register is a separate page named by
         // aic-iack-offset, exactly as on AICv2.
-        StartOffset = mAicV2IrqCfgOffset =
-            (UINT64)dt_node_u32(InterruptControllerNode, "extint-baseaddress", AIC_V3_IRQ_CFG_REG);
+        StartOffset = mAicV2IrqCfgOffset = AppleAicV3ReadOffset(
+            InterruptControllerNode, "extint-baseaddress", AIC_V3_IRQ_CFG_REG);
         mAicV2EventReg = AicV2Base + dt_node_u32(InterruptControllerNode, "aic-iack-offset", 0);
     }
 
