@@ -262,7 +262,7 @@
   #
   OemPkg/BootMenu/BootMenu.inf
 
-  PcBdsPkg/MsBootPolicy/MsBootPolicy.inf
+  AppleSiliconPkg/Override/PcBdsPkg/MsBootPolicy/MsBootPolicy.inf
 
   MdeModulePkg/Universal/BootManagerPolicyDxe/BootManagerPolicyDxe.inf
   #

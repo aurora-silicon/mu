@@ -120,6 +120,16 @@
   # the host marker aura,windows-unified-display-v1 (absent marker = legacy).
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813UnifiedDisplay|FALSE|BOOLEAN|0x00004729
 
+  # ForceWindowsBootManager - When TRUE, the MsBootPolicy fixed-disk (HDD) boot
+  # sequence element boots \EFI\Microsoft\Boot\bootmgfw.efi from an internal
+  # filesystem exclusively, skipping any filesystem that lacks it, and never
+  # falls back to the UEFI removable-media default (\EFI\BOOT\BOOT<arch>.EFI).
+  # This keeps another OS's fallback loader (e.g. a Linux shim on a dual-boot
+  # ESP) from being selected ahead of Windows. FALSE preserves stock behavior.
+  # Consumed by the MsBootPolicy override (AppleSiliconPkg/Override/PcBdsPkg);
+  # declared as gPcBdsPkgTokenSpaceGuid 0x40000131 in the mu_plus fork before.
+  gAppleSiliconPkgTokenSpaceGuid.PcdForceWindowsBootManager|FALSE|BOOLEAN|0x0000472D
+
   # Stack stuff (128k stack by default)
   #Fallback stack base in case ModuleEntryPoint setup won't work.
   gAppleSiliconPkgTokenSpaceGuid.PcdSecPhaseStackBase|0x0|UINT64|0x0000440b

@@ -155,7 +155,7 @@
   # carried a readable \EFI\Microsoft\Boot\BCD). With this TRUE, the HDD boot
   # element boots \EFI\Microsoft\Boot\bootmgfw.efi exclusively and skips every
   # filesystem that lacks it. Set FALSE to restore stock selection.
-  gPcBdsPkgTokenSpaceGuid.PcdForceWindowsBootManager|TRUE
+  gAppleSiliconPkgTokenSpaceGuid.PcdForceWindowsBootManager|TRUE
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"Mac mini (M2 Pro, 2023)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"J474s"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"Mac mini (M2 Pro, 2023) (J474s)"

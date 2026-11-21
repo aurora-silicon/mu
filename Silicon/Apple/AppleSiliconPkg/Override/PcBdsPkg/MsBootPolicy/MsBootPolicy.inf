@@ -30,6 +30,7 @@
   MdeModulePkg/MdeModulePkg.dec
   MsGraphicsPkg/MsGraphicsPkg.dec
   PcBdsPkg/PcBdsPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
 
 [LibraryClasses]
   DevicePathLib
@@ -42,6 +43,7 @@
   UefiLib
   BaseMemoryLib
   DebugLib
+  PcdLib
   PrintLib
   MsBootPolicyLib
   UefiBootManagerLib
@@ -62,4 +64,5 @@
 [FeaturePcd]
 
 [Pcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdForceWindowsBootManager
 

@@ -156,7 +156,7 @@
   # carried a readable \EFI\Microsoft\Boot\BCD). With this TRUE, the HDD boot
   # element boots \EFI\Microsoft\Boot\bootmgfw.efi exclusively and skips every
   # filesystem that lacks it. Set FALSE to restore stock selection.
-  gPcBdsPkgTokenSpaceGuid.PcdForceWindowsBootManager|TRUE
+  gAppleSiliconPkgTokenSpaceGuid.PcdForceWindowsBootManager|TRUE
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"MacBook Pro (16-inch, M1 Pro, 2021)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"J316s"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"MacBook Pro (16-inch, M1 Pro, 2021) (J316s)"

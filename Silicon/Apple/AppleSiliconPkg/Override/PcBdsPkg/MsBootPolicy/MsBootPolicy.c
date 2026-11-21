@@ -30,6 +30,17 @@ static BOOT_SEQUENCE  mSddBootSequence[] = {
   MsBootDone
 };
 
+//
+// When PcdForceWindowsBootManager is TRUE, the fixed-disk (MsBootHDD) boot
+// sequence element boots exactly this loader from an internal filesystem and
+// never lets UefiBootManagerLib expand a bare device to the removable-media
+// default (\EFI\BOOT\BOOT<arch>.EFI).  Without this, any other OS that
+// installs the removable-media fallback loader on an ESP that sorts earlier
+// (e.g. a Linux shim on a dual-boot disk) is silently selected ahead of
+// Windows.
+//
+#define MS_FORCED_WINDOWS_LOADER_PATH  L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
+
 // Device Path filter routines
 typedef
 BOOLEAN
@@ -311,10 +322,66 @@ SortHandles (
   return;
 }
 
+/**
+  Check whether FilePath exists on the SimpleFileSystem published on Handle.
+
+  @param Handle    Handle with gEfiSimpleFileSystemProtocolGuid installed.
+  @param FilePath  Absolute file path on that volume.
+
+  @retval TRUE     The file opened read-only successfully.
+  @retval FALSE    The volume or the file could not be opened.
+**/
+STATIC
+BOOLEAN
+FileExistsOnFileSystem (
+  IN EFI_HANDLE    Handle,
+  IN CONST CHAR16  *FilePath
+  )
+{
+  EFI_STATUS                       Status;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *FileSystem;
+  EFI_FILE_PROTOCOL                *Root;
+  EFI_FILE_PROTOCOL                *File;
+
+  Status = gBS->HandleProtocol (
+                  Handle,
+                  &gEfiSimpleFileSystemProtocolGuid,
+                  (VOID **)&FileSystem
+                  );
+  if (EFI_ERROR (Status)) {
+    return FALSE;
+  }
+
+  Status = FileSystem->OpenVolume (FileSystem, &Root);
+  if (EFI_ERROR (Status)) {
+    return FALSE;
+  }
+
+  Status = Root->Open (Root, &File, (CHAR16 *)FilePath, EFI_FILE_MODE_READ, 0);
+  if (!EFI_ERROR (Status)) {
+    File->Close (File);
+  }
+
+  Root->Close (Root);
+  return !EFI_ERROR (Status);
+}
+
+/**
+  Enumerate ByGuid handles, filter with ByFilter, sort, and boot the first
+  bootable candidate.
+
+  When OnlyBootFile is NULL a candidate is booted as a bare device, which
+  UefiBootManagerLib expands to the removable-media default path.  When
+  OnlyBootFile is non-NULL only filesystems that carry that exact file are
+  candidates, that exact file is booted, and no removable-media fallback is
+  attempted; EFI_NOT_FOUND is returned when no surviving filesystem carries
+  the file.
+**/
 EFI_STATUS
 SelectAndBootDevice (
   EFI_GUID        *ByGuid,
-  FILTER_ROUTINE  ByFilter
+  FILTER_ROUTINE  ByFilter,
+  CONST CHAR16    *OnlyBootFile  OPTIONAL
   )
 {
   EFI_STATUS                    Status;
@@ -324,6 +391,10 @@ SelectAndBootDevice (
   EFI_BOOT_MANAGER_LOAD_OPTION  BootOption;
   CHAR16                        *TmpStr;
   EFI_DEVICE_PATH_PROTOCOL      *DevicePath;
+  EFI_DEVICE_PATH_PROTOCOL      *ForcedFilePath;
+  BOOLEAN                       ForcedFileSeen;
+
+  ForcedFileSeen = FALSE;
 
   Status = gBS->LocateHandleBuffer (
                   ByProtocol,
@@ -365,16 +436,39 @@ SelectAndBootDevice (
     DEBUG ((DEBUG_INFO, "Selecting device %s", TmpStr));
     DEBUG ((DEBUG_INFO, "\n"));
     if (MsBootPolicyLibIsDeviceBootable (Handles[Index])) {
+      ForcedFilePath = NULL;
+      if (OnlyBootFile != NULL) {
+        if (!FileExistsOnFileSystem (Handles[Index], OnlyBootFile)) {
+          DEBUG ((DEBUG_INFO, "%a: forced loader %s not present on this device; skipping\n", __FUNCTION__, OnlyBootFile));
+          FreePool (TmpStr);
+          continue;
+        }
+
+        ForcedFilePath = FileDevicePath (Handles[Index], OnlyBootFile);
+        if (ForcedFilePath == NULL) {
+          DEBUG ((DEBUG_ERROR, "%a: FileDevicePath for forced loader failed\n", __FUNCTION__));
+          FreePool (TmpStr);
+          continue;
+        }
+
+        ForcedFileSeen = TRUE;
+        DEBUG ((DEBUG_INFO, "%a: forced loader boot: %s on the device above\n", __FUNCTION__, OnlyBootFile));
+      }
+
       EfiBootManagerInitializeLoadOption (
         &BootOption,
         LoadOptionNumberUnassigned,
         LoadOptionTypeBoot,
         LOAD_OPTION_ACTIVE,
-        L"MsTemp",
-        DevicePathFromHandle (Handles[Index]),
+        (OnlyBootFile != NULL) ? L"MsForcedLoader" : L"MsTemp",
+        (ForcedFilePath != NULL) ? ForcedFilePath : DevicePathFromHandle (Handles[Index]),
         NULL,
         0
         );
+      if (ForcedFilePath != NULL) {
+        // EfiBootManagerInitializeLoadOption duplicates the device path.
+        FreePool (ForcedFilePath);
+      }
 
       if ((ByFilter == FilterOnlyIPv4) || (ByFilter == FilterOnlyIPv6) || (ByFilter == FilterOnlyUSB)) {
         DEBUG ((DEBUG_INFO, "Attempting alternate boot...\n"));
@@ -398,6 +492,11 @@ SelectAndBootDevice (
     }
 
     FreePool (TmpStr);
+  }
+
+  if ((OnlyBootFile != NULL) && !ForcedFileSeen && (Status != EFI_SUCCESS)) {
+    DEBUG ((DEBUG_WARN, "%a: forced loader %s not found on any surviving filesystem\n", __FUNCTION__, OnlyBootFile));
+    Status = EFI_NOT_FOUND;
   }
 
   return Status;
@@ -594,6 +693,14 @@ MsBootPolicyEntry (
   CHAR8                      *Parameters;
   BOOLEAN                    EnableIPv6     = TRUE;
   BOOLEAN                    AltBootRequest = FALSE;
+  BOOLEAN                    ExplicitSddBoot = FALSE;
+  CONST CHAR16               *ForcedLoaderPath = NULL;
+
+  if (PcdGetBool (PcdForceWindowsBootManager)) {
+    // Applies to the fixed-disk (MsBootHDD) sequence element only: USB and
+    // PXE boot stay stock so installer/recovery media keep working.
+    ForcedLoaderPath = MS_FORCED_WINDOWS_LOADER_PATH;
+  }
 
   // At one time, there was a use for loading MsBootPolicy.efi as a DXE_DRIVER in addition as an application.
   // This is no longer the case.  However, if we are called without parameters, still attempt a default boot.
@@ -620,6 +727,7 @@ MsBootPolicyEntry (
       break;
     case 'S':       // "SDD"
       BootSequence = mSddBootSequence;
+      ExplicitSddBoot = TRUE;
       break;
     case 'M':      // "MS" Default of SDD->USB->PXE  , "MA" Default of USB->PXE->SDD
     default:       // Try the default boot option is the parameter is messed up
@@ -633,7 +741,16 @@ MsBootPolicyEntry (
       break;
   }
 
-  EfiBootManagerConnectAll ();     // Connect All is required for this type of boot
+  if (ExplicitSddBoot) {
+    // AppleANS has already published the internal SimpleFileSystem handle by
+    // the time this application runs.  Connecting all devices here also
+    // starts both XHCI controllers, which can interfere with the internal
+    // storage handoff on Apple Silicon.  Only connect all as a fallback when
+    // the internal handle is not already available below.
+    DEBUG ((DEBUG_INFO, "%a: deferring ConnectAll for explicit internal-storage boot\n", __FUNCTION__));
+  } else {
+    EfiBootManagerConnectAll ();     // Connect All is required for this type of boot
+  }
 
   CleanLoadOptions (LoadOptionTypeBoot);    // Insure there are no dangling BOOT#### options.
 
@@ -645,7 +762,7 @@ MsBootPolicyEntry (
     switch (BootSequence[Index]) {
       case MsBootPXE4:
         StartNetworking ();
-        Status = SelectAndBootDevice (&gEfiLoadFileProtocolGuid, FilterOnlyIPv4);
+        Status = SelectAndBootDevice (&gEfiLoadFileProtocolGuid, FilterOnlyIPv4, NULL);
         break;
       case MsBootPXE6:
         Status = GetBootManagerSetting (
@@ -658,7 +775,7 @@ MsBootPolicyEntry (
 
         if (EnableIPv6) {
           StartNetworking ();
-          Status = SelectAndBootDevice (&gEfiLoadFileProtocolGuid, FilterOnlyIPv6);
+          Status = SelectAndBootDevice (&gEfiLoadFileProtocolGuid, FilterOnlyIPv6, NULL);
         } else {
           Status = EFI_DEVICE_ERROR;
         }
@@ -670,7 +787,19 @@ MsBootPolicyEntry (
           DEBUG ((DEBUG_ERROR, "%a Unable to set console mode - %r\n", __FUNCTION__, GraphicStatus));
         }
 
-        Status = SelectAndBootDevice (&gEfiSimpleFileSystemProtocolGuid, FilterNoUSB);
+        if (ForcedLoaderPath != NULL) {
+          DEBUG ((DEBUG_INFO, "%a: forcing Windows Boot Manager selection: %s\n", __FUNCTION__, ForcedLoaderPath));
+        }
+
+        Status = SelectAndBootDevice (&gEfiSimpleFileSystemProtocolGuid, FilterNoUSB, ForcedLoaderPath);
+        if (ExplicitSddBoot && (Status == EFI_NOT_FOUND)) {
+          // A platform without a pre-published internal filesystem still
+          // needs the generic connection path.  Keep that fallback isolated
+          // from the normal AppleANS handoff path.
+          DEBUG ((DEBUG_WARN, "%a: internal filesystem unavailable; connecting all devices and retrying\n", __FUNCTION__));
+          EfiBootManagerConnectAll ();
+          Status = SelectAndBootDevice (&gEfiSimpleFileSystemProtocolGuid, FilterNoUSB, ForcedLoaderPath);
+        }
         break;
       case MsBootUSB:
         GraphicStatus = SetGraphicsConsoleMode (GCM_NATIVE_RES);
@@ -678,14 +807,14 @@ MsBootPolicyEntry (
           DEBUG ((DEBUG_ERROR, "%a Unable to set console mode - %r\n", __FUNCTION__, GraphicStatus));
         }
 
-        Status = SelectAndBootDevice (&gEfiSimpleFileSystemProtocolGuid, FilterOnlyUSB);
+        Status = SelectAndBootDevice (&gEfiSimpleFileSystemProtocolGuid, FilterOnlyUSB, NULL);
         if (Status == EFI_NOT_FOUND) {
           DEBUG ((DEBUG_WARN, "USB boot desired, but no USB devices found on first attempt\n"));
           // attempting USB boot but no USB devices were found.
           // USB enumeration through (crappy, slow) hubs may take a while, especially in
           // debug builds. wait a number of seconds and try one more time.
           PauseToLetUsbDrivesEnumerateThroughHubs ();
-          Status = SelectAndBootDevice (&gEfiSimpleFileSystemProtocolGuid, FilterOnlyUSB);
+          Status = SelectAndBootDevice (&gEfiSimpleFileSystemProtocolGuid, FilterOnlyUSB, NULL);
           if (EFI_ERROR (Status)) {
             DEBUG ((DEBUG_WARN, "Second chance USB boot failed! Status = %r\n", Status));
           }

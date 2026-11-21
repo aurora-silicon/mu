@@ -159,7 +159,7 @@
   # carried a readable \EFI\Microsoft\Boot\BCD). With this TRUE, the HDD boot
   # element boots \EFI\Microsoft\Boot\bootmgfw.efi exclusively and skips every
   # filesystem that lacks it. Set FALSE to restore stock selection.
-  gPcBdsPkgTokenSpaceGuid.PcdForceWindowsBootManager|TRUE
+  gAppleSiliconPkgTokenSpaceGuid.PcdForceWindowsBootManager|TRUE
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"Mac Studio (M3 Ultra, 2025)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"J575d"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"Mac Studio (M3 Ultra, 2025) (J575d)"
