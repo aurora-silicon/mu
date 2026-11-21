@@ -1,3 +1,4 @@
+#Track : 00000002 | MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.inf | 8c008f5a7ee14d373e10f3153da85aca | 2026-11-21T13-35-50 | ba613eea328e801d9582059a8e0af414097a7fa8
 ## SPDX-License-Identifier: BSD-2-Clause-Patent
 ## Windows-only event-boundary wrapper for the pinned public Mu phase driver.
 [Defines]

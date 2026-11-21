@@ -68,8 +68,6 @@ SetPhaseIndicator (
                   );
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "%a - Error creating indicator! %r\n", __FUNCTION__, Status));
-    ASSERT_EFI_ERROR (Status);
-    Status = EFI_OUT_OF_RESOURCES;    // Set the correct return value.
     // TODO VARPOL: Telemetry.
   }
 
@@ -95,6 +93,7 @@ SetEndOfDxeIndicator (
   EFI_STATUS  Status;
 
   Status = SetPhaseIndicator (END_OF_DXE_INDICATOR_VAR_NAME, END_OF_DXE_INDICATOR_VAR_ATTR);
+  ASSERT_EFI_ERROR (Status);
 
   // If successful, close the event so it doesn't get signalled repeatedly.
   if (!EFI_ERROR (Status)) {
@@ -122,6 +121,7 @@ SetReadyToBootIndicator (
   EFI_STATUS  Status;
 
   Status = SetPhaseIndicator (READY_TO_BOOT_INDICATOR_VAR_NAME, READY_TO_BOOT_INDICATOR_VAR_ATTR);
+  ASSERT_EFI_ERROR (Status);
 
   // If successful, close the event so it doesn't get signalled repeatedly.
   if (!EFI_ERROR (Status)) {
@@ -154,6 +154,14 @@ SetExitBootServicesIndicator (
   EFI_STATUS  Status;
 
   Status = SetPhaseIndicator (EXIT_BOOT_SERVICES_INDICATOR_VAR_NAME, EXIT_BOOT_SERVICES_INDICATOR_VAR_ATTR);
+
+  // Variable services can transition to runtime during the ExitBootServices
+  // event fan-out. A volatile phase indicator is useful diagnostic state, but
+  // failure to create it must not dead-loop the firmware after the OS has
+  // supplied a valid memory-map key.
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_WARN, "%a - Continuing without the EBS indicator: %r\n", __FUNCTION__, Status));
+  }
 
   // If successful, close the event so it doesn't get signalled repeatedly.
   if (!EFI_ERROR (Status)) {
