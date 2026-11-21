@@ -374,14 +374,23 @@ NtasiInstallDisplayTable (
 #if NTASI_ENABLE_DISPLAY_INTERRUPTS
   {
     UINT32  Interrupts[] = { 911, 932, 933, 934, 935 };
+    UINTN   IrqIndex;
 
-    Status = AmlCodeGenRdInterrupt (
-               TRUE, FALSE, FALSE, FALSE,
-               Interrupts, (UINT8)ARRAY_SIZE (Interrupts),
-               CrsNode, NULL
-               );
-    if (EFI_ERROR (Status)) {
-      goto Exit;
+    //
+    // One single-vector Extended Interrupt descriptor per vector.
+    // AmlCodeGenRdInterrupt (DynamicTablesPkg AmlLib, unfixed in Microsoft's
+    // mu_silicon_arm_tiano and mu_basecore) builds a one-vector descriptor on
+    // the stack, so any IrqCount above 1 overruns it.
+    //
+    for (IrqIndex = 0; IrqIndex < ARRAY_SIZE (Interrupts); IrqIndex++) {
+      Status = AmlCodeGenRdInterrupt (
+                 TRUE, FALSE, FALSE, FALSE,
+                 &Interrupts[IrqIndex], 1,
+                 CrsNode, NULL
+                 );
+      if (EFI_ERROR (Status)) {
+        goto Exit;
+      }
     }
   }
 #endif
@@ -1886,32 +1895,37 @@ NtasiInstallGpuTable (
     // whole device rather than just the completion path.
     //
     UINT32  DisplayInterrupts[] = { 911, 932, 933, 934, 935 };
+    UINTN   IrqIndex;
 
     //
-    // One descriptor carrying five vectors. AmlCodeGenRdInterrupt sizes and
-    // allocates the variable-length Extended Interrupt descriptor for exactly
-    // this case; before that was fixed it built the fixed-size struct on the
-    // stack and any IrqCount > 1 smashed it (measured: firmware hung with CPU0
-    // in a branch-to-self dead loop).
+    // Five single-vector Extended Interrupt descriptors, one per vector.
+    // AmlCodeGenRdInterrupt builds a fixed-size one-vector descriptor on the
+    // stack, so any IrqCount > 1 smashes it (measured: firmware hung with CPU0
+    // in a branch-to-self dead loop). An aurora-silicon fork of
+    // mu_silicon_arm_tiano carried a fix (0d230a077543); Microsoft's AmlLib,
+    // which every submodule now pins, does not have it.
     //
-    // The ACPI driver expands this into five CmResourceTypeInterrupt partial
-    // descriptors and the display resource validator normalises by value, not
-    // position, so the grouping is not load-bearing -- correctness of the
-    // emitted descriptor is.
+    // The ACPI driver expands interrupt descriptors into one
+    // CmResourceTypeInterrupt partial descriptor per vector either way, and
+    // the display resource validator normalises by value, not position, so
+    // the grouping is not load-bearing -- correctness of the emitted
+    // descriptors is.
     //
-    Status = AmlCodeGenRdInterrupt (
-               TRUE,                              // ResourceConsumer
-               FALSE,                             // EdgeTriggered -> Level
-               FALSE,                             // ActiveLow -> ActiveHigh
-               FALSE,                             // Shared -> Exclusive
-               DisplayInterrupts,
-               (UINT8)ARRAY_SIZE (DisplayInterrupts),
-               CrsNode,
-               NULL
-               );
-    if (EFI_ERROR (Status)) {
-      DEBUG ((DEBUG_ERROR, "AppleAgxWddm: DCP interrupt descriptors refused: %r; NTAS0024 withheld\n", Status));
-      goto Exit;
+    for (IrqIndex = 0; IrqIndex < ARRAY_SIZE (DisplayInterrupts); IrqIndex++) {
+      Status = AmlCodeGenRdInterrupt (
+                 TRUE,                              // ResourceConsumer
+                 FALSE,                             // EdgeTriggered -> Level
+                 FALSE,                             // ActiveLow -> ActiveHigh
+                 FALSE,                             // Shared -> Exclusive
+                 &DisplayInterrupts[IrqIndex],
+                 1,
+                 CrsNode,
+                 NULL
+                 );
+      if (EFI_ERROR (Status)) {
+        DEBUG ((DEBUG_ERROR, "AppleAgxWddm: DCP interrupt descriptors refused: %r; NTAS0024 withheld\n", Status));
+        goto Exit;
+      }
     }
   }
 #endif
@@ -2739,8 +2753,11 @@ NtasiInstallMediaDevice (
   }
 
   //
-  // Interrupts LAST, after every memory window, as one descriptor carrying the
-  // whole vector list -- byte-for-byte the shape the ASL specs compile to.
+  // Interrupts LAST, after every memory window, as one single-vector
+  // descriptor per vector -- the shape the ASL specs in AcpiReference/Media
+  // now spell out. AmlCodeGenRdInterrupt overruns its stack descriptor for
+  // IrqCount > 1 (Microsoft's AmlLib has no fix), and the ACPI driver expands
+  // a multi-vector descriptor into the same per-vector partial descriptors.
   //
   // The ordering is not cosmetic.  All three drivers count memory descriptors
   // in their own index space while handling interrupts in a separate branch,
@@ -2784,24 +2801,26 @@ NtasiInstallMediaDevice (
       Irqs[Index] = Device->Interrupts[Index];
     }
 
-    Status = AmlCodeGenRdInterrupt (
-               TRUE,                                  // ResourceConsumer
-               FALSE,                                 // EdgeTriggered -> Level
-               FALSE,                                 // ActiveLow -> ActiveHigh
-               FALSE,                                 // Shared -> Exclusive
-               Irqs,
-               (UINT8)Device->InterruptCount,
-               CrsNode,
-               NULL
-               );
-    if (EFI_ERROR (Status)) {
-      DEBUG ((
-        DEBUG_ERROR,
-        "AppleMedia ACPI: %a interrupt list refused: %r; device withheld\n",
-        Device->DeviceName,
-        Status
-        ));
-      goto Exit;
+    for (Index = 0; Index < Device->InterruptCount; Index++) {
+      Status = AmlCodeGenRdInterrupt (
+                 TRUE,                                  // ResourceConsumer
+                 FALSE,                                 // EdgeTriggered -> Level
+                 FALSE,                                 // ActiveLow -> ActiveHigh
+                 FALSE,                                 // Shared -> Exclusive
+                 &Irqs[Index],
+                 1,
+                 CrsNode,
+                 NULL
+                 );
+      if (EFI_ERROR (Status)) {
+        DEBUG ((
+          DEBUG_ERROR,
+          "AppleMedia ACPI: %a interrupt list refused: %r; device withheld\n",
+          Device->DeviceName,
+          Status
+          ));
+        goto Exit;
+      }
     }
   }
 

@@ -163,19 +163,17 @@ DefinitionBlock ("DISP.aml", "SSDT", 0x02, "Apple", "J414DSP", 0x00000002)
                 // including the D589 swap-complete callback that is this
                 // platform's only present-completion signal -- arrives on 935.
                 //
-                // Published as ONE descriptor with five vectors, which the
-                // ACPI driver expands into five CmResourceTypeInterrupt
-                // partial descriptors.  Order is irrelevant: the driver
-                // normalises by value, not by position.
+                // Published as five single-vector descriptors (AmlLib's
+                // generator overruns its stack descriptor for more than one
+                // vector); the ACPI driver expands either shape into five
+                // CmResourceTypeInterrupt partial descriptors.  Order is
+                // irrelevant: the driver normalises by value, not by position.
                 //
-                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , )
-                {
-                    911,
-                    932,
-                    933,
-                    934,
-                    935
-                }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 911 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 932 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 933 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 934 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 935 }
 #endif
             })
 

@@ -264,14 +264,14 @@ DefinitionBlock ("MCA.aml", "SSDT", 0x02, "Apple", "J414MCA", 0x00000001)
                 // cost is that five more descriptors must be satisfiable for
                 // MCA0 to start at all.
                 //
-                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , )
-                {
-                    40,
-                    41,
-                    42,
-                    43,
-                    45
-                }
+                // One single-vector descriptor per vector, as AcpiPlatform.c
+                // emits them (AmlLib overruns for more than one vector).
+                //
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 40 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 41 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 42 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 43 }
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , ) { 45 }
             })
 
             //
