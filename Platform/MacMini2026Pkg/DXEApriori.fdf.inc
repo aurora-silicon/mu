@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 APRIORI DXE {
-  INF MdeModulePkg/Core/Dxe/DxeMain.inf
+  INF AppleSiliconPkg/Override/Generated/MdeModulePkg/Core/Dxe/DxeMain.inf
   INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
 !if $(J804_M1) == TRUE
   # First driver after the PCD service, which its DxePcdLib may look up.
   INF T8152FamilyPkg/Drivers/J804CheckpointDxe/J804CheckpointDxe.inf
 !endif
-  INF ArmPkg/Drivers/CpuDxe/CpuDxe.inf
+  INF AppleSiliconPkg/Override/ArmPkg/Drivers/CpuDxe/CpuDxe.inf
   INF AppleSiliconPkg/Drivers/AppleAicDxe/AppleAicDxe.inf
   INF EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
   INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf

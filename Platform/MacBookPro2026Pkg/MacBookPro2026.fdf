@@ -106,10 +106,10 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
 
   !include MacBookPro2026Pkg/DXEApriori.fdf.inc
 
-  INF MdeModulePkg/Core/Dxe/DxeMain.inf
+  INF AppleSiliconPkg/Override/Generated/MdeModulePkg/Core/Dxe/DxeMain.inf
 
   INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
-  INF ArmPkg/Drivers/CpuDxe/CpuDxe.inf
+  INF AppleSiliconPkg/Override/ArmPkg/Drivers/CpuDxe/CpuDxe.inf
   INF MdeModulePkg/Core/RuntimeDxe/RuntimeDxe.inf
   INF MdeModulePkg/Universal/SecurityStubDxe/SecurityStubDxe.inf
   INF MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
@@ -149,7 +149,7 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
 !if $(NTASI_AURA_WINDOWS) == TRUE
   INF  AppleSiliconPkg/Drivers/AuraVarPolicyFoundationDxe/AuraVarPolicyFoundationDxe.inf
 !else
-  INF  MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.inf
+  INF  AppleSiliconPkg/Override/MsCorePkg/MuVarPolicyFoundationDxe/MuVarPolicyFoundationDxe.inf
 !endif
 
   INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
