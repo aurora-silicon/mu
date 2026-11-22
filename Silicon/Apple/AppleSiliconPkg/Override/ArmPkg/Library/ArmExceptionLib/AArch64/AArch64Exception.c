@@ -55,7 +55,9 @@ ArchVectorConfig (
 
   // Round down sp by 16 bytes alignment
   RegisterEl0Stack (
-    (VOID *)(((UINTN)El0StackBase + EL0_STACK_SIZE) & ~0xFUL)
+    // CLANGPDB uses LLP64: unsigned long is 32 bits, while UINTN is 64.
+    // Keep the alignment mask pointer-sized for firmware above 4 GiB.
+    (VOID *)(((UINTN)El0StackBase + EL0_STACK_SIZE) & ~((UINTN)0xF))
     );
 
   if (ArmReadCurrentEL () == AARCH64_EL2) {
