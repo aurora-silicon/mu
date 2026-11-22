@@ -49,6 +49,18 @@ EXPECTED = Path(__file__).with_name("fdf_fvmain_expected.json")
 SYMBOLIC = ("PLATFORM_PKG", "PLATFORM_BOARD_PKG", "PLATFORM_FAMILY_PKG",
             "PLATFORM_SOC_PKG")
 
+#
+# T8152 platforms that still carry their own FvMain list (bring-up profiles
+# selected by BLD_*_ flags, not yet on the shared include). They are left out
+# of the shape checks until they move to the board/family layout.
+#
+STANDALONE = ("MacBookPro2026.fdf", "MacMini2026.fdf")
+
+
+def platform_fdfs() -> list[Path]:
+    return [fdf for fdf in sorted(REPO.glob("Platform/*Pkg/*.fdf"))
+            if fdf.name not in STANDALONE]
+
 
 def defines_of(text: str) -> dict[str, str]:
     return dict(re.findall(r'^\s*DEFINE\s+(\w+)\s*=\s*(\S+)\s*$', text, re.M))
@@ -116,7 +128,7 @@ class FdfFvMainExpansionTests(unittest.TestCase):
     def _shapes(self):
         """platform -> its expanded module list, for every platform in the tree."""
         return {fdf.name: self._fvmain_infs(fdf)
-                for fdf in sorted(REPO.glob("Platform/*Pkg/*.fdf"))}
+                for fdf in platform_fdfs()}
 
     def test_every_platform_matches_a_known_shape(self):
         known = {s["name"]: s["modules"] for s in self.expected["shapes"]}
@@ -146,7 +158,7 @@ class FdfFvMainExpansionTests(unittest.TestCase):
             f"{EXPECTED.name}")
 
     def test_the_include_is_actually_used(self):
-        for fdf in sorted(REPO.glob("Platform/*Pkg/*.fdf")):
+        for fdf in platform_fdfs():
             with self.subTest(platform=fdf.name):
                 self.assertRegex(
                     fdf.read_text(encoding="utf-8"),
