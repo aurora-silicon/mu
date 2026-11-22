@@ -27,6 +27,7 @@
   CPUF.asl
   GPU.asl
   GPUF.asl
+  GPUP.asl
   DISP.asl
 
 [Packages]

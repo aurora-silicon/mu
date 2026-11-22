@@ -12,13 +12,20 @@
  * when the host selected it (AuraJ813UnifiedDisplay.c), which then withholds
  * AURA817G; AURA8171 also needs dcp/disp0 in the ADT and keeps ranges 3-6
  * within the unified driver's 16 MiB ceiling.
+ *
+ * Images built with PcdAppleJ813GpuLocalPool publish AURA8171 from "AURA817P"
+ * (GPUP.asl) instead: GPUF's sixteen resources plus the G17 local-memory pool
+ * MemoryPeim reserved, as the seventeenth.  The PCD picks the template, so at
+ * most one AURA8171 is ever installed (FAILURE-MODES-J813-GPU-POOL.md).
  */
 #include <Uefi.h>
 #include <IndustryStandard/Acpi.h>
+#include <IndustryStandard/AuraJ813GpuPool.h>
 #include <Library/AppleDTLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #include <Library/DxeServicesTableLib.h>
+#include <Library/HobLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PcdLib.h>
 #include <Library/PrintLib.h>
@@ -162,6 +169,42 @@ PatchDescriptor (
   return TRUE;
 }
 
+/* The G17 local-memory pool MemoryPeim reserved: exactly one HOB, of the v1
+ * shape, 1 GiB with both ends on AURA_J813_GPU_POOL_ALIGNMENT.  (The record
+ * is a multiple of 8 bytes, so HobLib's rounding leaves its size exact.) */
+STATIC
+BOOLEAN
+ReadGpuPool (
+  OUT UINT64  *Base,
+  OUT UINT64  *Size
+  )
+{
+  STATIC CONST EFI_GUID  PoolGuid = AURA_J813_GPU_POOL_HOB_GUID;
+  VOID                   *Hob;
+  AURA_J813_GPU_POOL     Pool;
+
+  Hob = GetFirstGuidHob (&PoolGuid);
+  if ((Hob == NULL) || (GET_GUID_HOB_DATA_SIZE (Hob) != sizeof (Pool)) ||
+      (GetNextGuidHob (&PoolGuid, GET_NEXT_HOB (Hob)) != NULL))
+  {
+    return FALSE;
+  }
+
+  CopyMem (&Pool, GET_GUID_HOB_DATA (Hob), sizeof (Pool));
+  if ((Pool.Signature != AURA_J813_GPU_POOL_SIGNATURE) ||
+      (Pool.Version != AURA_J813_GPU_POOL_VERSION) ||
+      (Pool.StructureSize != sizeof (Pool)) || (Pool.Reserved != 0) ||
+      (Pool.Size != AURA_J813_GPU_POOL_SIZE) ||
+      ((Pool.Base & (AURA_J813_GPU_POOL_ALIGNMENT - 1)) != 0))
+  {
+    return FALSE;
+  }
+
+  *Base = Pool.Base;
+  *Size = Pool.Size;
+  return TRUE;
+}
+
 BOOLEAN
 AppleG17GpuTableAdmitted (
   IN OUT EFI_ACPI_DESCRIPTION_HEADER  *Table,
@@ -170,10 +213,13 @@ AppleG17GpuTableAdmitted (
 {
   UINT64  Base[G17_REGIONS];
   UINT64  Length[G17_REGIONS];
+  UINT64  PoolBase;
+  UINT64  PoolSize;
   UINT32  Value;
   UINTN   Index;
   UINTN   Other;
   BOOLEAN       Unified;
+  BOOLEAN       Pooled;
   CONST CHAR8   *Hid;
   size_t        PropertyLength;
 
@@ -185,7 +231,8 @@ AppleG17GpuTableAdmitted (
     return TRUE;
   }
 
-  Unified = CompareMem (&Table->OemTableId, "AURA817F", 8) == 0;
+  Pooled  = CompareMem (&Table->OemTableId, "AURA817P", 8) == 0;
+  Unified = Pooled || (CompareMem (&Table->OemTableId, "AURA817F", 8) == 0);
   if (!Unified && (CompareMem (&Table->OemTableId, "AURA817G", 8) != 0)) {
     return TRUE;
   }
@@ -195,6 +242,12 @@ AppleG17GpuTableAdmitted (
    * marker the unified table is withheld on every boot. */
   if (Unified != AppleJ813UnifiedDisplaySelected () ||
       (!Unified && !FixedPcdGetBool (PcdAppleG17GpuProbe))) {
+    return FALSE;
+  }
+  /* The pool PCD picks the one unified template: GPUF without it, GPUP with
+   * it.  The other is withheld without a word, so AURA8171 is installed at
+   * most once, and a pool image never falls back to sixteen resources. */
+  if (Unified && (Pooled != FixedPcdGetBool (PcdAppleJ813GpuLocalPool))) {
     return FALSE;
   }
   if (Unified &&
@@ -257,6 +310,13 @@ AppleG17GpuTableAdmitted (
     }
   }
 
+  PoolBase = 0;
+  PoolSize = 0;
+  if (Pooled && !ReadGpuPool (&PoolBase, &PoolSize)) {
+    DEBUG ((DEBUG_ERROR, "Aura G17 GPU: no valid local-memory pool HOB; %a withheld\n", Hid));
+    return FALSE;
+  }
+
   for (Index = 0; Index < G17_REGIONS; Index++) {
     if (!PatchDescriptor ((UINT8 *)Table, Table->Length, Index, Base[Index], Length[Index])) {
       DEBUG ((DEBUG_ERROR, "Aura G17 GPU: template descriptor %u malformed\n", (UINT32)Index));
@@ -264,7 +324,17 @@ AppleG17GpuTableAdmitted (
     }
   }
 
+  /* The pool is the template's seventeenth descriptor, placeholder 6. */
+  if (Pooled && !PatchDescriptor ((UINT8 *)Table, Table->Length, G17_REGIONS, PoolBase, PoolSize)) {
+    DEBUG ((DEBUG_ERROR, "Aura G17 GPU: pool descriptor malformed; %a withheld\n", Hid));
+    return FALSE;
+  }
+
   DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura G17 GPU: J813 %a resource owner\n",
           Unified ? "unified AURA8171" : "render AURA8170"));
+  if (Pooled) {
+    DEBUG ((DEBUG_INIT | DEBUG_INFO, "Aura G17 GPU: AURA8171 local-memory pool 0x%lx+0x%lx\n",
+            PoolBase, PoolSize));
+  }
   return TRUE;
 }

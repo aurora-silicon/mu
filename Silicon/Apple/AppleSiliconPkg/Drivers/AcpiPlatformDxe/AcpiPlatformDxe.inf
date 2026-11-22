@@ -100,6 +100,7 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleG17GpuProbe              ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813DisplayDevice        ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813UnifiedDisplay       ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813GpuLocalPool         ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableBase ## CONSUMES
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableSize ## CONSUMES
 
