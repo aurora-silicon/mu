@@ -10,9 +10,11 @@ Host-only. Checks:
     FVMAIN (the FD itself is LZMA-compressed, so it is not scanned directly).
 Writes MANIFEST.txt and manifest.json next to the FD:
   sha256, POSIX cksum, size, git commit and dirty state, every submodule's
-  HEAD and, for a dirty one, the sha256 of its `git diff` (the j873 patches
-  are applied as uncommitted submodule changes, so this pins the source the
-  FD came from), the build flags the build script passed
+  HEAD (it must equal the superproject's gitlink and be clean: the fork
+  changes live in AppleSiliconPkg/Override, not in the submodules), the
+  sha256 of every tracked file under AppleSiliconPkg/Override (the
+  build-time Override/Generated tree is derived and left out), the build
+  flags the build script passed
   (--build-flag NAME=VALUE), marker strings found
   in the PE files, the FVMAIN and FVMAIN_COMPACT file GUID/type/name lists,
   the startup.nsh that the FV carries and, for the windows profile, the ACPI
@@ -264,24 +266,42 @@ def dsdt_has_sb_device(dsdt, wanted):
     return False
 
 
+OVERRIDE_ROOT = 'Silicon/Apple/AppleSiliconPkg/Override'
+
+
+def override_states(root):
+    """sha256 of each tracked file under the Override tree (Generated/ excluded)."""
+    listing = subprocess.check_output(
+        ['git', '-C', str(root), 'ls-files', '-z', '--', OVERRIDE_ROOT]).split(b'\0')
+    out = []
+    for raw in sorted(p for p in listing if p):
+        path = raw.decode()
+        if path.startswith(OVERRIDE_ROOT + '/Generated/'):
+            continue
+        out.append(dict(path=path[len(OVERRIDE_ROOT) + 1:],
+                        sha256=hashlib.sha256((root / path).read_bytes()).hexdigest()))
+    return out
+
+
 def submodule_states(root):
-    """Each submodule's path, HEAD and, if dirty, the sha256 of `git diff`."""
+    """Each submodule's path, gitlink, HEAD and, if dirty, the sha256 of `git diff`."""
     out = []
     listing = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-s'], text=True)
     for line in listing.splitlines():
         meta, _, path = line.partition('\t')
         if not meta.startswith('160000 '):
             continue
+        gitlink = meta.split()[1]
         sub = root / path
         if not (sub / '.git').exists():
-            out.append(dict(path=path, head=None, diff_sha256=None))
+            out.append(dict(path=path, gitlink=gitlink, head=None, diff_sha256=None))
             continue
         head = subprocess.check_output(['git', '-C', str(sub), 'rev-parse', 'HEAD'],
                                        text=True).strip()
         diff = subprocess.check_output(['git', '-C', str(sub), 'diff', 'HEAD'])
         untracked = subprocess.check_output(['git', '-C', str(sub), 'ls-files', '--others',
                                              '--exclude-standard'], text=True).split()
-        out.append(dict(path=path, head=head,
+        out.append(dict(path=path, gitlink=gitlink, head=head,
                         diff_sha256=hashlib.sha256(diff).hexdigest() if diff else None,
                         untracked=untracked))
     return out
@@ -549,9 +569,18 @@ def main():
     for sub in submodules:
         if sub['head'] is None:
             failures.append(f'submodule {sub["path"]} is not checked out')
+        elif sub['head'] != sub['gitlink']:
+            failures.append(f'submodule {sub["path"]} is at {sub["head"]}, '
+                            f'not its gitlink {sub["gitlink"]}')
+        elif sub['diff_sha256']:
+            failures.append(f'submodule {sub["path"]} has local changes; fork changes '
+                            f'belong in {OVERRIDE_ROOT}')
         elif sub['untracked']:
             failures.append(f'submodule {sub["path"]} has untracked files '
                             f'({len(sub["untracked"])}); the source state is not pinned')
+    overrides = override_states(root)
+    override_digest = hashlib.sha256(''.join(
+        f'{o["sha256"]}  {o["path"]}\n' for o in overrides).encode()).hexdigest()
     for t in acpi:
         del t['blob']
 
@@ -565,6 +594,8 @@ def main():
         source_commit=commit,
         source_status=status,
         submodules=[{k: v for k, v in s.items() if k != 'untracked'} for s in submodules],
+        overrides=overrides,
+        override_tree_sha256=override_digest,
         build_flags=flags,
         pe_files_scanned=len(scanned),
         path_leaks=leaks,
@@ -591,6 +622,10 @@ def main():
     for sub in submodules:
         lines.append(f'submodule      {sub["path"]} {sub["head"]} '
                      + (f'diff sha256 {sub["diff_sha256"]}' if sub['diff_sha256'] else 'clean'))
+    lines.append(f'overrides      {len(overrides)} files under {OVERRIDE_ROOT}, '
+                 f'list sha256 {override_digest}')
+    for o in overrides:
+        lines.append(f'  {o["sha256"]}  {o["path"]}')
     lines += [
         'build flags    ' + (' '.join(f'{k}={v}' for k, v in flags.items()) or 'none recorded'),
         f'path check     {len(scanned)} PE/FV files scanned, '
