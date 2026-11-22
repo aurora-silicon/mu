@@ -104,6 +104,50 @@ range.**
     shadow and SPRR tables are Aura heap, below guest RAM.
 - Not settled by source: where the TZ carveouts are on J813 (runtime MCC/ADT
   values), and whether the MCC windows are wider than the ADT's region ids.
+- **Boot 179 record** (desk, 2026-11-21 22:16 EST from `date`; the
+  coordinator read boot 179's console.log lines 144-161, I did not). Aura's
+  stage-2 map over DRAM, as printed:
+  - `PT[10000000000:10003094000] -> HW:RAM-LOW`
+  - `PT[100129d4000:10012ad4000] -> RESERVED HVXFER-WIN` (below guest RAM)
+  - `PT[1001a9c0000:103dc694000] -> HW:RAM-HIGH`
+  - `PT[103dc694000:103de6b4000] -> *UNMAPPED*` (hole A, 0x2020000 bytes)
+  - `PT[103de6b4000:103e6bf8000] -> HW:RAM-HIGH`
+  - `PT[103e6bf8000:103ffbf8000] -> *UNMAPPED*` (hole B, 0x19000000 bytes)
+  - `PT[103ffbf8000:10400000000] -> HW:RAM-HIGH`
+- **ADT or wider: not known.** The test's carveouts are synthetic
+  (Tests/e2e/j813-gpu-pool.py:74-75: 0x103E0000000+0x4000000 and
+  0x103F4000000+0x2000000, or one moved into the top window); no J813 ADT
+  value was used, and neither matches holes A or B. The lines the log quotes
+  cannot say where a hole came from. The Aura lines that would:
+  - src/mcc.c:357 `MMU: Unmapping region-id-N at start..end` (the ADT list in
+    use, so the hole is exactly the region id);
+  - src/mcc.c:452 `MMU: Unmapping TZn region at start..end` (the MCC
+    windows in use; mcc.c:368-388 only requires each region id inside one
+    window, so the hole may be wider);
+  - src/mcc.c:445, the notice that the MCC windows missed the ADT list;
+  - proxyclient/aura/hv/__init__.py:2048 `  Unmap [base..last]` gives each
+    unmapped range, not its source.
+  None of these changes the pool's placement; see the margins below.
+- **Boot 179's window: [0x10394000000, 0x103D4000000)**, the same as boot
+  147's. It comes from the production MemoryPeim (the j813-gpu-pool.py PEI
+  host at d0f7d4a): RAM base 0x1001a9c0000 (RAM-HIGH's start, Aura's
+  heap_top), top 128 MiB as the UEFI region, the FD at 0x1001ba50000+0x1e00000,
+  holes A and B listed as the ADT's region-id-2/-4, and again with no list.
+  - Both ends are 32 MiB aligned; size 0x40000000.
+  - The window lies inside the first RAM-HIGH segment, which ends at
+    0x103dc694000.
+  - Clearance from hole A: 0x8694000 bytes (134.58 MiB) between the window's
+    top and the hole's start.
+  - Clearance from hole B: 0x12bf8000 bytes (299.97 MiB).
+  - The log does not print boot 179's guest-RAM top (`ba.phys_base +
+    ba.mem_size`); hv/__init__.py:2106 `Physical memory: phys_base ..
+    mem_top` would, as would Mu's own `Top of system RAM`
+    (MemoryInitPeiLib.c:898). Every top in [0x103DC000000, 0x103DE000000)
+    gives this same window, so 0x103dc600000 (boot 147) and 0x103dc694000
+    (the start of hole A, where RAM-HIGH's first segment ends) do too. The
+    window's top is always at least 128 MiB below the guest top, so any
+    guest top up to 0x103E4694000 keeps the pool below hole A; hole B is
+    above that bound.
 - P: the pool must lie inside the guest-RAM window MemoryPeim was given and
   outside region-id-2/-4 when the ADT lists them; DXE checks DRAM and 42-bit
   bounds.
