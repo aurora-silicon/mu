@@ -9,12 +9,12 @@
 # changes kept:
 #   - Null serial unless the carrier offers its vUART (J804_WINDOWS_VUART);
 #   - the RAM-top trim checks and ADT-driven reservations (J804_M1 in C);
-#   - an idle loop without WFI until Phase 3(a) measures WFI on T8152;
+#   - an idle loop without WFI until WFI is measured on T8152;
 #   - AIC timer reflection only at EL1 (AppleAicV2Dxe checks CurrentEL);
 #   - panel checkpoints.
 # The ACPI tables install only at EL1 on cpu6 of a J804 (J804AcpiDxe). This FD
 # is for EL1 under the carrier only: with NTASI_AURA_WINDOWS (the default) it
-# links AuraArmExceptionLib, which AUDIT-0.8 forbids in a native-EL2 image
+# links AuraArmExceptionLib, which must never run in a native-EL2 image
 # (its HVC forward has no CurrentEL check; at EL2 the HVC traps to EL2
 # itself). Start natively at EL2 only the M1 FD (build-j804-m1.sh), never this
 # one. An NTASI_AURA_WINDOWS=FALSE build drops the forwarding; it is not
@@ -40,7 +40,7 @@
   DEFINE NTASI_PLATFORM_BOOT_TIMEOUT = 0
   DEFINE NTASI_DEBUG_PRINT_ERROR_LEVEL = 0x8000004F
   #
-  # Aura carrier firmware pieces (windows-mu-handoff, AUDIT-0.8 OK):
+  # Aura carrier firmware pieces (from the j813-windows base):
   # AuraArmExceptionLib (sysreg forwarding by HVC) and
   # AuraVarPolicyFoundationDxe (phase indicators before the runtime switch).
   #
@@ -57,20 +57,20 @@
   # J804_WINDOWS_VUART: the carrier offers a vUART at the uart0 address; adds
   #   the Samsung UART serial library, \_SB.COM0 and DBG2. FALSE = Null serial.
   # J804_WINDOWS_AHCI: D1, the carrier-emulated AHCI disk (J804Windows.h,
-  #   windows-m6/D1-AHCI-DESIGN.md): AHC0 in the DSDT, the FD marker block at
+  #   the carrier's D1 design): AHC0 in the DSDT, the FD marker block at
   #   0x110, and the Mu AHCI stack (NonDiscoverablePciDeviceDxe,
   #   SataControllerDxe, AtaAtapiPassThru, AtaBusDxe, J804AhciDxe), which
   #   acts only when the launcher's /chosen handshake is present. FALSE = the
   #   M2/M3 image, unchanged.
   # J804_WINDOWS_USB: D4, usb-drd1's xHCI passed through by the carrier
-  #   (J804Windows.h, windows-m6/D4-USB-DESIGN.md): the \_SB.XHC1 SSDT
+  #   (J804Windows.h, the carrier's D4 design): the \_SB.XHC1 SSDT
   #   (J804Xhc1Ssdt), J804XhciAcpiDxe, which installs it only when the
   #   launcher's /chosen USB handshake is present, and the FD marker block at
   #   0x120. No Mu USB driver: Mu never touches the controller. Needs
   #   J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the AHCI image,
   #   unchanged.
   # J804_WINDOWS_GPU: G0, the carrier-admitted G18 GPU (J804Windows.h,
-  #   AppleSiliconPkg J804GpuHandoff.h, windows-m6/G0-CARRIER-CONTRACT.md):
+  #   AppleSiliconPkg J804GpuHandoff.h, the carrier's G0 contract):
   #   PrePi lowers the RAM top to the GPU pool and reserves the pool when the
   #   launcher's /chosen GPU handshake names a valid carrier handoff page;
   #   the \_SB.GPU0 SSDT template (J804Gpu0Ssdt) and J804GpuAcpiDxe, which
@@ -78,7 +78,7 @@
   #   the GPU. Needs J804_WINDOWS_AHCI (the D1 desktop route). FALSE = the
   #   AHCI or USB image, unchanged.
   # J804_WINDOWS_INPUT: I0, the carrier's keyboard and pointer mailbox
-  #   (J804Windows.h, windows-m6/INPUT-DESIGN.md): the \_SB.INP0 SSDT
+  #   (J804Windows.h, the carrier's input mailbox): the \_SB.INP0 SSDT
   #   (J804Inp0Ssdt), J804InputAcpiDxe, which installs it only when the
   #   launcher's /chosen input handshake is present, and the FD marker block
   #   at 0x140. No Mu input driver and no C or ASL define: Mu never touches
@@ -230,7 +230,7 @@
 
 [LibraryClasses.common]
   AcpiLib|EmbeddedPkg/Library/AcpiLib/AcpiLib.inf
-  # CpuDxe's idle callback must not execute a bare WFI (PLAN Phase 3(a)).
+  # CpuDxe's idle callback must not execute a bare WFI (not yet measured).
   CpuLib|T8152FamilyPkg/Library/J804CpuLib/J804CpuLib.inf
   # PSCI SYSTEM_RESET at EL1 (the carrier resets through WD1 after an NVMe
   # shutdown), WD1 at EL2, shutdown parks.

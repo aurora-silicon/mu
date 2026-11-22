@@ -2,7 +2,7 @@
 //
 // J804 windows profile, G0 GPU (J804_WINDOWS_GPU builds only): the
 // carrier-admitted G18 GPU as \_SB.GPU0, for the project's own render-node
-// driver (windows-m6/WINDOWS-GPU-PLAN.md H10, D2/D5). No inbox or
+// driver (g18win). No inbox or
 // AuroraSilicon driver matches the project ID J804_GPU0_HID.
 //
 // This is a TEMPLATE. Nothing per machine is compiled in: every address is a
@@ -13,7 +13,7 @@
 // names a page that validates and PrePi reserved the pool; otherwise Windows
 // sees no GPU0. It is not part of the DSDT for that reason.
 //
-// _CRS, in this order (windows-m6/G0-CARRIER-CONTRACT.md 8):
+// _CRS, in this order (the carrier's G0 contract):
 //   1. the sgx window (handoff classes 1..5 as one range; the carrier hooks
 //      or denies by class inside it: the foreign pmgr-child/error-handler
 //      holes, the CPU_CONTROL and iop-vbar pages are never the guest's);

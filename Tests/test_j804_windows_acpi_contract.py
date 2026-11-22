@@ -3,7 +3,7 @@
 """Contract for the J804 windows-profile ACPI tables (MacBookPro2026Pkg).
 
 Checks the tables the last build produced (Build/MacBookPro2026-AARCH64,
-made by Tools/build-j804-windows.sh) against PLAN 0.6 and the values shared
+made by Tools/build-j804-windows.sh) against the ACPI contract and the values shared
 with the EL2 carrier in Platform/MacBookPro2026Pkg/Include/J804Windows.h:
 
   * MADT: twelve enabled GICCs, the boot CPU (MPIDR 0x10100) first, the J804
@@ -555,7 +555,7 @@ class J804WindowsGpuContract(unittest.TestCase):
     def test_header_values(self) -> None:
         hid = header_strings()["J804_GPU0_HID"]
         self.assertRegex(hid, r"^[A-Z]{4}[0-9A-F]{4}$", "an ACPI ID: four letters, four hex digits")
-        self.assertFalse(hid.startswith("NTAS"), "never an AuroraSilicon NTAS ID (D5)")
+        self.assertFalse(hid.startswith("NTAS"), "never an AuroraSilicon NTAS ID")
         g = self.handoff_defines()
         text = GPU_HANDOFF_H.read_text()
         self.assertIn('#define J804_GPU_ADT_PROPERTY       "aura,windows-gpu-v1"', text)

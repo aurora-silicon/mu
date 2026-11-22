@@ -58,7 +58,7 @@
 
 //
 // ANS0 (only in J804_WINDOWS_ANS builds) names two SHARED pages that the
-// carrier must NEVER map into stage 2 (PLAN 0.5: the whole spi
+// carrier must NEVER map into stage 2 (carrier rule: the whole spi
 // controller/NOR stays out of the guest; other coprocessors' mailboxes are
 // not the guest's):
 //   - the PMGR page 0x300700000: ps_ans at +0x8a0, but also ps_spi_p at
@@ -105,7 +105,7 @@
 
 //
 // D1: the carrier-emulated AHCI 1.3.1 HBA (one SATA port, a DRAM-backed disk;
-// windows-m6/D1-AHCI-DESIGN.md). Only a J804_WINDOWS_AHCI build uses these.
+// the carrier's D1 design). Only a J804_WINDOWS_AHCI build uses these.
 //
 // ABAR: one 16 KiB stage-2 page the carrier hooks and never maps, in the gap
 // [0xE80000000, 0x1000000000) that no /arm-io range of the J804 ADT covers,
@@ -145,7 +145,7 @@
 #define J804_AHCI_FD_MARKER_OFFSET    0x110
 
 //
-// D4: USB keyboard and mouse (windows-m6/D4-USB-DESIGN.md). Only a
+// D4: USB keyboard and mouse (the carrier's D4 design). Only a
 // J804_WINDOWS_USB build uses these. The carrier passes usb-drd1's xHCI
 // register window through to the guest (stage 2 maps exactly these two
 // 16 KiB pages, IPA == PA, Device-nGnRnE; the dwc3 globals at +0xc100, the
@@ -194,8 +194,8 @@
 #define J804_USB_FD_MARKER_OFFSET    0x120
 
 //
-// G0: the carrier-admitted G18 GPU (windows-m6/WINDOWS-GPU-PLAN.md H10,
-// windows-m6/G0-CARRIER-CONTRACT.md). Only a J804_WINDOWS_GPU build uses
+// G0: the carrier-admitted G18 GPU (the carrier's G0 contract, mirrored in
+// AppleSiliconPkg J804GpuHandoff.h). Only a J804_WINDOWS_GPU build uses
 // these. Unlike AHCI and USB, no address is part of the compiled contract:
 // the carrier lifts every GPU address, line and size from the live ADT, puts
 // them in a 16 KiB read-only handoff page outside guest RAM, and the launcher
@@ -215,13 +215,13 @@
 // Without the handshake, or with any check failing, the RAM is unchanged and
 // there is no GPU0. Mu never touches the GPU, the mailbox or the pool.
 //
-// J804_GPU0_HID is the project's own ID (owner decision D5): not an
-// AuroraSilicon NTAS ID, so none of their unaudited drivers can bind.
+// J804_GPU0_HID is the project's own ID: not an AuroraSilicon NTAS ID,
+// so only the project's own render-node driver binds it.
 //
 #define J804_GPU0_HID  "AGHN0001"
 
 //
-// I0: keyboard and pointer (windows-m6/INPUT-DESIGN.md, aura-win
+// I0: keyboard and pointer (the carrier's input mailbox, aura
 // docs/windows-t8152.md "The Mu side"). Only a J804_WINDOWS_INPUT build uses
 // these. The carrier emulates one 16 KiB MMIO mailbox page (hooked, never
 // mapped; every access trapped) in the same /arm-io gap as the AHCI ABAR,

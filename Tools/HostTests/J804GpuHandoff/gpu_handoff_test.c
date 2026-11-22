@@ -4,7 +4,7 @@
 // J804GpuPatchSsdt (AppleSiliconPkg/Include/J804GpuHandoff.h).
 //
 // The pages are built here field by field from the documented layout
-// (windows-m6/G0-CARRIER-CONTRACT.md section 7, the carrier's
+// (the carrier's G0 contract and its
 // gpu_t8152_handoff_build), not from the parser's code, and their CRC comes
 // from zlib. Every address is synthetic (a made-up machine), none is a J804
 // value.

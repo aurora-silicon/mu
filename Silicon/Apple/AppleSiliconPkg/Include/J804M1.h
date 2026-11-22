@@ -290,8 +290,8 @@ J804M1RegionIsClear (
   reserves them: the boot_args copy at BootArgsCopy (one 16 KiB page) and the
   ADT copy at AdtCopy (J804_M1_ADT_COPY_MAX bytes, holding DevtreeSize bytes).
 
-  Adapted from ReserveBootHandoff in aurora-silicon/mu codex/windows-mu-handoff
-  340f15e (T8142FamilyPkg MemoryInitPeiLib, BSD-2-Clause-Patent), rewritten as
+  Adapted from ReserveBootHandoff in aurora-silicon/mu j813-windows (Acelogic,
+  51af0ed, T8142FamilyPkg MemoryInitPeiLib, BSD-2-Clause-Patent), rewritten as
   a pure check for the J804 reservation model, where the reservations
   themselves are added to the merged J804 range table. It fails closed on
   every condition that ReserveBootHandoff rejects:

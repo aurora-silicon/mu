@@ -318,7 +318,7 @@ int main (int argc, char **argv)
     printf ("missing carve-out map: stop code %d\n", stop);
   }
 
-  /* 5. Boot hand-off check (J804BootHandoffIsSane, the windows-mu-handoff
+  /* 5. Boot hand-off check (J804BootHandoffIsSane, the j813-windows
      ReserveBootHandoff port): the real layout passes, every rejection case
      of the original fails closed. RAM and FD as in the trimmed launch, UEFI
      region the top 128 MiB, ADT size of the saved tree. */

@@ -1,8 +1,8 @@
 # J804 windows profile (Platform/MacBookPro2026Pkg)
 
 Mu for the MacBook Pro 14-inch, M6 (J804, T8152), running at EL1 as the guest
-of the EL2 carrier: aura's `WINDOWS=1` personality ported to T8152 (PLAN 0.5,
-option H1). Build: `sh Tools/build-j804-windows.sh` on branch `j804-windows`;
+of the EL2 carrier: aura's `WINDOWS=1` personality ported to T8152.
+Build: `sh Tools/build-j804-windows.sh` on branch `j804-windows`;
 output `../out/j804-windows/artifacts/J804WIN_EFI.fd` with `MANIFEST.txt`.
 The serial variant is `WM6_CLEAN=1 WM6_J804_VUART=TRUE
 WM6_OUTPUT_ROOT=../out/j804-windows-vuart sh Tools/build-j804-windows.sh`.
@@ -64,8 +64,8 @@ Status: built and host-tested only. Nothing here has run on hardware.
   stops PrePi (gMuCheckpoint stage 0xE6, no panel block) when the copy
   range is not inside boot_args RAM or overlaps the launcher's boot_args
   or ADT source or the running FD.
-- Idle never executes WFI (`J804CpuLib`), until PLAN Phase 3(a) measures WFI
-  on T8152. The carrier traps WFI anyway (HCR_EL2.TWI).
+- Idle never executes WFI (`J804CpuLib`) until WFI is measured on T8152.
+  The carrier traps WFI anyway (HCR_EL2.TWI).
 - AIC timer reflection (AppleAicV2Dxe) runs only at EL1, which is where this
   profile runs; at EL2 the native FIQ timer path is used.
 - Serial is the Null library unless the build sets `J804_WINDOWS_VUART`.
@@ -77,7 +77,7 @@ Status: built and host-tested only. Nothing here has run on hardware.
 - `J804AcpiDxe` installs the ACPI tables only at EL1, on cpu6 (MPIDR
   0x10100), on a J804 ADT.
 - EL1 under the carrier only. The default FD links `AuraArmExceptionLib`,
-  which AUDIT-0.8 forbids in a native-EL2 image (its HVC forward has no
+  which must never run in a native-EL2 image (its HVC forward has no
   CurrentEL check, and at EL2 the HVC traps to EL2 itself). For native EL2
   use the M1 FD (`Tools/build-j804-m1.sh`). An `NTASI_AURA_WINDOWS=FALSE`
   build drops the forwarding but is not tested at EL2 either.
@@ -99,7 +99,7 @@ Status: built and host-tested only. Nothing here has run on hardware.
 
 ## D1: the carrier's AHCI disk (`J804_WINDOWS_AHCI`)
 
-Contract: `windows-m6/D1-AHCI-DESIGN.md` and `J804Windows.h`
+Contract: `J804Windows.h`
 (`J804_AHCI_*`, `J804_GSIV_AHCI`). The carrier emulates one AHCI 1.3.1 HBA
 with one SATA port at ABAR 0xF40000000 (one hooked 16 KiB page), interrupt
 SPI 990 (level, active-high, no AIC line), backed by a DRAM store at the top
@@ -147,7 +147,7 @@ A `J804_WINDOWS_AHCI=TRUE` build adds:
 
 ## D4: usb-drd1's xHCI for Windows (`J804_WINDOWS_USB`)
 
-Contract: `windows-m6/D4-USB-DESIGN.md` and `J804Windows.h` (`J804_XHC*`,
+Contract: `J804Windows.h` (`J804_XHC*`,
 `J804_GSIV_XHC1`, `J804_USB_*`). The carrier passes usb-drd1's xHCI register
 window [0x40A430000, 0x40A438000) through (two 16 KiB stage-2 pages, IPA ==
 PA; the dwc3 globals at +0xc100, the PHY, the DART and the rest of the port
@@ -189,7 +189,7 @@ A `J804_WINDOWS_USB=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
 
 ## G0: the carrier-admitted GPU (`J804_WINDOWS_GPU`)
 
-Contract: `windows-m6/G0-CARRIER-CONTRACT.md` sections 6 to 8 and
+Contract: the carrier's GPU hand-off and
 `AppleSiliconPkg/Include/J804GpuHandoff.h` (layout, rules, parser, SSDT
 patcher; header-only so PrePi, the driver and the host test share it). Unlike
 AHCI and USB, no GPU address, line or size is compiled in: the carrier admits
@@ -215,8 +215,8 @@ A `J804_WINDOWS_GPU=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
   property, or with any failure, the RAM is unchanged.
 - `\_SB.GPU0` in its own SSDT template (`AcpiTables/SsdtGpu0.asl`, OEM table
   ID `J804GPU0`, FFS `J804Gpu0Ssdt` 3C230D00-9C66-4CA9-BCAA-614E034EAAC2),
-  never in the DSDT: `_HID` `J804_GPU0_HID` (the project's own ID, owner
-  decision D5; not an AuroraSilicon NTAS ID), `_UID` 0, `_CCA` 1, `_STA` 0xF,
+  never in the DSDT: `_HID` `J804_GPU0_HID` (the project's own ID,
+  not an AuroraSilicon NTAS ID), `_UID` 0, `_CCA` 1, `_STA` 0xF,
   `_CRS` = four QWordMemory ranges whose values are unique 64-bit sentinels:
   the sgx window (handoff classes 1..5 tiled into one range; non-cacheable
   RW), the post-office page with both GFX windows (that 16 KiB page only;
@@ -256,8 +256,7 @@ A `J804_WINDOWS_GPU=TRUE` build (needs `J804_WINDOWS_AHCI=TRUE`) adds:
 
 ## I0: keyboard and pointer for Windows (`J804_WINDOWS_INPUT`)
 
-Contract: `windows-m6/INPUT-DESIGN.md` (sections 1.3, 1.4 and 1.6), aura-win
-`docs/windows-t8152.md` ("The Mu side") and `J804Windows.h` (`J804_INPUT_*`,
+Contract: aura `docs/windows-t8152.md` ("The Mu side") and `J804Windows.h` (`J804_INPUT_*`,
 `J804_GSIV_INPUT`). The carrier emulates one 16 KiB MMIO mailbox page at IPA
 0xF50000000 (hooked and never mapped, every access trapped; 256 MiB above
 the AHCI ABAR in the same `/arm-io` gap) and raises the purely virtual level
@@ -320,7 +319,7 @@ ANS mailbox: 0x316020300 is the Linux-proven post-office window 3 (our
 `t8152-j804.dts` ans_mbox, IRQs 302/262). It is not taken from the live ADT,
 whose `/arm-io/ans` reg[2] (0x316000000 + 0x1c000) does not cover it, and it
 is not J873's 0x316010000 page. The ADT post-office rule would give
-0x316010300 (AUDIT-0.8 7.2); which window Windows needs is unverified.
+0x316010300; which window Windows needs is unverified.
 
 ANS0's PMGR and mailbox resources are shared pages, not a mapping request.
 The PMGR page 0x300700000 holds ps_ans (+0x8a0) but also ps_spi_p (+0xd40)

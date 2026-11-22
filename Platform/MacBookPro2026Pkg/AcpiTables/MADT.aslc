@@ -14,7 +14,7 @@
 // E = 0, M = 1, P = 2. The E < M < P order follows the cluster roles (M
 // shares the P cluster's performance domain in our t8152-j804.dts); it is
 // not measured on J804. Same polarity as the J813 fix
-// (codex/j813-cpu-efficiency, T6020J414sTopology.h: E = 0, P = 1).
+// (j813-windows CPU efficiency classes: E = 0, P = 1).
 // No PMU interrupt (the carrier does not describe one), no VGIC maintenance
 // interrupt, GicRBase 0 (redistributors are found through the GICR range).
 // No ITS: the carrier emulates none, and Windows initialises every ITS that

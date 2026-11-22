@@ -2,7 +2,7 @@
 //
 // J804 windows profile, I0: publish the carrier's keyboard and pointer
 // mailbox (\_SB.INP0, J804_INPUT_HID) to Windows, only when the carrier
-// really emulates it (windows-m6/INPUT-DESIGN.md; contract in J804Windows.h).
+// really emulates it (contract in J804Windows.h).
 //
 // INP0 lives in its own SSDT (J804Inp0Ssdt, FILE_GUID below), not in the
 // DSDT, so that it can be left out at run time. This driver installs that

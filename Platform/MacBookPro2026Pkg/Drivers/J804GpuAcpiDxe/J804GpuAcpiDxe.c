@@ -2,8 +2,8 @@
 //
 // J804 windows profile, G0 GPU (J804_WINDOWS_GPU builds only): publish the
 // carrier-admitted G18 GPU to Windows as \_SB.GPU0, only when the carrier
-// really admitted it (windows-m6/WINDOWS-GPU-PLAN.md H10,
-// windows-m6/G0-CARRIER-CONTRACT.md sections 7 and 8).
+// really admitted it (the carrier's GPU hand-off page, parsed by
+// AppleSiliconPkg J804GpuHandoff.h).
 //
 // GPU0 lives in its own SSDT (J804Gpu0Ssdt, FILE_GUID below), not in the
 // DSDT, so that it can be left out at run time, and because every value in it

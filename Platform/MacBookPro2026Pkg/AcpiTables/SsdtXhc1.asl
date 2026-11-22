@@ -2,7 +2,7 @@
 //
 // J804 windows profile, D4 (J804_WINDOWS_USB builds only): usb-drd1, the
 // left-rear USB-C port, as a generic xHCI controller for Windows' usbxhci
-// (windows-m6/D4-USB-DESIGN.md section 8).
+// (the carrier's D4 design).
 //
 // The dwc3 runs in USB2 host mode as aura's j804_usb_prep leaves it; the
 // carrier passes exactly the xHCI register window through (two 16 KiB

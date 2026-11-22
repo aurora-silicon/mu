@@ -658,7 +658,7 @@ J804M1ReserveFromAdt (
 //
 // Fail closed if the launcher-placed boot_args or ADT copy is not where the
 // reservations below assume (J804BootHandoffIsSane, adapted from the
-// windows-mu-handoff ReserveBootHandoff check). Kept outside the reservation
+// j813-windows ReserveBootHandoff check). Kept outside the reservation
 // block above, which the host test extracts on its own.
 //
 STATIC

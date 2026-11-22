@@ -2,7 +2,7 @@
 //
 // J804 windows profile, D4: publish usb-drd1's xHCI (\_SB.XHC1, PNP0D10) to
 // Windows, only when the carrier really passes it through
-// (windows-m6/D4-USB-DESIGN.md; contract in J804Windows.h).
+// (contract in J804Windows.h).
 //
 // XHC1 lives in its own SSDT (J804Xhc1Ssdt, FILE_GUID below), not in the
 // DSDT, so that it can be left out at run time. This driver installs that

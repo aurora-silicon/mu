@@ -184,7 +184,7 @@ DefinitionBlock ("", "DSDT", 2, "AURORA", "J804WIN", 1)
         // adds +0x300. This is NOT the J873 profile's 0x316010000 page and is
         // NOT taken from the live ADT: /arm-io/ans reg[2] maps
         // 0x316000000 + 0x1c000, which does not cover 0x316020300, and the
-        // ADT post-office rule would give 0x316010300 instead (AUDIT-0.8 7.2,
+        // ADT post-office rule would give 0x316010300 instead (an
         // open question; unverified under Windows).
         //
         // NVMe interrupt: published GSIV 996, which the carrier must alias to
@@ -253,7 +253,7 @@ DefinitionBlock ("", "DSDT", 2, "AURORA", "J804WIN", 1)
 #if J804_WINDOWS_AHCI
         //
         // D1: the carrier-emulated AHCI 1.3.1 HBA (one SATA port, a DRAM
-        // disk; windows-m6/D1-AHCI-DESIGN.md). _CLS 01/06/01 gives Windows
+        // disk; contract in J804Windows.h). _CLS 01/06/01 gives Windows
         // the compatible ID ACPI\CLS_0001&SUBCLS_0006&PI_01, which mshdc.inf
         // binds to the inbox storahci. The _HID is project-local. The ABAR
         // page is hooked by the carrier (never mapped) and the interrupt is

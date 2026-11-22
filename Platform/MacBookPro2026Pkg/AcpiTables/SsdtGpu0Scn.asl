@@ -15,7 +15,7 @@
 // names a page that validates and PrePi reserved the pool; otherwise Windows
 // sees no GPU0. It is not part of the DSDT for that reason.
 //
-// _CRS, in this order (windows-m6/G0-CARRIER-CONTRACT.md 8):
+// _CRS, in this order (the carrier's G0 contract):
 //   1. the sgx window (handoff classes 1..5 as one range; the carrier hooks
 //      or denies by class inside it: the foreign pmgr-child/error-handler
 //      holes, the CPU_CONTROL and iop-vbar pages are never the guest's);

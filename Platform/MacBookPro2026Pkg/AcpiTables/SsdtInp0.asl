@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 //
 // J804 windows profile, I0 (J804_WINDOWS_INPUT builds only): the carrier's
-// keyboard and pointer mailbox (windows-m6/INPUT-DESIGN.md section 1.6) for
+// keyboard and pointer mailbox (contract in J804Windows.h) for
 // Windows' m6input.sys HID minidriver.
 //
 // One 16 KiB page that the carrier hooks and never maps (every access is

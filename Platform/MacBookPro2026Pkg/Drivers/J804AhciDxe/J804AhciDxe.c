@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 //
 // J804 windows profile, D1: the carrier-emulated AHCI disk
-// (windows-m6/D1-AHCI-DESIGN.md section 6; contract in J804Windows.h).
+// (contract in J804Windows.h).
 //
 // Only acts when all of these hold, otherwise it registers nothing and never
 // touches J804_AHCI_BASE:

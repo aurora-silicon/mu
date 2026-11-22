@@ -150,7 +150,7 @@ J804M1CheckAdt (
 
 #if defined(J804_WINDOWS_GPU)
 //
-// G0 GPU pool (windows-m6/G0-CARRIER-CONTRACT.md 6 to 8). The carrier carves
+// G0 GPU pool (contract in J804GpuHandoff.h). The carrier carves
 // the GPU pool from the top of its guest RAM window, which is exactly the
 // boot_args window Mu runs in, and PrePi places its stack and UEFI region at
 // that top. So the pool can only be kept out of Mu's (and Windows') RAM here,

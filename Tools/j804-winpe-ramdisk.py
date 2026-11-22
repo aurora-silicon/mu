@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Build the J804 M3 WinPE RAM disk (PLAN Phase 4) from Windows ARM64 media.
+"""Build the J804 M3 WinPE RAM disk from Windows ARM64 media.
 
 Output, for each variant:
   WINPE-<variant>.img  a GPT disk with one FAT32 Basic Data partition that holds
