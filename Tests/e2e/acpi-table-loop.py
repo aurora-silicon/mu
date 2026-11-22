@@ -79,7 +79,12 @@ def table(sig, oem_table_id, body):
 
 def compile_asl(out):
     aml = {}
-    for name in ('CPUF', 'DISP', 'GPU', 'GPUF', 'MTP', 'N1', 'SMCG'):
+    # GPUP (the unified table with the GPU pool, AURA817P) joins the storage
+    # file when the tree has it; every case here builds with its gate off.
+    names = ['CPUF', 'DISP', 'GPU', 'GPUF', 'MTP', 'N1', 'SMCG']
+    if (ROOT / ASL / 'GPUP.asl').exists():
+        names.insert(names.index('GPUF') + 1, 'GPUP')
+    for name in names:
         src = ROOT / ASL / f'{name}.asl'
         result = subprocess.run(['iasl', '-p', str(out / name), str(src)], text=True, capture_output=True)
         (out / f'{name}.iasl.log').write_text(result.stdout + result.stderr)
@@ -94,8 +99,9 @@ def fixture(aml):
             ('FACP', table('FACP', b'APPLEEFI', b'\x01' * 8)),
             ('CPUF', aml['CPUF']), ('DISP', aml['DISP']),
             ('DSDT', table('DSDT', b'J813\0\0\0\0', b'\x10\x05\\_SB_')),
-            ('GPU', aml['GPU']), ('GPUF', aml['GPUF']),
-            ('MTP', aml['MTP']), ('N1', aml['N1']), ('SMCG', aml['SMCG'])]
+            ('GPU', aml['GPU']), ('GPUF', aml['GPUF'])] + \
+           ([('GPUP', aml['GPUP'])] if 'GPUP' in aml else []) + \
+           [('MTP', aml['MTP']), ('N1', aml['N1']), ('SMCG', aml['SMCG'])]
     for label, blob in rows:
         assert len(blob) == struct.unpack_from('<I', blob, 4)[0], label
     return rows
@@ -165,13 +171,19 @@ def regions_for(flags):
     return regions
 
 
+# Package headers the helpers include with angle brackets that hold the helpers'
+# own contract rather than firmware services: inlined like quoted headers.
+PACKAGE_HEADERS = {'IndustryStandard/AuraJ813GpuPool.h':
+                   pathlib.Path('Silicon/Apple/AppleSiliconPkg/Include/IndustryStandard/AuraJ813GpuPool.h')}
+
+
 def revision_sources(rev):
     """{file name: text} for AcpiPlatform.c and the DXE helper sources."""
     names = ['AcpiPlatform.c'] + list(UNITS.values()) + \
-            [n.replace('.c', '.h') for n in UNITS.values()]
+            [n.replace('.c', '.h') for n in UNITS.values()] + list(PACKAGE_HEADERS)
     out = {}
     for name in names:
-        path = DXE / name
+        path = PACKAGE_HEADERS.get(name, DXE / name)
         if rev is None:
             if (ROOT / path).exists():
                 out[name] = (ROOT / path).read_text()
@@ -184,11 +196,12 @@ def revision_sources(rev):
 
 
 def flatten(text, sources):
-    """Drop angle-bracket includes; inline the module's own quoted headers."""
+    """Drop angle-bracket includes except PACKAGE_HEADERS; inline those and the
+    module's own quoted headers."""
     lines = []
     for line in text.splitlines():
         m = re.match(r'\s*#include\s+([<"])([^>"]+)[>"]', line)
-        if m and m.group(1) == '<':
+        if m and m.group(1) == '<' and m.group(2) not in sources:
             continue
         if m:
             lines.append(flatten(sources[m.group(2)], sources))
@@ -343,7 +356,7 @@ def main():
     aml_dir = out / 'aml'
     aml_dir.mkdir()
     rows = fixture(compile_asl(aml_dir))
-    quiet_rows = [r for r in rows if r[0] != 'GPUF']
+    quiet_rows = [r for r in rows if r[0] not in ('GPUF', 'GPUP')]
     summary = {'schema': 'mu.acpi-table-loop.replay.v2', 'hardware_qualified': False,
                'modeled_boundary': 'FV2 ReadSection (FwVolReadSection semantics), gBS->FreePool and '
                                    'FreePool, InstallAcpiTable, ADT (/chosen, /arm-io/sgx|dcp|disp0), '

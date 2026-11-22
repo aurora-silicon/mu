@@ -17,6 +17,8 @@ static size_t mtp_length;
 UINT64 PcdSystemMemoryBase, PcdSystemMemorySize, PcdFdBaseAddress, PcdFdSize;
 UINT64 PcdBootArgsPointer, PcdAdtPointer, PcdFrameBufferAddress, PcdFrameBufferSize;
 UINT32 PcdCoreCount;
+/* The GPU pool has its own replay (j813-gpu-pool.py); here its gate is off. */
+BOOLEAN HostPcd_PcdAppleJ813GpuLocalPool, HostPcd_PcdAppleJ813UnifiedDisplay;
 static EFI_HOB_RESOURCE_DESCRIPTOR hobs[64];
 static size_t count;
 static bool installed_mmu;
@@ -54,6 +56,9 @@ void *dt_node_prop(dt_node_t *node, const char *name, size_t *length) {
   assert(node == &chosen);
   if (strcmp(name,"aura,windows-mtp-disabled") || !mtp_property) return NULL;
   *length=mtp_length; return mtp_disabled;
+}
+void *dt_prop(dt_node_t *node, const char *key, size_t *length) {
+  (void)node; (void)key; (void)length; return NULL;
 }
 void BuildMemoryTypeInformationHob(void) { abort(); }
 EFI_STATUS MemoryPeim(EFI_PHYSICAL_ADDRESS base, UINT64 size);

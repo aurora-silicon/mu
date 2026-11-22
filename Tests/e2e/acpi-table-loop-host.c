@@ -19,7 +19,10 @@
  *                    MTP policy), /arm-io/sgx regions, /arm-io/dcp, /disp0.
  *                    Missing properties print the "Missing DeviceTree prop"
  *                    warning dt_get_prop prints.
- *   GCD map          one system-memory range (boot 147's UEFI RAM).
+ *   GCD map          one system-memory range (boot 147's UEFI RAM), or with
+ *                    gcd=FILE the map j813-gpu-pool.py derives from
+ *                    MemoryPeim's resource HOBs.
+ *   HOB list         empty, or with hobs=FILE the GUID HOBs MemoryPeim built.
  *
  * Output: one JSON line on stdout.
  */
@@ -180,12 +183,25 @@ static HOST_BOOT_SERVICES  *gBS   = &HostBs;
 
 /* ---- GCD memory map ------------------------------------------------------ */
 static UINT64  RamBase = 0x1001AB80000ULL, RamTop = 0x103DC600000ULL;  /* boot 147 */
+/* gcd=FILE replaces the default map with one built from MemoryPeim's HOBs
+ * (j813-gpu-pool.py): records of base, length (u64) and GCD type (u32). */
+static EFI_GCD_MEMORY_SPACE_DESCRIPTOR  GcdFromFile[64];
+static UINTN                            GcdFromFileCount;
+static bool                             GcdFileGiven;
 
 static EFI_STATUS EFIAPI
 HostGetMemorySpaceMap (UINTN *Count, EFI_GCD_MEMORY_SPACE_DESCRIPTOR **Map)
 {
-  EFI_GCD_MEMORY_SPACE_DESCRIPTOR  *Out = PoolAllocate (3 * sizeof (*Out));
+  EFI_GCD_MEMORY_SPACE_DESCRIPTOR  *Out;
 
+  if (GcdFileGiven) {
+    Out = PoolAllocate (GcdFromFileCount * sizeof (*Out));
+    memcpy (Out, GcdFromFile, GcdFromFileCount * sizeof (*Out));
+    *Count = GcdFromFileCount;
+    *Map   = Out;
+    return EFI_SUCCESS;
+  }
+  Out = PoolAllocate (3 * sizeof (*Out));
   Out[0] = (EFI_GCD_MEMORY_SPACE_DESCRIPTOR){ 0, RamBase, 0, 0, EfiGcdMemoryTypeMemoryMappedIo, NULL, NULL };
   Out[1] = (EFI_GCD_MEMORY_SPACE_DESCRIPTOR){ RamBase, RamTop - RamBase, 0, 0, EfiGcdMemoryTypeSystemMemory, NULL, NULL };
   Out[2] = (EFI_GCD_MEMORY_SPACE_DESCRIPTOR){ RamTop, (1ULL << 42) - RamTop, 0, 0, EfiGcdMemoryTypeReserved, NULL, NULL };
@@ -197,11 +213,85 @@ HostGetMemorySpaceMap (UINTN *Count, EFI_GCD_MEMORY_SPACE_DESCRIPTOR **Map)
 static HOST_DXE_SERVICES  HostDs = { HostGetMemorySpaceMap };
 HOST_DXE_SERVICES         *gDS   = &HostDs;
 
+/* ---- HOB list (GUID HOBs only) ------------------------------------------- */
+/* hobs=FILE: records of a 16-byte GUID, a u32 data length and the data, laid
+ * out here as EFI_HOB_GUID_TYPE HOBs (8-byte aligned) and an end-of-list HOB,
+ * the shape HobLib walks.  Without the flag the list holds only its end. */
+#define HOB_TYPE_GUID_EXTENSION  0x0004
+#define HOB_TYPE_END_OF_LIST     0xFFFF
+static UINT64  HobList[4096 / 8] = { HOB_TYPE_END_OF_LIST | (8u << 16) };
+
+static bool
+LoadHobs (const char *Path)
+{
+  FILE    *File = fopen (Path, "rb");
+  UINT8   *Cursor = (UINT8 *)HobList;
+  UINT8   *Limit = (UINT8 *)HobList + sizeof (HobList) - sizeof (EFI_HOB_GENERIC_HEADER);
+  UINT8   Guid[16];
+  UINT32  Length;
+
+  if (File == NULL) {
+    return false;
+  }
+  while (fread (Guid, 1, sizeof (Guid), File) == sizeof (Guid)) {
+    EFI_HOB_GUID_TYPE *Hob = (EFI_HOB_GUID_TYPE *)Cursor;
+    UINTN             Total;
+
+    if (fread (&Length, 4, 1, File) != 1) {
+      fclose (File);
+      return false;
+    }
+    Total = (sizeof (*Hob) + Length + 7) & ~(UINTN)7;
+    if ((Total > 0xFFFF) || (Cursor + Total > Limit)) {
+      fclose (File);
+      return false;
+    }
+    memset (Hob, 0, Total);
+    Hob->Header.HobType   = HOB_TYPE_GUID_EXTENSION;
+    Hob->Header.HobLength = (UINT16)Total;
+    memcpy (&Hob->Name, Guid, sizeof (Guid));
+    if (fread (Hob + 1, 1, Length, File) != Length) {
+      fclose (File);
+      return false;
+    }
+    Cursor += Total;
+  }
+  fclose (File);
+  ((EFI_HOB_GENERIC_HEADER *)Cursor)->HobType   = HOB_TYPE_END_OF_LIST;
+  ((EFI_HOB_GENERIC_HEADER *)Cursor)->HobLength = sizeof (EFI_HOB_GENERIC_HEADER);
+  return true;
+}
+
+VOID *
+GetNextGuidHob (CONST EFI_GUID *Guid, CONST VOID *HobStart)
+{
+  CONST UINT8  *Cursor = HobStart;
+
+  while (((CONST EFI_HOB_GENERIC_HEADER *)Cursor)->HobType != HOB_TYPE_END_OF_LIST) {
+    CONST EFI_HOB_GUID_TYPE *Hob = (CONST EFI_HOB_GUID_TYPE *)Cursor;
+    if ((Hob->Header.HobType == HOB_TYPE_GUID_EXTENSION) &&
+        (memcmp (&Hob->Name, Guid, sizeof (*Guid)) == 0))
+    {
+      return (VOID *)Hob;
+    }
+    Cursor += Hob->Header.HobLength;
+  }
+  return NULL;
+}
+
+VOID *
+GetFirstGuidHob (CONST EFI_GUID *Guid)
+{
+  return GetNextGuidHob (Guid, HobList);
+}
+
 /* ---- build-time PCDs (gpu-disp profile) ---------------------------------- */
 BOOLEAN  HostPcd_PcdAppleG17GpuProbe        = TRUE;
 BOOLEAN  HostPcd_PcdAppleJ813DisplayDevice  = TRUE;
 BOOLEAN  HostPcd_PcdAppleJ813UnifiedDisplay = TRUE;
 BOOLEAN  HostPcd_PcdAppleN1BusHandoff       = TRUE;
+/* Off unless pool=1: the images every acpi-table-loop.py case models. */
+BOOLEAN  HostPcd_PcdAppleJ813GpuLocalPool   = FALSE;
 
 /* ---- storage file -------------------------------------------------------- */
 static EFI_GUID PcdDeviceAcpiTableStorageFile = { 0x7E374E25, 0x8E01, 0x4FEE, { 0x87, 0xF2, 0x39, 0x0C, 0x23, 0xC6, 0x06, 0xCD } };
@@ -511,7 +601,7 @@ main (int Argc, char **Argv)
   {
     fprintf (stderr, "usage: %s TABLES [marker=1|0|absent|short] [chip=N] [board=N] [reject=OEMTABLE] "
                      "[mtp=N] [usb=none|replace|fail] [unified=absent|1|0|2|short|long] [gate=0|1] "
-                     "[dcp=0] [disp0=0] [region=I:BASE:SIZE]\n", Argv[0]);
+                     "[dcp=0] [disp0=0] [region=I:BASE:SIZE] [pool=0|1] [gcd=FILE] [hobs=FILE]\n", Argv[0]);
     return 2;
   }
   for (TableCount = 0; TableCount < Count; TableCount++) {
@@ -535,6 +625,21 @@ main (int Argc, char **Argv)
     else if (!strncmp (Arg, "gate=", 5)) HostPcd_PcdAppleJ813UnifiedDisplay = Arg[5] == '1';
     else if (!strcmp (Arg, "dcp=0")) DcpPresent = false;
     else if (!strcmp (Arg, "disp0=0")) Disp0Present = false;
+    else if (!strncmp (Arg, "pool=", 5)) HostPcd_PcdAppleJ813GpuLocalPool = Arg[5] == '1';
+    else if (!strncmp (Arg, "hobs=", 5)) { if (!LoadHobs (Arg + 5)) return 2; }
+    else if (!strncmp (Arg, "gcd=", 4)) {
+      FILE    *Gcd = fopen (Arg + 4, "rb");
+      UINT64  Range[2];
+      UINT32  Type;
+      if (Gcd == NULL) return 2;
+      while (fread (Range, 8, 2, Gcd) == 2 && fread (&Type, 4, 1, Gcd) == 1 &&
+             GcdFromFileCount < sizeof (GcdFromFile) / sizeof (GcdFromFile[0])) {
+        GcdFromFile[GcdFromFileCount++] = (EFI_GCD_MEMORY_SPACE_DESCRIPTOR){
+          Range[0], Range[1], 0, 0, (EFI_GCD_MEMORY_TYPE)Type, NULL, NULL };
+      }
+      fclose (Gcd);
+      GcdFileGiven = true;
+    }
     else if (!strncmp (Arg, "region=", 7)) {
       char           *End;
       unsigned long  Region = strtoul (Arg + 7, &End, 0);

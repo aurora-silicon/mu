@@ -69,7 +69,26 @@ extern BOOLEAN  HostPcd_PcdAppleG17GpuProbe;
 extern BOOLEAN  HostPcd_PcdAppleJ813DisplayDevice;
 extern BOOLEAN  HostPcd_PcdAppleJ813UnifiedDisplay;
 extern BOOLEAN  HostPcd_PcdAppleN1BusHandoff;
+extern BOOLEAN  HostPcd_PcdAppleJ813GpuLocalPool;
 #define FixedPcdGetBool(x)  (HostPcd_##x)
+#define STATIC_ASSERT(x, m) _Static_assert (x, m)
+
+/* HobLib's GUID-HOB walk, over the HOB list the host loads (hobs=FILE). */
+typedef struct {
+  UINT16 HobType;
+  UINT16 HobLength;
+  UINT32 Reserved;
+} EFI_HOB_GENERIC_HEADER;
+typedef struct {
+  EFI_HOB_GENERIC_HEADER Header;
+  EFI_GUID               Name;
+} EFI_HOB_GUID_TYPE;
+#define GET_HOB_LENGTH(h)          (((EFI_HOB_GENERIC_HEADER *)(h))->HobLength)
+#define GET_GUID_HOB_DATA(h)       ((VOID *)((UINT8 *)(h) + sizeof (EFI_HOB_GUID_TYPE)))
+#define GET_GUID_HOB_DATA_SIZE(h)  ((UINT16)(GET_HOB_LENGTH (h) - sizeof (EFI_HOB_GUID_TYPE)))
+#define GET_NEXT_HOB(h)            ((VOID *)((UINT8 *)(h) + GET_HOB_LENGTH (h)))
+VOID  *GetFirstGuidHob (CONST EFI_GUID *Guid);
+VOID  *GetNextGuidHob (CONST EFI_GUID *Guid, CONST VOID *HobStart);
 
 /* AppleDTLib: a modeled ADT (see acpi-table-loop-host.c). */
 typedef struct HOST_DT_NODE dt_node_t;

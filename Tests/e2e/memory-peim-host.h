@@ -57,6 +57,9 @@ typedef struct { UINT32 a; UINT16 b,c; UINT8 d[8]; } EFI_GUID;
 #define SIZE_256MB 0x10000000ULL
 #define SIZE_128MB 0x8000000ULL
 #define SIZE_64MB 0x4000000ULL
+#define SIZE_32MB 0x2000000ULL
+#define SIGNATURE_16(a,b) ((UINT16)(a)|((UINT16)(b)<<8))
+#define SIGNATURE_32(a,b,c,d) ((UINT32)SIGNATURE_16(a,b)|((UINT32)SIGNATURE_16(c,d)<<16))
 #define DEBUG(x) do {} while (0)
 #define EFI_RESOURCE_SYSTEM_MEMORY 1
 #define EFI_RESOURCE_MEMORY_RESERVED 2
@@ -90,6 +93,9 @@ extern UINT32 PcdCoreCount;
 #define FixedPcdGet64(x) (x)
 #define FixedPcdGet32(x) (x)
 #define FeaturePcdGet(x) false
+/* FixedAtBuild booleans the J813 GPU pool gate reads; each host defines them. */
+extern BOOLEAN HostPcd_PcdAppleJ813GpuLocalPool, HostPcd_PcdAppleJ813UnifiedDisplay;
+#define FixedPcdGetBool(x) (HostPcd_##x)
 void *GetHobList(void);
 void *GetNextHob(int type, void *hob);
 void BuildResourceDescriptorHob(int type, UINT64 attributes, UINT64 base, UINT64 size);
