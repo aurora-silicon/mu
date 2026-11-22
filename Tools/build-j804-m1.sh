@@ -16,10 +16,11 @@
 set -eu
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$source_root"
-test "$(git branch --show-current)" = j804-m1 || {
-    echo "J804 M1 firmware must be built from the j804-m1 branch" >&2
-    exit 1
-}
+case "$(git branch --show-current)" in
+    j804-m1|j804-windows|j804-windows-*) ;;
+    *) echo "J804 M1 firmware must be built from the j804-m1 or j804-windows branch" >&2
+       exit 1 ;;
+esac
 test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
 case "$source_root" in
     *' '*) echo "EDK2 cannot build in a path that contains spaces" >&2; exit 1 ;;
