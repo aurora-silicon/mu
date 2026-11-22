@@ -50,6 +50,10 @@
 
   gAppleSiliconPkgTokenSpaceGuid.PcdSystemMemoryUefiRegionSize
 
+  # J813 G17 local-memory pool gate (ReserveGpuLocalPool).
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813GpuLocalPool
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813UnifiedDisplay
+
   gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiACPIReclaimMemory
   gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiACPIMemoryNVS
   gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiReservedMemoryType

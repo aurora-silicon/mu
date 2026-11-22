@@ -120,6 +120,12 @@
   # the host marker aura,windows-unified-display-v1 (absent marker = legacy).
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813UnifiedDisplay|FALSE|BOOLEAN|0x00004729
 
+  # J813 G17 local-memory pool: with the unified key on, MemoryPeim reserves
+  # 1 GiB of guest RAM and AURA8171 is published from GPUP.asl (17 resources,
+  # the 17th the pool) instead of GPUF.asl.  Nothing changes when it is off.
+  # See AcpiPlatformDxe/FAILURE-MODES-J813-GPU-POOL.md.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813GpuLocalPool|FALSE|BOOLEAN|0x0000472E
+
   # ForceWindowsBootManager - When TRUE, the MsBootPolicy fixed-disk (HDD) boot
   # sequence element boots \EFI\Microsoft\Boot\bootmgfw.efi from an internal
   # filesystem exclusively, skipping any filesystem that lacks it, and never

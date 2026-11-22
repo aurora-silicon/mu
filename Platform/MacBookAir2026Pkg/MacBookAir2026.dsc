@@ -61,6 +61,10 @@
   # the unified GPU+panel device (AURA8171) instead of AURA8170 + AURA8180.
   # Without the marker the image publishes the legacy pair, as before.
   DEFINE NTASI_J813_UNIFIED_DISPLAY = FALSE
+  # With the unified marker set, reserves 1 GiB of guest RAM for the G17
+  # driver's local segment and publishes it as AURA8171's 17th resource.
+  # Needs a driver that accepts 17 resources; off, nothing changes.
+  DEFINE NTASI_J813_GPU_LOCAL_POOL = FALSE
   # Enabling the storage features disables the interactive MTP survey. Its
   # eight-second delay loop depends on the guest counter path and can dominate
   # or stall supervised T8142 boots before ANS is dispatched.
@@ -97,6 +101,7 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleG17GpuProbe|$(NTASI_G17_GPU_PROBE)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813DisplayDevice|$(NTASI_J813_DISPLAY_DEVICE)
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813UnifiedDisplay|$(NTASI_J813_UNIFIED_DISPLAY)
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813GpuLocalPool|$(NTASI_J813_GPU_LOCAL_POOL)
   #
   # Do not reset when the MemoryTypeInformation variable changes.
   #

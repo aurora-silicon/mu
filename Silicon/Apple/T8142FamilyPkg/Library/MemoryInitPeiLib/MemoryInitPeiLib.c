@@ -29,6 +29,7 @@
 #include <Library/AppleDTLib.h>
 
 #include <AppendedRamdisk.h>
+#include <IndustryStandard/AuraJ813GpuPool.h>
 #include <IndustryStandard/AuraMtpHandoff.h>
 
 //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
@@ -263,6 +264,254 @@ ReserveMtpHandoff (
   }
   DEBUG ((DEBUG_INFO, "MemoryInitPeiLib: reserved active J813 MTP [0x%Lx, 0x%Lx)\n", Base, Top));
   return EFI_SUCCESS;
+}
+
+//
+// J813 G17 local-memory pool (AcpiPlatformDxe/FAILURE-MODES-J813-GPU-POOL.md).
+//
+STATIC CONST EFI_GUID  mAuraJ813GpuPoolHobGuid = AURA_J813_GPU_POOL_HOB_GUID;
+
+STATIC_ASSERT (
+  AURA_J813_GPU_POOL_SIZE <= MAX_UINT32,
+  "ReserveMemoryRegion() takes a UINT32 size; a larger pool would be truncated"
+  );
+STATIC_ASSERT (
+  (AURA_J813_GPU_POOL_SIZE % AURA_J813_GPU_POOL_ALIGNMENT) == 0,
+  "the pool's top must be as aligned as its base"
+  );
+
+// The initial UEFI region, the FD and iBoot's two TZ carveouts.
+#define GPU_POOL_FORBIDDEN_MAX  4
+
+typedef struct {
+  UINT64    Base;
+  UINT64    Top;
+} GPU_POOL_RANGE;
+
+// A property of exactly four bytes, little-endian.
+STATIC BOOLEAN
+GpuPoolChosenU32 (
+  IN  dt_node_t    *Chosen,
+  IN  CONST CHAR8  *Name,
+  OUT UINT32       *Value
+  )
+{
+  CONST UINT8  *Bytes;
+  size_t       Length;
+
+  Length = 0;
+  Bytes  = dt_prop (Chosen, Name, &Length);
+  if ((Bytes == NULL) || (Length != sizeof (UINT32))) {
+    return FALSE;
+  }
+
+  *Value = (UINT32)Bytes[0] | ((UINT32)Bytes[1] << 8) |
+           ((UINT32)Bytes[2] << 16) | ((UINT32)Bytes[3] << 24);
+  return TRUE;
+}
+
+// The pool exists only in images built for it, on a J813 whose host turned
+// the unified display key on: the rule AuraJ813UnifiedDisplay.c and
+// AuraG17GpuDevice.c apply in DXE.  The gate is read before the ADT, so a
+// key-off boot reads nothing more than it did.
+STATIC BOOLEAN
+GpuPoolSelected (
+  VOID
+  )
+{
+  dt_node_t  *Chosen;
+  UINT32     Value;
+
+  if (!FixedPcdGetBool (PcdAppleJ813GpuLocalPool) ||
+      !FixedPcdGetBool (PcdAppleJ813UnifiedDisplay))
+  {
+    return FALSE;
+  }
+
+  Chosen = dt_get ("/chosen");
+  return (BOOLEAN)((Chosen != NULL) &&
+                   GpuPoolChosenU32 (Chosen, AURA_J813_GPU_POOL_UNIFIED_MARKER, &Value) &&
+                   (Value == 1) &&
+                   GpuPoolChosenU32 (Chosen, "chip-id", &Value) && (Value == 0x8142) &&
+                   GpuPoolChosenU32 (Chosen, "board-id", &Value) && (Value == 0x24));
+}
+
+// iBoot's TZ carveouts, the ranges Aura unmaps from the guest's stage 2
+// (Aura mcc.c reads the same two properties).  An absent node lists none; a
+// present entry that is not 16 bytes, or wraps, makes the pool doubtful.
+STATIC BOOLEAN
+GpuPoolCarveouts (
+  IN OUT GPU_POOL_RANGE  *Ranges,
+  IN OUT UINTN           *Count
+  )
+{
+  STATIC CONST CHAR8  *Names[] = { "region-id-2", "region-id-4" };
+  dt_node_t           *Node;
+  CONST UINT8         *Bytes;
+  size_t              Length;
+  UINT64              Base;
+  UINT64              Size;
+  UINTN               Index;
+  UINTN               Byte;
+
+  Node = dt_get ("/chosen/carveout-memory-map");
+  if (Node == NULL) {
+    return TRUE;
+  }
+
+  for (Index = 0; Index < ARRAY_SIZE (Names); Index++) {
+    Length = 0;
+    Bytes  = dt_prop (Node, Names[Index], &Length);
+    if (Bytes == NULL) {
+      continue;
+    }
+
+    if ((Length != 2 * sizeof (UINT64)) || (*Count >= GPU_POOL_FORBIDDEN_MAX)) {
+      return FALSE;
+    }
+
+    Base = 0;
+    Size = 0;
+    for (Byte = 0; Byte < sizeof (UINT64); Byte++) {
+      Base |= (UINT64)Bytes[Byte] << (8 * Byte);
+      Size |= (UINT64)Bytes[sizeof (UINT64) + Byte] << (8 * Byte);
+    }
+
+    if (Base > MAX_UINT64 - Size) {
+      return FALSE;
+    }
+
+    Ranges[*Count].Base = Base;
+    Ranges[*Count].Top  = Base + Size;
+    (*Count)++;
+  }
+
+  return TRUE;
+}
+
+// Carve the pool out of guest RAM before DXE sees it, as
+// EFI_RESOURCE_MEMORY_RESERVED: the DXE core makes that GCD Reserved and the
+// memory map EfiReservedMemoryType, so neither UEFI nor Windows allocates it.
+// It is the highest AURA_J813_GPU_POOL_ALIGNMENT-aligned window inside one
+// system-memory resource HOB, after every other hole is punched (boot
+// handoff, MTP, CPU carveouts, appended ramdisk), that misses the initial
+// UEFI region, the FD and the TZ carveouts.  Guest RAM is the range Aura maps
+// identity in its stage 2.  Finding none is not fatal: there is then no pool
+// and no HOB, and DXE withholds AURA8171.
+STATIC VOID
+ReserveGpuLocalPool (
+  IN EFI_PHYSICAL_ADDRESS SystemMemoryTop,
+  IN EFI_PHYSICAL_ADDRESS FdTop,
+  IN EFI_PHYSICAL_ADDRESS UefiMemoryBase,
+  IN UINT64               UefiMemorySize
+  )
+{
+  GPU_POOL_RANGE        Forbidden[GPU_POOL_FORBIDDEN_MAX];
+  UINTN                 Count;
+  UINTN                 Index;
+  EFI_PEI_HOB_POINTERS  NextHob;
+  AURA_J813_GPU_POOL    Pool;
+  UINT64                SystemMemoryBase;
+  UINT64                Start;
+  UINT64                End;
+  UINT64                Top;
+  UINT64                Lowest;
+  UINT64                Best;
+  BOOLEAN               Found;
+
+  if (!GpuPoolSelected ()) {
+    return;
+  }
+
+  Count = 0;
+  Forbidden[Count].Base = UefiMemoryBase;
+  Forbidden[Count].Top  = UefiMemoryBase + UefiMemorySize;
+  Count++;
+  Forbidden[Count].Base = PcdGet64 (PcdFdBaseAddress);
+  Forbidden[Count].Top  = FdTop;
+  Count++;
+  if ((UefiMemorySize > MAX_UINT64 - UefiMemoryBase) ||
+      !GpuPoolCarveouts (Forbidden, &Count))
+  {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: J813 GPU pool: carveout list malformed; pool withheld\n"));
+    return;
+  }
+
+  SystemMemoryBase = PcdGet64 (PcdSystemMemoryBase);
+  Found            = FALSE;
+  Best             = 0;
+  NextHob.Raw      = GetHobList ();
+  while ((NextHob.Raw = GetNextHob (EFI_HOB_TYPE_RESOURCE_DESCRIPTOR, NextHob.Raw)) != NULL) {
+    if (NextHob.ResourceDescriptor->ResourceType == EFI_RESOURCE_SYSTEM_MEMORY) {
+      // Only guest RAM: a HOB is never wider, but the pool must not be.
+      Start = NextHob.ResourceDescriptor->PhysicalStart;
+      End   = Start + NextHob.ResourceDescriptor->ResourceLength;
+      if (Start < SystemMemoryBase) {
+        Start = SystemMemoryBase;
+      }
+
+      if (End > SystemMemoryTop) {
+        End = SystemMemoryTop;
+      }
+
+      Top = End & ~(AURA_J813_GPU_POOL_ALIGNMENT - 1);
+      // Each pass either takes the window [Top - SIZE, Top) or drops Top
+      // below the lowest forbidden range over it, which then cannot overlap
+      // again: at most GPU_POOL_FORBIDDEN_MAX + 1 passes.
+      while ((Top > Start) && (Top - Start >= AURA_J813_GPU_POOL_SIZE)) {
+        Lowest = Top;
+        for (Index = 0; Index < Count; Index++) {
+          if ((Forbidden[Index].Base < Forbidden[Index].Top) &&
+              (Forbidden[Index].Base < Top) &&
+              (Top - AURA_J813_GPU_POOL_SIZE < Forbidden[Index].Top) &&
+              (Forbidden[Index].Base < Lowest))
+          {
+            Lowest = Forbidden[Index].Base;
+          }
+        }
+
+        if (Lowest == Top) {
+          if (!Found || (Top - AURA_J813_GPU_POOL_SIZE > Best)) {
+            Best  = Top - AURA_J813_GPU_POOL_SIZE;
+            Found = TRUE;
+          }
+
+          break;
+        }
+
+        Top = Lowest & ~(AURA_J813_GPU_POOL_ALIGNMENT - 1);
+      }
+    }
+
+    NextHob.Raw = GET_NEXT_HOB (NextHob);
+  }
+
+  if (!Found) {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: J813 GPU pool: no aligned 1 GiB window in guest RAM; pool withheld\n"));
+    return;
+  }
+
+  if (!ReserveMemoryRegion (Best, (UINT32)AURA_J813_GPU_POOL_SIZE)) {
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: J813 GPU pool: 0x%lx is not inside one RAM HOB; pool withheld\n", Best));
+    return;
+  }
+
+  Pool.Signature       = AURA_J813_GPU_POOL_SIGNATURE;
+  Pool.Version         = AURA_J813_GPU_POOL_VERSION;
+  Pool.StructureSize   = sizeof (Pool);
+  Pool.Base            = Best;
+  Pool.Size            = AURA_J813_GPU_POOL_SIZE;
+  Pool.GuestMemoryBase = SystemMemoryBase;
+  Pool.GuestMemoryTop  = SystemMemoryTop;
+  Pool.Reserved        = 0;
+  if (BuildGuidDataHob (&mAuraJ813GpuPoolHobGuid, &Pool, sizeof (Pool)) == NULL) {
+    // The range stays reserved and unpublished (failure mode G10).
+    DEBUG ((DEBUG_ERROR, "MemoryInitPeiLib: J813 GPU pool: HOB allocation failed; AURA8171 will be withheld\n"));
+    return;
+  }
+
+  DEBUG ((DEBUG_INFO, "MemoryInitPeiLib: reserved J813 GPU local pool [0x%lx, 0x%lx)\n",
+          Best, Best + AURA_J813_GPU_POOL_SIZE));
 }
 
 //Borrowed from ArmPlatformPkg
@@ -520,6 +769,9 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   if (EFI_ERROR (Status)) {
     return Status;
   }
+
+  // Last: every other hole must already be punched.
+  ReserveGpuLocalPool (SystemMemoryTop, FdTop, UefiMemoryBase, UefiMemorySize);
 
   // Build Memory Allocation Hob
   InitMmu (MemoryTable);
