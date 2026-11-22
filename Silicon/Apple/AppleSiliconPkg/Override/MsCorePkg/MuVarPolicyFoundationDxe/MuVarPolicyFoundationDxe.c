@@ -154,6 +154,9 @@ SetExitBootServicesIndicator (
   EFI_STATUS  Status;
 
   Status = SetPhaseIndicator (EXIT_BOOT_SERVICES_INDICATOR_VAR_NAME, EXIT_BOOT_SERVICES_INDICATOR_VAR_ATTR);
+#if defined (J873_WINDOWS)
+  DEBUG ((DEBUG_INFO, "J873_VARPOL_EBS: phase indicator write %r\n", Status));
+#endif
 
   // Variable services can transition to runtime during the ExitBootServices
   // event fan-out. A volatile phase indicator is useful diagnostic state, but
@@ -284,7 +287,19 @@ MuVarPolicyFoundationDxeMain (
     // Register ExitBootServices callback.
     ExitBootServicesStatus = gBS->CreateEventEx (
                                     EVT_NOTIFY_SIGNAL,
+#if defined (J873_WINDOWS)
+                                    // VariableRuntimeDxe's RuntimeLib switches
+                                    // to runtime at TPL_NOTIFY. This driver
+                                    // depends on its policy protocol and is
+                                    // registered later. Core queues this event
+                                    // group newest-first at each TPL, so equal
+                                    // priority writes the volatile indicator
+                                    // before the runtime transition. Preserve
+                                    // the policy and assertion on failure.
+                                    TPL_NOTIFY,
+#else
                                     TPL_CALLBACK,                     // SOMEWHERE in ExitBootServices
+#endif
                                     SetExitBootServicesIndicator,
                                     NULL,
                                     &gEfiEventExitBootServicesGuid,

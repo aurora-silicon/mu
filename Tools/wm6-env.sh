@@ -14,11 +14,12 @@
 #
 # Steps (the recipe that is known to work for the j873 line):
 #   1. check the toolchain: Homebrew llvm + lld, iasl, nasm, python3.12
-#   2. git submodule update --init --recursive (pinned, non-tip SHAs)
-#   3. Tools/apply-j873-patches.py (two submodule patches)
-#   4. Python 3.12 venv with pip-requirements.txt plus setuptools<81
-#   5. stuart_update for MacMini2026Pkg
-#   6. build the C BaseTools and install them as the MacOs-ARM-64 extdep,
+#   2. git submodule update --init --recursive (pinned SHAs; the submodules
+#      stay clean, the fork changes live in AppleSiliconPkg/Override)
+#   3. Python 3.12 venv with pip-requirements.txt plus setuptools<81
+#   4. Tools/seed-extdeps.py (macOS host directories for the extdeps Mu does
+#      not publish for this host), then stuart_update for MacMini2026Pkg
+#   5. build the C BaseTools and install them as the MacOs-ARM-64 extdep,
 #      which the Mu-Basetools extdep does not ship
 set -eu
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -46,15 +47,15 @@ echo "== submodules"
 git submodule update --init --recursive
 git submodule status
 
-echo "== j873 submodule patches"
-python3 Tools/apply-j873-patches.py
-
 venv=${WM6_VENV:-$(dirname -- "$source_root")/venv}
 if test ! -x "$venv/bin/stuart_build"; then
     echo "== venv $venv"
     python3.12 -m venv "$venv"
     "$venv/bin/python" -m pip install -r pip-requirements.txt 'setuptools<81'
 fi
+
+echo "== extdeps"
+"$venv/bin/python" Tools/seed-extdeps.py
 
 echo "== stuart_update"
 "$venv/bin/stuart_update" -c Platform/MacMini2026Pkg/PlatformBuild.py \

@@ -9,7 +9,6 @@ test "$(git branch --show-current)" = j873 || {
     exit 1
 }
 test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
-python3 "$source_root/Tools/apply-j873-patches.py"
 venv=${AURORADBG_MU_NATIVE_VENV:-$source_root/.venv-native}
 if test ! -x "$venv/bin/stuart_build"; then
     python3.12 -m venv "$venv"

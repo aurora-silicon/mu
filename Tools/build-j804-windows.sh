@@ -40,7 +40,6 @@ test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
 case "$source_root" in
     *' '*) echo "EDK2 cannot build in a path that contains spaces" >&2; exit 1 ;;
 esac
-python3 "$source_root/Tools/apply-j873-patches.py"
 python3 "$source_root/Tools/check-j804-windows-inputs.py"
 parent=$(dirname -- "$source_root")
 venv=${WM6_VENV:-${AURORADBG_MU_NATIVE_VENV:-$parent/venv}}
