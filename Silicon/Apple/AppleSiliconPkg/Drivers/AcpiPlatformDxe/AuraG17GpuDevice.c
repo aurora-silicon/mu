@@ -127,6 +127,45 @@ OverlapsSystemMemory (
   return Overlap;
 }
 
+/* Every byte of [Base, Base + Size) is GCD Reserved memory: what MemoryPeim's
+ * EFI_RESOURCE_MEMORY_RESERVED HOB becomes, and what the memory map Windows
+ * is given reports as EfiReservedMemoryType. */
+STATIC
+BOOLEAN
+WhollyReservedMemory (
+  IN UINT64  Base,
+  IN UINT64  Size
+  )
+{
+  EFI_GCD_MEMORY_SPACE_DESCRIPTOR  *Map;
+  UINTN                            Count;
+  UINTN                            Index;
+  UINT64                           Covered;
+  UINT64                           End;
+  BOOLEAN                          Progress;
+
+  if (EFI_ERROR (gDS->GetMemorySpaceMap (&Count, &Map))) {
+    return FALSE;
+  }
+
+  Covered = Base;
+  do {
+    Progress = FALSE;
+    for (Index = 0; Index < Count; Index++) {
+      End = Map[Index].BaseAddress + Map[Index].Length;
+      if ((Map[Index].GcdMemoryType == EfiGcdMemoryTypeReserved) &&
+          (Map[Index].BaseAddress <= Covered) && (Covered < End))
+      {
+        Covered  = End;
+        Progress = TRUE;
+      }
+    }
+  } while (Progress && (Covered < Base + Size));
+
+  FreePool (Map);
+  return (BOOLEAN)(Covered >= Base + Size);
+}
+
 /* Replace the single descriptor whose minimum is placeholder n. */
 STATIC
 BOOLEAN
@@ -170,8 +209,10 @@ PatchDescriptor (
 }
 
 /* The G17 local-memory pool MemoryPeim reserved: exactly one HOB, of the v1
- * shape, 1 GiB with both ends on AURA_J813_GPU_POOL_ALIGNMENT.  (The record
- * is a multiple of 8 bytes, so HobLib's rounding leaves its size exact.) */
+ * shape, 1 GiB with both ends on AURA_J813_GPU_POOL_ALIGNMENT, inside the
+ * guest RAM MemoryPeim was given (the range Aura maps identity in its stage
+ * 2) and inside 42-bit DRAM.  (The record is a multiple of 8 bytes, so
+ * HobLib's rounding leaves its size exact.) */
 STATIC
 BOOLEAN
 ReadGpuPool (
@@ -195,7 +236,13 @@ ReadGpuPool (
       (Pool.Version != AURA_J813_GPU_POOL_VERSION) ||
       (Pool.StructureSize != sizeof (Pool)) || (Pool.Reserved != 0) ||
       (Pool.Size != AURA_J813_GPU_POOL_SIZE) ||
-      ((Pool.Base & (AURA_J813_GPU_POOL_ALIGNMENT - 1)) != 0))
+      ((Pool.Base & (AURA_J813_GPU_POOL_ALIGNMENT - 1)) != 0) ||
+      (Pool.Base < G17_DRAM_BASE) || (Pool.Base >= G17_PHYS_LIMIT) ||
+      (Pool.Size > G17_PHYS_LIMIT - Pool.Base) ||
+      (Pool.GuestMemoryTop < Pool.GuestMemoryBase) ||
+      (Pool.Base < Pool.GuestMemoryBase) ||
+      (Pool.Size > Pool.GuestMemoryTop - Pool.GuestMemoryBase) ||
+      (Pool.Base > Pool.GuestMemoryTop - Pool.Size))
   {
     return FALSE;
   }
@@ -315,6 +362,24 @@ AppleG17GpuTableAdmitted (
   if (Pooled && !ReadGpuPool (&PoolBase, &PoolSize)) {
     DEBUG ((DEBUG_ERROR, "Aura G17 GPU: no valid local-memory pool HOB; %a withheld\n", Hid));
     return FALSE;
+  }
+
+  /* Trust the HOB only as far as the GCD agrees: none of it may be memory
+   * Windows is given, all of it must be Reserved.  The six regions lie
+   * outside system memory too, so the pool is also compared with them. */
+  if (Pooled &&
+      (OverlapsSystemMemory (PoolBase, PoolSize) || !WhollyReservedMemory (PoolBase, PoolSize)))
+  {
+    DEBUG ((DEBUG_ERROR, "Aura G17 GPU: pool 0x%lx+0x%lx is not wholly reserved memory; %a withheld\n",
+            PoolBase, PoolSize, Hid));
+    return FALSE;
+  }
+
+  for (Index = 0; Pooled && (Index < G17_REGIONS); Index++) {
+    if ((PoolBase < Base[Index] + Length[Index]) && (Base[Index] < PoolBase + PoolSize)) {
+      DEBUG ((DEBUG_ERROR, "Aura G17 GPU: pool overlaps %a; %a withheld\n", mNames[Index], Hid));
+      return FALSE;
+    }
   }
 
   for (Index = 0; Index < G17_REGIONS; Index++) {
