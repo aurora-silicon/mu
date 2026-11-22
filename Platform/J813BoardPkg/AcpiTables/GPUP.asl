@@ -73,6 +73,13 @@ DefinitionBlock ("GPUP.aml", "SSDT", 2, "AURORA", "AURA817P", 1)
                 // local-memory pool (patched at boot from the pool HOB)
                 QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
                     WriteCombining, ReadWrite, 0, 0xA170006000000000, 0xA170006000003FFF, 0, 0x4000)
+                // G17G GPU ASCWrap v6 recv-not-empty IRQs (aliased in Aura hv_aic_aliases_t8142:
+                // 998 -> physical AIC 1126 gfx-mbox, 999 -> physical AIC 1130 gfx1-mbox)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive)
+                {
+                    998,
+                    999
+                }
             })
         }
     }

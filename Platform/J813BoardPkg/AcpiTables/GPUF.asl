@@ -64,6 +64,13 @@ DefinitionBlock ("GPUF.aml", "SSDT", 2, "AURORA", "AURA817F", 1)
                 // disp-4 (pmgr bandwidth scratch and doorbell)
                 QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0x382700000, 0x382813FFF, 0, 0x114000)
+                // G17G GPU ASCWrap v6 recv-not-empty IRQs (aliased in Aura hv_aic_aliases_t8142:
+                // 998 -> physical AIC 1126 gfx-mbox, 999 -> physical AIC 1130 gfx1-mbox)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive)
+                {
+                    998,
+                    999
+                }
             })
         }
     }
