@@ -14,17 +14,15 @@ diff --git a/DxeMain/DxeMain.c b/DxeMain/DxeMain.c
 index c1ad93c..2ca8c87 100644
 --- a/DxeMain/DxeMain.c
 +++ b/DxeMain/DxeMain.c
-@@ -7,6 +7,66 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+@@ -7,6 +7,20 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
  **/
  
  #include "DxeMain.h"
 +#include <Library/AppleDTLib.h>
 +
 +//
-+// J813 bring-up checkpoints.  The normal serial console is not available
-+// until well into DXE, so leave a small row of framebuffer blocks after each
-+// major DXE Core boundary.  This is intentionally write-only: it cannot alter
-+// control flow, allocate memory, or depend on Boot Services being live.
++// J813 DXE visual checkpoints disabled to eliminate laggy corner rainbow bars;
++// AURDXE01 breadcrumb gAuroraDxeTrace in Image.c remains active.
 +//
 +STATIC
 +VOID
@@ -32,56 +30,12 @@ index c1ad93c..2ca8c87 100644
 +  IN UINTN  Stage
 +  )
 +{
-+  STATIC CONST UINT32  Colors[] = {
-+    0x00FFFFFF,
-+    0x0000FFFF,
-+    0x0000FF00,
-+    0x00FFFF00,
-+    0x00FF8000,
-+    0x00FF00FF,
-+    0x00FF0000
-+  };
-+  CONST struct boot_args  *BootArgs;
-+  volatile UINT32         *Row;
-+  UINTN                   Index;
-+  UINTN                   RowIndex;
-+  UINTN                   X;
-+  UINTN                   Y;
-+  UINTN                   XStart;
-+  UINTN                   YStart;
-+
-+  if ((Stage < 0x30) || (Stage > 0x3D)) {
-+    return;
-+  }
-+
-+  BootArgs = (CONST struct boot_args *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
-+  if ((BootArgs == NULL) || (BootArgs->video.base == 0) ||
-+      (BootArgs->video.stride < sizeof (UINT32)) ||
-+      (BootArgs->video.width < 448) || (BootArgs->video.height < 160)) {
-+    return;
-+  }
-+
-+  Index    = (Stage - 0x30) % ARRAY_SIZE (Colors);
-+  RowIndex = (Stage - 0x30) / ARRAY_SIZE (Colors);
-+  XStart   = 24 + (Index * 56);
-+  YStart   = 88 + (RowIndex * 32);
-+
-+  for (Y = YStart; Y < (YStart + 24); Y++) {
-+    Row = (volatile UINT32 *)(UINTN)(
-+                                  BootArgs->video.base +
-+                                  (Y * BootArgs->video.stride)
-+                                  );
-+    for (X = XStart; X < (XStart + 48); X++) {
-+      Row[X] = Colors[Index];
-+    }
-+  }
-+
-+  MemoryFence ();
++  (VOID)Stage;
 +}
  
  //
  // DXE Core Global Variables for Protocols from PEI
-@@ -247,6 +307,8 @@ DxeMain (
+@@ -247,6 +261,8 @@ DxeMain (
    EFI_VECTOR_HANDOFF_INFO       *VectorInfo;
    VOID                          *EntryPoint;
  
@@ -90,7 +44,7 @@ index c1ad93c..2ca8c87 100644
    //
    // Setup the default exception handlers
    //
-@@ -265,6 +327,8 @@ DxeMain (
+@@ -265,6 +281,8 @@ DxeMain (
    Status = InitializeSeparateExceptionStacks (NULL, NULL);
    ASSERT_EFI_ERROR (Status);
  
@@ -99,7 +53,7 @@ index c1ad93c..2ca8c87 100644
    //
    // Initialize Debug Agent to support source level debug in DXE phase
    //
-@@ -275,6 +339,8 @@ DxeMain (
+@@ -275,6 +293,8 @@ DxeMain (
    //
    CoreInitializeMemoryServices (&HobStart, &MemoryBaseAddress, &MemoryLength);
  
@@ -108,7 +62,7 @@ index c1ad93c..2ca8c87 100644
    MemoryProfileInit (HobStart);
  
    //
-@@ -298,6 +364,8 @@ DxeMain (
+@@ -298,6 +318,8 @@ DxeMain (
    Status = CoreInitializeGcdServices (&HobStart, MemoryBaseAddress, MemoryLength);
    ASSERT_EFI_ERROR (Status);
  
@@ -117,7 +71,7 @@ index c1ad93c..2ca8c87 100644
    //
    // Allocate the EFI System Table and EFI Runtime Service Table from EfiRuntimeServicesData
    // Use the templates to initialize the contents of the EFI System Table and EFI Runtime Services Table
-@@ -319,6 +387,7 @@ DxeMain (
+@@ -319,6 +341,7 @@ DxeMain (
    // Call constructor for all libraries
    //
    ProcessLibraryConstructorList (gDxeCoreImageHandle, gDxeCoreST);
@@ -125,7 +79,7 @@ index c1ad93c..2ca8c87 100644
    PERF_CROSSMODULE_END ("PEI");
    PERF_CROSSMODULE_BEGIN ("DXE");
  
-@@ -465,6 +534,8 @@ DxeMain (
+@@ -465,6 +488,8 @@ DxeMain (
    Status = CoreInitializeEventServices ();
    ASSERT_EFI_ERROR (Status);
  
@@ -134,7 +88,7 @@ index c1ad93c..2ca8c87 100644
    //
    // Give the debug agent a chance to initialize with events.
    //
-@@ -540,6 +611,8 @@ DxeMain (
+@@ -540,6 +565,8 @@ DxeMain (
    Status = InitializeSectionExtraction (gDxeCoreImageHandle, gDxeCoreST);
    ASSERT_EFI_ERROR (Status);
  
@@ -143,7 +97,7 @@ index c1ad93c..2ca8c87 100644
    // MU_CHANGE [BEGIN] - Support all TPLs
    //
    // Produce Internal Event Services
-@@ -556,11 +629,15 @@ DxeMain (
+@@ -556,11 +583,15 @@ DxeMain (
    //
    CoreInitializeDispatcher ();
  

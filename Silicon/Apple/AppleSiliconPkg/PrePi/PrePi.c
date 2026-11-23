@@ -65,56 +65,10 @@ MuVisualCheckpoint (
   IN UINT64 Stage
   )
 {
-  STATIC CONST UINT32 Colors[] = {
-    0x00FFFFFF, // PrePi Main
-    0x0000FFFF, // HOB constructor
-    0x0000FF00, // MemoryPeim
-    0x00FFFF00, // PlatformPeim
-    0x00FF8000, // Library constructors
-    0x00FF00FF, // FV decompressed
-    0x00FF0000  // Entering DXE Core
-  };
-  UINTN          Index;
-  UINTN          RowIndex;
-  UINTN          X;
-  UINTN          Y;
-  UINTN          XStart;
-  UINTN          YStart;
-  volatile UINT32 *Row;
-
-  if ((gMuFrameBufferBase == 0) ||
-      (gMuFrameBufferStride < sizeof (UINT32)) ||
-      (gMuFrameBufferWidth < 448) ||
-      (gMuFrameBufferHeight < 96)) {
-    return;
-  }
-
-  if ((Stage >= 0x10) && (Stage <= 0x16)) {
-    Index    = (UINTN)(Stage - 0x10);
-    RowIndex = 0;
-  } else if ((Stage >= 0x20) && (Stage <= 0x26)) {
-    Index    = (UINTN)(Stage - 0x20);
-    RowIndex = 1;
-  } else {
-    return;
-  }
-
-  XStart = 24 + (Index * 56);
-  YStart = 24 + (RowIndex * 32);
-
-  // Two rows of seven 48x24 blocks in the upper-left corner. The first row is
-  // PrePi; the second row is the DXE loader and entry-point handoff.
-  for (Y = YStart; Y < (YStart + 24); Y++) {
-    Row = (volatile UINT32 *)(UINTN)(
-                                  gMuFrameBufferBase +
-                                  (Y * gMuFrameBufferStride)
-                                  );
-    for (X = XStart; X < (XStart + 48); X++) {
-      Row[X] = Colors[Index];
-    }
-  }
-
-  ArmDataMemoryBarrier ();
+  // Disabled: drawing corner rainbow blocks directly to the uncached
+  // framebuffer during early PrePi/DXE bring-up caused visible stutter and
+  // corner artifacts on boot. In-memory gMuCheckpoint.Stage remains active.
+  (VOID)Stage;
 }
 
 STATIC

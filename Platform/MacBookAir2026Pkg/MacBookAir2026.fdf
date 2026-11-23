@@ -132,7 +132,7 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
   DEFINE PLATFORM_ENABLE_TYPEC = TRUE
   DEFINE PLATFORM_ENABLE_MTP_HID = BUILD_FLAG
   DEFINE PLATFORM_ENABLE_SERIAL_DXE = TRUE
-  DEFINE PLATFORM_ENABLE_COLORBARS = TRUE
+  DEFINE PLATFORM_ENABLE_COLORBARS = FALSE
   DEFINE PLATFORM_ENABLE_GENERIC_ACPI = TRUE
 
   !include AppleSiliconPkg/AppleSiliconFvMain.fdf.inc
@@ -356,6 +356,7 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
 #}
 
 !include AppleSiliconPkg/FrontpageFdf.inc
+  INF AppleSiliconPkg/Application/AuroraBios/AuroraBios.inf
 
 [FV.FVMAIN_COMPACT]
 FvAlignment        = 16

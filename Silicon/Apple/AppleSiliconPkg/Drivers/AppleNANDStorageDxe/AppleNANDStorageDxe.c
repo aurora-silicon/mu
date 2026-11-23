@@ -80,58 +80,9 @@ AnsVisualCheckpoint (
   IN UINT64  Stage
   )
 {
-  STATIC CONST UINT64  Stages[] = {
-    0x200, 0x210, 0x220, 0x230, 0x240, 0x250, 0x260,
-    0x270, 0x280, 0x290, 0x2A0, 0x2B0, 0x2C0, 0x2D0,
-    0x2FF
-  };
-  STATIC CONST UINT32  Colors[] = {
-    0x00FFFFFF,
-    0x0000FFFF,
-    0x0000FF00,
-    0x00FFFF00,
-    0x00FF8000,
-    0x00FF00FF,
-    0x00FF0000
-  };
-  CONST struct boot_args  *BootArgs;
-  volatile UINT32         *Row;
-  UINTN                   Index;
-  UINTN                   X;
-  UINTN                   Y;
-  UINTN                   XStart;
-  UINTN                   YStart;
-
-  for (Index = 0; Index < ARRAY_SIZE (Stages); Index++) {
-    if (Stages[Index] == Stage) {
-      break;
-    }
-  }
-
-  if (Index == ARRAY_SIZE (Stages)) {
-    return;
-  }
-
-  BootArgs = (CONST struct boot_args *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
-  if ((BootArgs == NULL) || (BootArgs->video.base == 0) ||
-      (BootArgs->video.stride < sizeof (UINT32)) ||
-      (BootArgs->video.width < 448) || (BootArgs->video.height < 224)) {
-    return;
-  }
-
-  XStart = 24 + ((Index % ARRAY_SIZE (Colors)) * 56);
-  YStart = 152 + ((Index / ARRAY_SIZE (Colors)) * 32);
-  for (Y = YStart; Y < (YStart + 24); Y++) {
-    Row = (volatile UINT32 *)(UINTN)(
-                                  BootArgs->video.base +
-                                  (Y * BootArgs->video.stride)
-                                  );
-    for (X = XStart; X < (XStart + 48); X++) {
-      Row[X] = Colors[Index % ARRAY_SIZE (Colors)];
-    }
-  }
-
-  ArmDataMemoryBarrier ();
+  // Disabled: avoid slow uncached rainbow corner blocks on boot; persistent
+  // FD telemetry record mFdAnsCheckpoint->Stage remains active.
+  (VOID)Stage;
 }
 
 STATIC

@@ -199,8 +199,41 @@ STATIC UINT32 *SimpleFbRow(IN UINTN LogicalY, IN UINT32 Scale, IN UINTN SubY)
 }
 
 /*
- * Software blt for the scaled modes. Coordinates and extents arrive in logical
- * (scaled-down) pixels; every write fans out to a Scale x Scale block.
+ * Cached RAM scanline staging buffer for fast burst writes to the Normal-NC
+ * framebuffer. Staging a full row in L1-cached RAM and copying with CopyMem /
+ * 64-bit stores allows ARM64 write-combining to emit 64-byte bursts instead of
+ * stalling on per-pixel 32-bit stores (and avoids FrameBufferBltLib's slow
+ * generic bitmask shift path on Apple's 30-bit X2R10G10B10 panel).
+ */
+#define SIMPLEFB_MAX_LINE_PIXELS 8192
+STATIC UINT32 mLineBuf[SIMPLEFB_MAX_LINE_PIXELS];
+
+STATIC VOID SimpleFbFillRowFast(OUT UINT32 *Dst, IN UINTN Pixels, IN UINT32 Raw)
+{
+  UINT64 Pair = ((UINT64)Raw << 32) | (UINT64)Raw;
+
+  if (Pixels == 0)
+    return;
+
+  if (((UINTN)Dst & 7) != 0) {
+    *Dst++ = Raw;
+    Pixels--;
+  }
+
+  if (Pixels >= 2) {
+    UINTN Pairs = Pixels >> 1;
+    SetMem64(Dst, Pairs * sizeof(UINT64), Pair);
+    Dst += Pairs << 1;
+    Pixels &= 1;
+  }
+
+  if (Pixels != 0)
+    *Dst = Raw;
+}
+
+/*
+ * Fast burst software blt for both native (Scale == 1) and integer-scaled
+ * modes. Coordinates and extents arrive in logical pixels.
  */
 STATIC EFI_STATUS SimpleFbScaledBlt(
     IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *BltBuffer,
@@ -210,48 +243,103 @@ STATIC EFI_STATUS SimpleFbScaledBlt(
 {
   UINTN DeltaPixels;
   UINTN X, Y, SubX, SubY;
+  UINTN OutWidth;
+  UINTN LogW, LogH;
 
   if (Width == 0 || Height == 0)
     return EFI_SUCCESS;
 
+  LogW = mNativeWidth / Scale;
+  LogH = mNativeHeight / Scale;
+
+  if (DestinationX > LogW || Width > LogW - DestinationX ||
+      DestinationY > LogH || Height > LogH - DestinationY)
+    return EFI_INVALID_PARAMETER;
+
+  if ((BltOperation == EfiBltVideoToVideo ||
+       BltOperation == EfiBltVideoToBltBuffer) &&
+      (SourceX > LogW || Width > LogW - SourceX ||
+       SourceY > LogH || Height > LogH - SourceY))
+    return EFI_INVALID_PARAMETER;
+
   DeltaPixels = (Delta == 0)
                     ? Width
                     : Delta / sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
+  OutWidth = Width * Scale;
 
   switch (BltOperation) {
   case EfiBltVideoFill: {
     UINT32 Raw = SimpleFbEncodePixel(BltBuffer);
 
+    if (Scale == 1 && DestinationX == 0 && Width == mNativeStridePixels) {
+      SimpleFbFillRowFast(SimpleFbRow(DestinationY, 1, 0),
+                          Width * Height, Raw);
+      break;
+    }
+
     for (Y = 0; Y < Height; Y++) {
       for (SubY = 0; SubY < Scale; SubY++) {
         UINT32 *Row = SimpleFbRow(DestinationY + Y, Scale, SubY) +
                       DestinationX * Scale;
-
-        for (X = 0; X < Width * Scale; X++)
-          Row[X] = Raw;
+        SimpleFbFillRowFast(Row, OutWidth, Raw);
       }
     }
     break;
   }
 
-  case EfiBltBufferToVideo:
+  case EfiBltBufferToVideo: {
+    BOOLEAN UseStage = (OutWidth <= SIMPLEFB_MAX_LINE_PIXELS);
+    UINTN   RowBytes = OutWidth * sizeof(UINT32);
+
     for (Y = 0; Y < Height; Y++) {
       EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Source =
           BltBuffer + (SourceY + Y) * DeltaPixels + SourceX;
 
-      for (SubY = 0; SubY < Scale; SubY++) {
-        UINT32 *Row = SimpleFbRow(DestinationY + Y, Scale, SubY) +
-                      DestinationX * Scale;
+      if (UseStage) {
+        if (Scale == 1) {
+          if (mNativeDepth == 30) {
+            for (X = 0; X < Width; X++) {
+              UINT32 R = ((UINT32)Source[X].Red << 2) | (UINT32)(Source[X].Red >> 6);
+              UINT32 G = ((UINT32)Source[X].Green << 2) | (UINT32)(Source[X].Green >> 6);
+              UINT32 B = ((UINT32)Source[X].Blue << 2) | (UINT32)(Source[X].Blue >> 6);
+              mLineBuf[X] = (R << 20) | (G << 10) | B;
+            }
+          } else {
+            for (X = 0; X < Width; X++) {
+              mLineBuf[X] = ((UINT32)Source[X].Red << 16) |
+                            ((UINT32)Source[X].Green << 8) |
+                            (UINT32)Source[X].Blue;
+            }
+          }
+        } else {
+          UINT32 *Out = mLineBuf;
+          for (X = 0; X < Width; X++) {
+            UINT32 Raw = SimpleFbEncodePixel(&Source[X]);
+            for (SubX = 0; SubX < Scale; SubX++)
+              *Out++ = Raw;
+          }
+        }
 
-        for (X = 0; X < Width; X++) {
-          UINT32 Raw = SimpleFbEncodePixel(&Source[X]);
+        for (SubY = 0; SubY < Scale; SubY++) {
+          UINT32 *Row = SimpleFbRow(DestinationY + Y, Scale, SubY) +
+                        DestinationX * Scale;
+          CopyMem(Row, mLineBuf, RowBytes);
+        }
+      } else {
+        for (SubY = 0; SubY < Scale; SubY++) {
+          UINT32 *Row = SimpleFbRow(DestinationY + Y, Scale, SubY) +
+                        DestinationX * Scale;
 
-          for (SubX = 0; SubX < Scale; SubX++)
-            Row[X * Scale + SubX] = Raw;
+          for (X = 0; X < Width; X++) {
+            UINT32 Raw = SimpleFbEncodePixel(&Source[X]);
+            for (SubX = 0; SubX < Scale; SubX++)
+              Row[X * Scale + SubX] = Raw;
+          }
         }
       }
     }
     break;
+  }
 
   case EfiBltVideoToBltBuffer:
     for (Y = 0; Y < Height; Y++) {
@@ -259,13 +347,20 @@ STATIC EFI_STATUS SimpleFbScaledBlt(
       EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Destination =
           BltBuffer + (DestinationY + Y) * DeltaPixels + DestinationX;
 
-      /* Every block is uniform, so the top-left sample is the whole story. */
-      for (X = 0; X < Width; X++)
-        SimpleFbDecodePixel(Row[X * Scale], &Destination[X]);
+      if (Scale == 1 && OutWidth <= SIMPLEFB_MAX_LINE_PIXELS) {
+        CopyMem(mLineBuf, Row, OutWidth * sizeof(UINT32));
+        for (X = 0; X < Width; X++)
+          SimpleFbDecodePixel(mLineBuf[X], &Destination[X]);
+      } else {
+        /* Every block is uniform, so the top-left sample is the whole story. */
+        for (X = 0; X < Width; X++)
+          SimpleFbDecodePixel(Row[X * Scale], &Destination[X]);
+      }
     }
     break;
 
-  case EfiBltVideoToVideo:
+  case EfiBltVideoToVideo: {
+    UINTN RowBytes = OutWidth * sizeof(UINT32);
     /*
      * Console scrolling overlaps source and destination, so walk whichever
      * direction keeps the copy from eating its own input.
@@ -279,16 +374,11 @@ STATIC EFI_STATUS SimpleFbScaledBlt(
         UINT32 *To = SimpleFbRow(DestinationY + Line, Scale, SubY) +
                      DestinationX * Scale;
 
-        if (DestinationX > SourceX) {
-          for (X = Width * Scale; X > 0; X--)
-            To[X - 1] = From[X - 1];
-        } else {
-          for (X = 0; X < Width * Scale; X++)
-            To[X] = From[X];
-        }
+        CopyMem(To, From, RowBytes);
       }
     }
     break;
+  }
 
   default:
     return EFI_INVALID_PARAMETER;
@@ -417,21 +507,18 @@ DisplayBlt(
   // buffer. We would not want a timer based event (Cursor, ...) to come in
   // while we are doing this operation.
   //
+  if (BltOperation != EfiBltVideoToVideo && BltBuffer == NULL)
+    return EFI_INVALID_PARAMETER;
+
   Tpl = gBS->RaiseTPL(TPL_NOTIFY);
 
-  if (mModeScale[This->Mode->Mode] == 1) {
-    Status = FrameBufferBlt(
-        mFrameBufferBltLibConfigure, BltBuffer, BltOperation, SourceX, SourceY,
-        DestinationX, DestinationY, Width, Height, Delta);
-  } else {
-    Status = SimpleFbScaledBlt(
-        BltBuffer, BltOperation, SourceX, SourceY, DestinationX, DestinationY,
-        Width, Height, Delta, mModeScale[This->Mode->Mode]);
-  }
+  Status = SimpleFbScaledBlt(
+      BltBuffer, BltOperation, SourceX, SourceY, DestinationX, DestinationY,
+      Width, Height, Delta, mModeScale[This->Mode->Mode]);
 
   gBS->RestoreTPL(Tpl);
 
-  return RETURN_ERROR(Status) ? EFI_INVALID_PARAMETER : EFI_SUCCESS;
+  return EFI_ERROR(Status) ? Status : EFI_SUCCESS;
 }
 
 

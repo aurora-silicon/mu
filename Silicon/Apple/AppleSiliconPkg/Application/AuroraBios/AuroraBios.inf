@@ -1,0 +1,65 @@
+## @file
+#  Aurora Silicon Gaming UEFI BIOS Application.
+#
+#  Interactive Mouse + Keyboard gaming-style UEFI BIOS for Apple Silicon M5
+#  (J813) with double-buffered dirty-rect GOP compositing, live hardware
+#  telemetry, UEFI Boot Manager priority editor, and NVRAM + ESP persistence.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = AuroraBios
+  FILE_GUID                      = 8F3C9A10-4D2B-4E7A-91C5-3A8E7D2F01B4
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = AuroraBiosEntryPoint
+
+[Sources]
+  AuroraBios.c
+  AuroraBiosCore.c
+  AuroraBiosConfig.h
+  AuroraBiosFont.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  PcBdsPkg/PcBdsPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  MemoryAllocationLib
+  PcdLib
+  PrintLib
+  UefiApplicationEntryPoint
+  UefiBootManagerLib
+  UefiBootServicesTableLib
+  UefiLib
+  UefiRuntimeServicesTableLib
+
+[Guids]
+  gEfiGlobalVariableGuid
+
+[Protocols]
+  gEfiAbsolutePointerProtocolGuid
+  gEfiBlockIoProtocolGuid
+  gEfiGraphicsOutputProtocolGuid
+  gEfiLoadedImageProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiSimplePointerProtocolGuid
+  gEfiSimpleTextInputExProtocolGuid
+  gEfiUsbIoProtocolGuid
+
+[Pcd]
+  gArmTokenSpaceGuid.PcdSystemMemorySize
+  gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleJ813GpuLocalPool
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwareVersionString
+  gPcBdsPkgTokenSpaceGuid.PcdShellFile

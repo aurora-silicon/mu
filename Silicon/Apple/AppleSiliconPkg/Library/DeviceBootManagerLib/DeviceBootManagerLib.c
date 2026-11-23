@@ -19,7 +19,9 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Guid/DfciPacketHeader.h>
 
 #include <Protocol/OnScreenKeyboard.h>
+#include <Protocol/SimpleFileSystem.h>
 #include <Protocol/TpmPpProtocol.h>
+#include "../../Application/AuroraBios/AuroraBiosConfig.h"
 
 #include <Library/BaseMemoryLib.h>
 #include <Library/ConsoleMsgLib.h>
@@ -1101,6 +1103,141 @@ DeviceBootManagerProcessBootCompletion (
   return;
 }
 
+STATIC
+UINT32
+AuroraBdsCrc32 (
+  IN CONST VOID  *Data,
+  IN UINTN       Length
+  )
+{
+  CONST UINT8  *Bytes = (CONST UINT8 *)Data;
+  UINT32       Crc    = 0xFFFFFFFFu;
+  UINTN        I;
+  UINTN        Bit;
+
+  for (I = 0; I < Length; I++) {
+    Crc ^= (UINT32)Bytes[I];
+    for (Bit = 0; Bit < 8; Bit++) {
+      Crc = ((Crc & 1u) != 0) ? ((Crc >> 1) ^ 0xEDB88320u) : (Crc >> 1);
+    }
+  }
+  return ~Crc;
+}
+
+STATIC
+BOOLEAN
+AuroraKeyRequestsBios (
+  IN CONST EFI_INPUT_KEY  *Key
+  )
+{
+  if (Key->ScanCode == SCAN_F2 || Key->ScanCode == SCAN_DELETE || Key->ScanCode == SCAN_ESC) {
+    return TRUE;
+  }
+  if (Key->UnicodeChar == L'b' || Key->UnicodeChar == L'B') {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+STATIC
+BOOLEAN
+AuroraLoadEspBiosConfig (
+  OUT AURORA_BIOS_CONFIG  *Cfg
+  )
+{
+  EFI_HANDLE  *Handles = NULL;
+  UINTN       Count    = 0;
+  UINTN       I;
+  BOOLEAN     Found    = FALSE;
+
+  if (EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiSimpleFileSystemProtocolGuid, NULL, &Count, &Handles)) || Count == 0) {
+    return FALSE;
+  }
+
+  for (I = 0; I < Count && !Found; I++) {
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs   = NULL;
+    EFI_FILE_PROTOCOL                *Root = NULL;
+    EFI_FILE_PROTOCOL                *File = NULL;
+    AURORA_BIOS_CONFIG               Tmp;
+    UINTN                            Sz    = sizeof (Tmp);
+
+    if (EFI_ERROR (gBS->HandleProtocol (Handles[I], &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs)) || Fs == NULL) {
+      continue;
+    }
+    if (EFI_ERROR (Fs->OpenVolume (Fs, &Root)) || Root == NULL) {
+      continue;
+    }
+    if (!EFI_ERROR (Root->Open (Root, &File, AURORA_BIOS_CONFIG_ESP_PATH, EFI_FILE_MODE_READ, 0)) && File != NULL) {
+      ZeroMem (&Tmp, sizeof (Tmp));
+      if (!EFI_ERROR (File->Read (File, &Sz, &Tmp)) &&
+          Sz == sizeof (Tmp) &&
+          Tmp.Magic == AURORA_BIOS_CONFIG_MAGIC &&
+          Tmp.Version == AURORA_BIOS_CONFIG_VERSION &&
+          Tmp.Crc32 == AuroraBdsCrc32 (&Tmp, OFFSET_OF (AURORA_BIOS_CONFIG, Crc32))) {
+        CopyMem (Cfg, &Tmp, sizeof (Tmp));
+        Found = TRUE;
+      }
+      File->Close (File);
+    }
+    Root->Close (Root);
+  }
+
+  FreePool (Handles);
+  return Found;
+}
+
+STATIC
+BOOLEAN
+AuroraCheckBiosBootRequest (
+  VOID
+  )
+{
+  EFI_INPUT_KEY       Key;
+  AURORA_BIOS_CONFIG  Cfg;
+  UINT32              TimeoutMs = 0;
+  UINT32              ElapsedMs = 0;
+
+  // 1. Always check pending boot hotkey (F2 / DEL / ESC / B) with zero delay.
+  if (gST->ConIn != NULL) {
+    while (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
+      if (AuroraKeyRequestsBios (&Key)) {
+        DEBUG ((DEBUG_INFO, "[Bds] Aurora BIOS hotkey detected (scan=0x%x ch=0x%x)\n", Key.ScanCode, Key.UnicodeChar));
+        return TRUE;
+      }
+    }
+  }
+
+  // 2. Consult persistent ESP config if present. Default BootTimeoutSec=0 keeps
+  // unattended boots instantaneous (0 ms wait).
+  if (AuroraLoadEspBiosConfig (&Cfg)) {
+    if (Cfg.EnterBiosOnce != 0 || Cfg.DefaultBootTarget == AURORA_BOOT_TARGET_BIOS) {
+      DEBUG ((DEBUG_INFO, "[Bds] Aurora BIOS entry requested by persistent config\n"));
+      return TRUE;
+    }
+    if (Cfg.BootTimeoutSec > 0 && Cfg.BootTimeoutSec <= 10) {
+      TimeoutMs = Cfg.BootTimeoutSec * 1000u;
+    }
+  }
+
+  if (TimeoutMs > 0 && gST->ConIn != NULL) {
+    Print (L"\r\n  [AURORA UEFI BIOS] Press F2 / DEL / ESC for Setup (%u s)... ", TimeoutMs / 1000u);
+    while (ElapsedMs < TimeoutMs) {
+      if (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
+        if (AuroraKeyRequestsBios (&Key)) {
+          return TRUE;
+        }
+        if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN || Key.UnicodeChar == L' ') {
+          break;
+        }
+      }
+      gBS->Stall (50000); // 50 ms poll slice
+      ElapsedMs += 50;
+    }
+  }
+
+  return FALSE;
+}
+
 /**
  * Check for HardKeys during boot.  If the hard keys are pressed, builds
  * a boot option for the specific hard key setting.
@@ -1123,7 +1260,7 @@ DeviceBootManagerPriorityBoot (
   BOOLEAN     AltDeviceBoot;
   EFI_STATUS  Status = EFI_SUCCESS;
 
-  FrontPageBoot = MsBootPolicyLibIsSettingsBoot ();
+  FrontPageBoot = MsBootPolicyLibIsSettingsBoot () || AuroraCheckBiosBootRequest ();
   UFPBoot = FALSE;
   AltDeviceBoot = MsBootPolicyLibIsAltBoot ();
   MsBootPolicyLibClearBootRequests ();

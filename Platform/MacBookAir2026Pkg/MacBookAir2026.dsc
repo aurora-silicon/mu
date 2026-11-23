@@ -237,6 +237,7 @@ J813BoardPkg/AcpiTables/DeviceAcpiTables.inf
 #
 MdeModulePkg/Application/HelloWorld/HelloWorld.inf
 AppleSiliconPkg/Application/StorageProbe/StorageProbe.inf
+AppleSiliconPkg/Application/AuroraBios/AuroraBios.inf
 
 #
 # Deliberately after the !includes: the last assignment wins, and the family
@@ -273,6 +274,10 @@ AppleSiliconPkg/Application/StorageProbe/StorageProbe.inf
 #
 [PcdsFixedAtBuild.common]
   gAppleSiliconPkgTokenSpaceGuid.PcdConsoleScaleDivisor|1
+  # Use Aurora Silicon Gaming UEFI BIOS (8F3C9A10-4D2B-4E7A-91C5-3A8E7D2F01B4)
+  # as the interactive Boot Manager Menu / Firmware Setup UI on J813.
+  gEfiMdeModulePkgTokenSpaceGuid.PcdBootManagerMenuFile|{ 0x10, 0x9A, 0x3C, 0x8F, 0x2B, 0x4D, 0x7A, 0x4E, 0x91, 0xC5, 0x3A, 0x8E, 0x7D, 0x2F, 0x01, 0xB4 }
+  gAppleSiliconPkgTokenSpaceGuid.PcdUIApplicationFile|{ 0x10, 0x9A, 0x3C, 0x8F, 0x2B, 0x4D, 0x7A, 0x4E, 0x91, 0xC5, 0x3A, 0x8E, 0x7D, 0x2F, 0x01, 0xB4 }
 
 !if $(NTASI_AURA_WINDOWS) == TRUE
   [LibraryClasses.AARCH64]
