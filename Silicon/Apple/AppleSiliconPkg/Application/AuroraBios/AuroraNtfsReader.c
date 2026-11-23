@@ -4,10 +4,11 @@
   Supports:
   - 512-byte and 4096-byte logical sectors (including Apple ANS2 4 KiB NVMe)
   - NTFS Update Sequence Array (USA) fixup restoration for FILE & INDX records
+  - Fragmented $MFT (including $ATTRIBUTE_LIST extension records & up to 2048 runs)
   - Resident and non-resident attributes with multi-extent signed data runs
-  - $ATTRIBUTE_LIST (0x20) extension MFT records (both resident & non-resident)
+  - $ATTRIBUTE_LIST (0x20) extension MFT records with exact LowestVcn matching
   - Directory traversal across $INDEX_ROOT (0x90) and $INDEX_ALLOCATION (0xA0)
-  - Case-insensitive ASCII/UTF-16LE filename matching
+  - Automatic HIDF .bin discovery inside a directory
 
   Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -22,13 +23,16 @@
 #define NTFS_FREE(Ptr)       free (Ptr)
 #define NTFS_ZERO(Ptr, Sz)   memset ((Ptr), 0, (Sz))
 #define NTFS_COPY(D, S, Sz)  memcpy ((D), (S), (Sz))
+#define NTFS_LOG(...)        do { } while (0)
 #else
 #include <Library/BaseMemoryLib.h>
+#include <Library/DebugLib.h>
 #include <Library/MemoryAllocationLib.h>
 #define NTFS_ALLOC(Sz)       AllocatePool (Sz)
 #define NTFS_FREE(Ptr)       FreePool (Ptr)
 #define NTFS_ZERO(Ptr, Sz)   ZeroMem ((Ptr), (Sz))
 #define NTFS_COPY(D, S, Sz)  CopyMem ((D), (S), (Sz))
+#define NTFS_LOG(...)        DEBUG ((DEBUG_ERROR, __VA_ARGS__))
 #endif
 
 #define NTFS_ATTR_ATTRIBUTE_LIST    0x20u
@@ -40,15 +44,15 @@
 #define NTFS_MFT_RECORD_MFT         0ULL
 #define NTFS_MFT_RECORD_ROOT        5ULL
 
-#define NTFS_MAX_RUNS               256u
+#define NTFS_MAX_RUNS               2048u
 #define NTFS_MAX_MFT_RECORD_SIZE    4096u
 #define NTFS_MAX_INDEX_BLOCK_SIZE   16384u
-#define NTFS_MAX_ATTR_LIST_SIZE     (64u * 1024u)
-#define NTFS_MAX_INDEX_ALLOC_SIZE   (8u * 1024u * 1024u)
+#define NTFS_MAX_ATTR_LIST_SIZE     (128u * 1024u)
+#define NTFS_MAX_INDEX_ALLOC_SIZE   (16u * 1024u * 1024u)
 
 typedef struct {
-  UINT64  Lcn;        // Logical Cluster Number (0 with Sparse=TRUE for sparse run)
-  UINT64  Length;     // Cluster count
+  UINT64  Lcn;
+  UINT64  Length;
   BOOLEAN Sparse;
 } NTFS_DATA_RUN;
 
@@ -61,7 +65,7 @@ typedef struct {
   UINT32               MftRecordSize;
   UINT32               IndexBlockSize;
   UINT64               MftStartLcn;
-  NTFS_DATA_RUN        MftRuns[NTFS_MAX_RUNS];
+  NTFS_DATA_RUN        *MftRuns;
   UINT32               MftRunCount;
 } NTFS_VOL;
 
@@ -129,6 +133,18 @@ MatchUtf16AsciiInsensitive (
 }
 
 static BOOLEAN
+EndsWithBinUtf16 (
+  const UINT8  *Utf16Le,
+  UINTN        CharCount
+  )
+{
+  if (CharCount < 5u) {
+    return FALSE;
+  }
+  return MatchUtf16AsciiInsensitive (Utf16Le + (CharCount - 4u) * 2u, 4u, ".bin", 4u);
+}
+
+static BOOLEAN
 IsPowerOfTwo32 (
   UINT32  V
   )
@@ -136,7 +152,6 @@ IsPowerOfTwo32 (
   return (V != 0u) && ((V & (V - 1u)) == 0u);
 }
 
-// Restore NTFS Update Sequence Array (USA) fixups in a FILE or INDX record.
 static BOOLEAN
 ApplyUsaFixup (
   UINT8   *Buf,
@@ -175,21 +190,20 @@ ApplyUsaFixup (
   return TRUE;
 }
 
-// Decode NTFS non-resident mapping pairs (data runs) into OutRuns.
 static BOOLEAN
-DecodeDataRuns (
+DecodeDataRunsAppend (
   const UINT8    *RunData,
   UINT32         RunDataLen,
   NTFS_DATA_RUN  *OutRuns,
   UINT32         MaxRuns,
-  UINT32         *OutCount
+  UINT32         *InOutCount
   )
 {
   UINT32  Pos        = 0;
-  UINT32  Count      = 0;
+  UINT32  Count      = *InOutCount;
+  UINT32  Added      = 0;
   INT64   CurrentLcn = 0;
 
-  *OutCount = 0;
   while (Pos < RunDataLen) {
     UINT8   Header = RunData[Pos++];
     UINT32  LenBytes;
@@ -223,13 +237,13 @@ DecodeDataRuns (
       OutRuns[Count].Length = RunLen;
       OutRuns[Count].Sparse = TRUE;
       Count++;
+      Added++;
       continue;
     }
 
     for (I = 0; I < OffBytes; I++) {
       RunOff |= ((INT64)((UINT64)RunData[Pos + I] << (I * 8u)));
     }
-    // Sign-extend RunOff
     if ((RunData[Pos + OffBytes - 1u] & 0x80u) != 0u && OffBytes < 8u) {
       RunOff |= (INT64)(~0ULL << (OffBytes * 8u));
     }
@@ -243,13 +257,13 @@ DecodeDataRuns (
     OutRuns[Count].Length = RunLen;
     OutRuns[Count].Sparse = FALSE;
     Count++;
+    Added++;
   }
 
-  *OutCount = Count;
-  return (Count > 0u);
+  *InOutCount = Count;
+  return (Added > 0u);
 }
 
-// Read bytes from an ordered list of data runs starting at ByteOffset.
 static BOOLEAN
 ReadFromRuns (
   const NTFS_VOL       *Vol,
@@ -293,7 +307,6 @@ ReadFromRuns (
   return (Done == Length);
 }
 
-// Read & USA-fixup an MFT record by index.
 static BOOLEAN
 ReadMftRecord (
   const NTFS_VOL  *Vol,
@@ -303,7 +316,7 @@ ReadMftRecord (
 {
   UINT64  ByteOff = RecordIndex * (UINT64)Vol->MftRecordSize;
 
-  if (Vol->MftRunCount > 0u) {
+  if (Vol->MftRuns != NULL && Vol->MftRunCount > 0u) {
     if (!ReadFromRuns (Vol, Vol->MftRuns, Vol->MftRunCount, ByteOff, OutRecord, Vol->MftRecordSize)) {
       return FALSE;
     }
@@ -314,20 +327,21 @@ ReadMftRecord (
     }
   }
 
-  // Must have 'FILE' signature
   if (OutRecord[0] != 'F' || OutRecord[1] != 'I' || OutRecord[2] != 'L' || OutRecord[3] != 'E') {
     return FALSE;
   }
   return ApplyUsaFixup (OutRecord, Vol->MftRecordSize);
 }
 
-// Find an attribute in a single MFT record (optionally matching empty name only).
+// Find an attribute in a single MFT record, optionally matching a required LowestVcn (for non-resident extents).
 static const UINT8 *
-FindAttrInRecord (
+FindAttrInRecordVcn (
   const UINT8  *Record,
   UINT32       RecordSize,
   UINT32       AttrType,
   BOOLEAN      RequireUnnamed,
+  BOOLEAN      MatchLowestVcn,
+  UINT64       ExpectedLowestVcn,
   UINT32       *OutAttrLen
   )
 {
@@ -351,17 +365,24 @@ FindAttrInRecord (
     }
     NameLen = Record[Off + 9u];
     if (Type == AttrType && (!RequireUnnamed || NameLen == 0u)) {
-      if (OutAttrLen != NULL) {
-        *OutAttrLen = Len;
+      if (!MatchLowestVcn) {
+        if (OutAttrLen != NULL) {
+          *OutAttrLen = Len;
+        }
+        return Record + Off;
       }
-      return Record + Off;
+      if (Record[Off + 8u] != 0u && Len >= 64u && RdLe64 (Record + Off + 16u) == ExpectedLowestVcn) {
+        if (OutAttrLen != NULL) {
+          *OutAttrLen = Len;
+        }
+        return Record + Off;
+      }
     }
     Off += Len;
   }
   return NULL;
 }
 
-// Read the entire payload of a single attribute (resident or non-resident) into a newly allocated buffer.
 static BOOLEAN
 ReadAttributePayload (
   const NTFS_VOL  *Vol,
@@ -409,7 +430,6 @@ ReadAttributePayload (
     if (AttrLen < 64u) {
       return FALSE;
     }
-    // Reject compressed or encrypted attributes (flags bits 0x0001 | 0x4000)
     if ((RdLe16 (Attr + 12u) & 0x4001u) != 0u) {
       return FALSE;
     }
@@ -423,7 +443,7 @@ ReadAttributePayload (
     if (Runs == NULL) {
       return FALSE;
     }
-    if (!DecodeDataRuns (Attr + RunOff, AttrLen - RunOff, Runs, NTFS_MAX_RUNS, &RunCount)) {
+    if (!DecodeDataRunsAppend (Attr + RunOff, AttrLen - RunOff, Runs, NTFS_MAX_RUNS, &RunCount)) {
       NTFS_FREE (Runs);
       return FALSE;
     }
@@ -447,8 +467,6 @@ ReadAttributePayload (
   }
 }
 
-// Collect an attribute (including across $ATTRIBUTE_LIST extension records if present).
-// Handles multi-extent non-resident attributes split across attribute list entries!
 static BOOLEAN
 ReadMftAttributeFull (
   const NTFS_VOL  *Vol,
@@ -460,32 +478,30 @@ ReadMftAttributeFull (
   UINTN           *OutSize
   )
 {
-  UINT32       AttrLen = 0;
+  UINT32       AttrLen       = 0;
   const UINT8  *Attr;
   const UINT8  *AttrListAttr;
-  UINT32       AttrListLen = 0;
-  UINT8        *AttrListBuf = NULL;
-  UINTN        AttrListSize = 0;
-  UINT8        *ExtRec      = NULL;
-  UINT8        *ResultBuf   = NULL;
-  UINTN        TotalSize    = 0;
+  UINT32       AttrListLen   = 0;
+  UINT8        *AttrListBuf  = NULL;
+  UINTN        AttrListSize  = 0;
+  UINT8        *ExtRec       = NULL;
+  UINT8        *ResultBuf    = NULL;
+  UINTN        TotalSize     = 0;
   BOOLEAN      HaveTotalSize = FALSE;
   UINTN        Pos;
 
   *OutBuf  = NULL;
   *OutSize = 0;
 
-  // Fast path: check base record directly if no $ATTRIBUTE_LIST is present
-  AttrListAttr = FindAttrInRecord (BaseRecord, Vol->MftRecordSize, NTFS_ATTR_ATTRIBUTE_LIST, FALSE, &AttrListLen);
+  AttrListAttr = FindAttrInRecordVcn (BaseRecord, Vol->MftRecordSize, NTFS_ATTR_ATTRIBUTE_LIST, FALSE, FALSE, 0ULL, &AttrListLen);
   if (AttrListAttr == NULL) {
-    Attr = FindAttrInRecord (BaseRecord, Vol->MftRecordSize, AttrType, RequireUnnamed, &AttrLen);
+    Attr = FindAttrInRecordVcn (BaseRecord, Vol->MftRecordSize, AttrType, RequireUnnamed, FALSE, 0ULL, &AttrLen);
     if (Attr == NULL) {
       return FALSE;
     }
     return ReadAttributePayload (Vol, Attr, AttrLen, MaxBytes, OutBuf, OutSize);
   }
 
-  // Slow path: walk $ATTRIBUTE_LIST entries matching AttrType
   if (!ReadAttributePayload (Vol, AttrListAttr, AttrListLen, NTFS_MAX_ATTR_LIST_SIZE, &AttrListBuf, &AttrListSize)) {
     return FALSE;
   }
@@ -495,7 +511,7 @@ ReadMftAttributeFull (
     return FALSE;
   }
 
-  // Pass 1: find base extent (LowestVcn == 0) to determine total size and whether resident
+  // Pass 1: locate base extent (StartVcn == 0)
   Pos = 0;
   while (Pos + 26u <= AttrListSize) {
     UINT32  EntryType = RdLe32 (AttrListBuf + Pos);
@@ -509,10 +525,9 @@ ReadMftAttributeFull (
     }
     if (EntryType == AttrType && (!RequireUnnamed || NameLen == 0u) && StartVcn == 0ULL) {
       if (ReadMftRecord (Vol, MftRef, ExtRec)) {
-        Attr = FindAttrInRecord (ExtRec, Vol->MftRecordSize, AttrType, RequireUnnamed, &AttrLen);
+        Attr = FindAttrInRecordVcn (ExtRec, Vol->MftRecordSize, AttrType, RequireUnnamed, FALSE, 0ULL, &AttrLen);
         if (Attr != NULL) {
           if (Attr[8u] == 0u) {
-            // Resident attribute: single record holds all bytes
             BOOLEAN  Ok = ReadAttributePayload (Vol, Attr, AttrLen, MaxBytes, OutBuf, OutSize);
             NTFS_FREE (ExtRec);
             NTFS_FREE (AttrListBuf);
@@ -545,7 +560,7 @@ ReadMftAttributeFull (
   }
   NTFS_ZERO (ResultBuf, TotalSize);
 
-  // Pass 2: read every extent in $ATTRIBUTE_LIST into ResultBuf at its StartVcn
+  // Pass 2: read every extent matched by exact LowestVcn == StartVcn
   Pos = 0;
   while (Pos + 26u <= AttrListSize) {
     UINT32  EntryType = RdLe32 (AttrListBuf + Pos);
@@ -564,7 +579,7 @@ ReadMftAttributeFull (
         NTFS_FREE (AttrListBuf);
         return FALSE;
       }
-      Attr = FindAttrInRecord (ExtRec, Vol->MftRecordSize, AttrType, RequireUnnamed, &AttrLen);
+      Attr = FindAttrInRecordVcn (ExtRec, Vol->MftRecordSize, AttrType, RequireUnnamed, TRUE, StartVcn, &AttrLen);
       if (Attr != NULL && Attr[8u] != 0u && AttrLen >= 64u) {
         UINT64         LowestVcn  = RdLe64 (Attr + 16u);
         UINT64         HighestVcn = RdLe64 (Attr + 24u);
@@ -572,9 +587,9 @@ ReadMftAttributeFull (
         NTFS_DATA_RUN  *Runs;
         UINT32         RunCount   = 0;
 
-        if (LowestVcn == StartVcn && HighestVcn >= LowestVcn && RunOff < AttrLen) {
-          UINT64  DstOff    = LowestVcn * (UINT64)Vol->ClusterSize;
-          UINT64  ExtBytes  = (HighestVcn - LowestVcn + 1ULL) * (UINT64)Vol->ClusterSize;
+        if (HighestVcn >= LowestVcn && RunOff < AttrLen) {
+          UINT64  DstOff   = LowestVcn * (UINT64)Vol->ClusterSize;
+          UINT64  ExtBytes = (HighestVcn - LowestVcn + 1ULL) * (UINT64)Vol->ClusterSize;
 
           if (DstOff < (UINT64)TotalSize) {
             UINTN  CopyLen = ((UINT64)TotalSize - DstOff < ExtBytes)
@@ -587,7 +602,7 @@ ReadMftAttributeFull (
               NTFS_FREE (AttrListBuf);
               return FALSE;
             }
-            if (!DecodeDataRuns (Attr + RunOff, AttrLen - RunOff, Runs, NTFS_MAX_RUNS, &RunCount) ||
+            if (!DecodeDataRunsAppend (Attr + RunOff, AttrLen - RunOff, Runs, NTFS_MAX_RUNS, &RunCount) ||
                 !ReadFromRuns (Vol, Runs, RunCount, 0ULL, ResultBuf + DstOff, CopyLen)) {
               NTFS_FREE (Runs);
               NTFS_FREE (ResultBuf);
@@ -610,9 +625,8 @@ ReadMftAttributeFull (
   return TRUE;
 }
 
-// Scan an NTFS index entry list (from $INDEX_ROOT or one INDX block) for TargetName.
 static BOOLEAN
-ScanIndexEntries (
+ScanIndexEntriesForName (
   const UINT8  *Entries,
   UINT32       EntriesBytes,
   const char   *TargetName,
@@ -631,17 +645,12 @@ ScanIndexEntries (
     if (EntryLen < 16u || Pos + EntryLen > EntriesBytes) {
       break;
     }
-    // Bit 1 (0x0002) = last (dummy) entry in node
     if ((Flags & 0x0002u) != 0u) {
       break;
     }
-    // $FILE_NAME stream begins at Pos + 16:
-    // +64 (byte): filename length in UTF-16 chars
-    // +65 (byte): namespace
-    // +66: UTF-16LE filename characters
     if (StreamLen >= 66u && Pos + 16u + StreamLen <= EntriesBytes) {
-      const UINT8  *Fn      = Entries + Pos + 16u;
-      UINT8        FnChars  = Fn[64u];
+      const UINT8  *Fn     = Entries + Pos + 16u;
+      UINT8        FnChars = Fn[64u];
       if (66u + (UINT32)FnChars * 2u <= StreamLen) {
         if (MatchUtf16AsciiInsensitive (Fn + 66u, FnChars, TargetName, TargetLen)) {
           *OutMftIndex = MftRef;
@@ -654,7 +663,6 @@ ScanIndexEntries (
   return FALSE;
 }
 
-// Lookup a child directory or file name inside a directory's MFT record.
 static BOOLEAN
 LookupInDirectory (
   const NTFS_VOL  *Vol,
@@ -680,14 +688,12 @@ LookupInDirectory (
     return FALSE;
   }
 
-  // 1. Check $INDEX_ROOT (0x90)
   if (ReadMftAttributeFull (Vol, DirRec, NTFS_ATTR_INDEX_ROOT, FALSE, 64u * 1024u, &IdxRootBuf, &IdxRootSize)) {
-    // $INDEX_ROOT payload: 16-byte root header + 16-byte index node header + entries
     if (IdxRootSize >= 32u) {
       UINT32  EntriesOff = 16u + RdLe32 (IdxRootBuf + 16u);
       UINT32  TotalLen   = 16u + RdLe32 (IdxRootBuf + 20u);
       if (EntriesOff < IdxRootSize && TotalLen <= IdxRootSize && TotalLen > EntriesOff) {
-        Found = ScanIndexEntries (
+        Found = ScanIndexEntriesForName (
                   IdxRootBuf + EntriesOff,
                   TotalLen - EntriesOff,
                   Name,
@@ -699,7 +705,6 @@ LookupInDirectory (
     NTFS_FREE (IdxRootBuf);
   }
 
-  // 2. If not in root, scan $INDEX_ALLOCATION (0xA0) INDX blocks sequentially
   if (!Found &&
       ReadMftAttributeFull (Vol, DirRec, NTFS_ATTR_INDEX_ALLOCATION, FALSE, NTFS_MAX_INDEX_ALLOC_SIZE, &IdxAlloc, &IdxAllocSz)) {
     UINTN  Off;
@@ -711,12 +716,11 @@ LookupInDirectory (
       if (!ApplyUsaFixup (Blk, Vol->IndexBlockSize)) {
         continue;
       }
-      // Index node header begins at byte offset 24 of INDX block
       {
         UINT32  EntriesOff = 24u + RdLe32 (Blk + 24u);
         UINT32  TotalLen   = 24u + RdLe32 (Blk + 28u);
         if (EntriesOff < Vol->IndexBlockSize && TotalLen <= Vol->IndexBlockSize && TotalLen > EntriesOff) {
-          if (ScanIndexEntries (Blk + EntriesOff, TotalLen - EntriesOff, Name, NameLen, OutChildMftIdx)) {
+          if (ScanIndexEntriesForName (Blk + EntriesOff, TotalLen - EntriesOff, Name, NameLen, OutChildMftIdx)) {
             Found = TRUE;
             break;
           }
@@ -728,6 +732,18 @@ LookupInDirectory (
 
   NTFS_FREE (DirRec);
   return Found;
+}
+
+static VOID
+UnmountNtfsVolume (
+  NTFS_VOL  *Vol
+  )
+{
+  if (Vol->MftRuns != NULL) {
+    NTFS_FREE (Vol->MftRuns);
+    Vol->MftRuns     = NULL;
+    Vol->MftRunCount = 0;
+  }
 }
 
 static BOOLEAN
@@ -743,9 +759,11 @@ MountNtfsVolume (
   UINT8        Spc;
   INT8         RecVal;
   INT8         IdxVal;
-  UINT8        *Mft0 = NULL;
+  UINT8        *Mft0        = NULL;
   const UINT8  *DataAttr;
-  UINT32       DataAttrLen = 0;
+  UINT32       DataAttrLen  = 0;
+  const UINT8  *AttrList;
+  UINT32       AttrListLen  = 0;
 
   NTFS_ZERO (Vol, sizeof (*Vol));
   Vol->ReadFn         = ReadFn;
@@ -755,7 +773,6 @@ MountNtfsVolume (
   if (!ReadFn (Context, 0ULL, sizeof (Boot), Boot)) {
     return FALSE;
   }
-  // Check NTFS OEM signature at offset 3 ("NTFS    ")
   if (Boot[3] != 'N' || Boot[4] != 'T' || Boot[5] != 'F' || Boot[6] != 'S' ||
       Boot[7] != ' ' || Boot[8] != ' ' || Boot[9] != ' ' || Boot[10] != ' ') {
     return FALSE;
@@ -793,58 +810,91 @@ MountNtfsVolume (
     return FALSE;
   }
 
-  // Load MFT record 0 ($MFT) to decode $MFT's own data runs (in case $MFT is fragmented!)
+  Vol->MftRuns = (NTFS_DATA_RUN *)NTFS_ALLOC (sizeof (NTFS_DATA_RUN) * NTFS_MAX_RUNS);
+  if (Vol->MftRuns == NULL) {
+    return FALSE;
+  }
+
   Mft0 = (UINT8 *)NTFS_ALLOC (Vol->MftRecordSize);
   if (Mft0 == NULL) {
+    UnmountNtfsVolume (Vol);
     return FALSE;
   }
   if (!ReadMftRecord (Vol, NTFS_MFT_RECORD_MFT, Mft0)) {
     NTFS_FREE (Mft0);
+    UnmountNtfsVolume (Vol);
     return FALSE;
   }
 
-  DataAttr = FindAttrInRecord (Mft0, Vol->MftRecordSize, NTFS_ATTR_DATA, TRUE, &DataAttrLen);
-  if (DataAttr != NULL && DataAttr[8u] != 0u && DataAttrLen >= 64u) {
-    UINT16  RunOff = RdLe16 (DataAttr + 32u);
-    if (RunOff < DataAttrLen) {
-      DecodeDataRuns (DataAttr + RunOff, DataAttrLen - RunOff, Vol->MftRuns, NTFS_MAX_RUNS, &Vol->MftRunCount);
+  // Decode $MFT $DATA runs (either directly in Record 0, or via $ATTRIBUTE_LIST)
+  AttrList = FindAttrInRecordVcn (Mft0, Vol->MftRecordSize, NTFS_ATTR_ATTRIBUTE_LIST, FALSE, FALSE, 0ULL, &AttrListLen);
+  if (AttrList == NULL) {
+    DataAttr = FindAttrInRecordVcn (Mft0, Vol->MftRecordSize, NTFS_ATTR_DATA, TRUE, FALSE, 0ULL, &DataAttrLen);
+    if (DataAttr != NULL && DataAttr[8u] != 0u && DataAttrLen >= 64u) {
+      UINT16  RunOff = RdLe16 (DataAttr + 32u);
+      if (RunOff < DataAttrLen) {
+        DecodeDataRunsAppend (DataAttr + RunOff, DataAttrLen - RunOff, Vol->MftRuns, NTFS_MAX_RUNS, &Vol->MftRunCount);
+      }
+    }
+  } else {
+    UINT8  *AlBuf  = NULL;
+    UINTN  AlSize  = 0;
+    UINT8  *ExtRec = (UINT8 *)NTFS_ALLOC (Vol->MftRecordSize);
+    if (ExtRec != NULL &&
+        ReadAttributePayload (Vol, AttrList, AttrListLen, NTFS_MAX_ATTR_LIST_SIZE, &AlBuf, &AlSize)) {
+      UINTN  Pos = 0;
+      while (Pos + 26u <= AlSize) {
+        UINT32  EType  = RdLe32 (AlBuf + Pos);
+        UINT16  ELen   = RdLe16 (AlBuf + Pos + 4u);
+        UINT8   EName  = AlBuf[Pos + 6u];
+        UINT64  SVcn   = RdLe64 (AlBuf + Pos + 8u);
+        UINT64  MftRef = RdLe64 (AlBuf + Pos + 16u) & 0x0000FFFFFFFFFFFFULL;
+        if (ELen < 26u || Pos + ELen > AlSize) break;
+        if (EType == NTFS_ATTR_DATA && EName == 0u) {
+          if (ReadMftRecord (Vol, MftRef, ExtRec)) {
+            DataAttr = FindAttrInRecordVcn (ExtRec, Vol->MftRecordSize, NTFS_ATTR_DATA, TRUE, TRUE, SVcn, &DataAttrLen);
+            if (DataAttr != NULL && DataAttrLen >= 64u) {
+              UINT16  RunOff = RdLe16 (DataAttr + 32u);
+              if (RunOff < DataAttrLen) {
+                DecodeDataRunsAppend (DataAttr + RunOff, DataAttrLen - RunOff, Vol->MftRuns, NTFS_MAX_RUNS, &Vol->MftRunCount);
+              }
+            }
+          }
+        }
+        Pos += ELen;
+      }
+      NTFS_FREE (AlBuf);
+    }
+    if (ExtRec != NULL) {
+      NTFS_FREE (ExtRec);
     }
   }
+
   NTFS_FREE (Mft0);
+  NTFS_LOG (
+    "[AURORA NTFS] Mounted: bps=%u clus=%u mftRec=%u idxBlk=%u mftRuns=%u\r\n",
+    Vol->BytesPerSector,
+    Vol->ClusterSize,
+    Vol->MftRecordSize,
+    Vol->IndexBlockSize,
+    Vol->MftRunCount
+    );
   return TRUE;
 }
 
-BOOLEAN
-AuroraNtfsReadFile (
-  AURORA_NTFS_READ_FN  ReadFn,
-  VOID                 *Context,
-  UINT64               PartitionSizeBytes,
-  const char           *Path,
-  UINT8                *OutBuffer,
-  UINTN                MaxLength,
-  UINTN                *OutLength
+static BOOLEAN
+WalkPathToMft (
+  const NTFS_VOL  *Vol,
+  const char      *Path,
+  UINT64          *OutMftIdx
   )
 {
-  NTFS_VOL    Vol;
   UINT64      CurrentMft = NTFS_MFT_RECORD_ROOT;
   const char  *P         = Path;
-  UINT8       *FileRec   = NULL;
-  UINT8       *DataBuf   = NULL;
-  UINTN       DataSize   = 0;
 
-  if (ReadFn == NULL || Path == NULL || OutBuffer == NULL || OutLength == NULL || MaxLength == 0u) {
-    return FALSE;
-  }
-  *OutLength = 0;
-
-  if (!MountNtfsVolume (ReadFn, Context, PartitionSizeBytes, &Vol)) {
-    return FALSE;
-  }
-
-  // Walk path components separated by '\\' or '/'
   while (*P != '\0') {
     const char  *Start;
-    UINTN       Len = 0;
+    UINTN       Len     = 0;
     UINT64      NextMft = 0;
 
     while (*P == '\\' || *P == '/') {
@@ -858,22 +908,40 @@ AuroraNtfsReadFile (
       P++;
       Len++;
     }
-    if (!LookupInDirectory (&Vol, CurrentMft, Start, Len, &NextMft)) {
+    if (!LookupInDirectory (Vol, CurrentMft, Start, Len, &NextMft)) {
+      NTFS_LOG ("[AURORA NTFS] Path segment '%.*a' not found in MFT %Lu\r\n", (INT32)Len, Start, CurrentMft);
       return FALSE;
     }
+    NTFS_LOG ("[AURORA NTFS] '%.*a' -> MFT %Lu\r\n", (INT32)Len, Start, NextMft);
     CurrentMft = NextMft;
   }
 
-  FileRec = (UINT8 *)NTFS_ALLOC (Vol.MftRecordSize);
+  *OutMftIdx = CurrentMft;
+  return TRUE;
+}
+
+static BOOLEAN
+ReadFileByMft (
+  const NTFS_VOL  *Vol,
+  UINT64          FileMftIdx,
+  UINT8           *OutBuffer,
+  UINTN           MaxLength,
+  UINTN           *OutLength
+  )
+{
+  UINT8  *FileRec = (UINT8 *)NTFS_ALLOC (Vol->MftRecordSize);
+  UINT8  *DataBuf = NULL;
+  UINTN  DataSize = 0;
+
+  *OutLength = 0;
   if (FileRec == NULL) {
     return FALSE;
   }
-  if (!ReadMftRecord (&Vol, CurrentMft, FileRec)) {
+  if (!ReadMftRecord (Vol, FileMftIdx, FileRec)) {
     NTFS_FREE (FileRec);
     return FALSE;
   }
-
-  if (!ReadMftAttributeFull (&Vol, FileRec, NTFS_ATTR_DATA, TRUE, MaxLength, &DataBuf, &DataSize)) {
+  if (!ReadMftAttributeFull (Vol, FileRec, NTFS_ATTR_DATA, TRUE, MaxLength, &DataBuf, &DataSize)) {
     NTFS_FREE (FileRec);
     return FALSE;
   }
@@ -889,4 +957,177 @@ AuroraNtfsReadFile (
   NTFS_FREE (DataBuf);
   *OutLength = DataSize;
   return TRUE;
+}
+
+BOOLEAN
+AuroraNtfsReadFile (
+  AURORA_NTFS_READ_FN  ReadFn,
+  VOID                 *Context,
+  UINT64               PartitionSizeBytes,
+  const char           *Path,
+  UINT8                *OutBuffer,
+  UINTN                MaxLength,
+  UINTN                *OutLength
+  )
+{
+  NTFS_VOL  Vol;
+  UINT64    FileMft = 0;
+  BOOLEAN   Ok;
+
+  if (ReadFn == NULL || Path == NULL || OutBuffer == NULL || OutLength == NULL || MaxLength == 0u) {
+    return FALSE;
+  }
+  *OutLength = 0;
+
+  if (!MountNtfsVolume (ReadFn, Context, PartitionSizeBytes, &Vol)) {
+    return FALSE;
+  }
+  Ok = WalkPathToMft (&Vol, Path, &FileMft) &&
+       ReadFileByMft (&Vol, FileMft, OutBuffer, MaxLength, OutLength);
+  UnmountNtfsVolume (&Vol);
+  return Ok;
+}
+
+// Helper: scan index entries for any *.bin file whose $DATA begins with MagicLe32.
+static BOOLEAN
+ScanEntriesForMagicBin (
+  const NTFS_VOL  *Vol,
+  const UINT8     *Entries,
+  UINT32          EntriesBytes,
+  UINT32          MagicLe32,
+  UINT8           *OutBuffer,
+  UINTN           MaxLength,
+  UINTN           *OutLength,
+  char            *MatchedNameOut,
+  UINTN           MatchedNameCap
+  )
+{
+  UINT32  Pos = 0;
+
+  while (Pos + 16u <= EntriesBytes) {
+    UINT64  MftRef    = RdLe64 (Entries + Pos) & 0x0000FFFFFFFFFFFFULL;
+    UINT16  EntryLen  = RdLe16 (Entries + Pos + 8u);
+    UINT16  StreamLen = RdLe16 (Entries + Pos + 10u);
+    UINT16  Flags     = RdLe16 (Entries + Pos + 12u);
+
+    if (EntryLen < 16u || Pos + EntryLen > EntriesBytes) {
+      break;
+    }
+    if ((Flags & 0x0002u) != 0u) {
+      break;
+    }
+    if (StreamLen >= 66u && Pos + 16u + StreamLen <= EntriesBytes) {
+      const UINT8  *Fn     = Entries + Pos + 16u;
+      UINT8        FnChars = Fn[64u];
+      if (66u + (UINT32)FnChars * 2u <= StreamLen && EndsWithBinUtf16 (Fn + 66u, FnChars)) {
+        UINTN  Len = 0;
+        if (ReadFileByMft (Vol, MftRef, OutBuffer, MaxLength, &Len) &&
+            Len >= 20u && RdLe32 (OutBuffer) == MagicLe32) {
+          *OutLength = Len;
+          if (MatchedNameOut != NULL && MatchedNameCap > 0u) {
+            UINTN  I;
+            for (I = 0; I < FnChars && I + 1u < MatchedNameCap; I++) {
+              UINT16  Ch = RdLe16 (Fn + 66u + I * 2u);
+              MatchedNameOut[I] = (Ch >= 0x20u && Ch <= 0x7Eu) ? (char)Ch : '?';
+            }
+            MatchedNameOut[I] = '\0';
+          }
+          return TRUE;
+        }
+      }
+    }
+    Pos += EntryLen;
+  }
+  return FALSE;
+}
+
+BOOLEAN
+AuroraNtfsFindMagicBinInDir (
+  AURORA_NTFS_READ_FN  ReadFn,
+  VOID                 *Context,
+  UINT64               PartitionSizeBytes,
+  const char           *DirPath,
+  UINT32               MagicLe32,
+  UINT8                *OutBuffer,
+  UINTN                MaxLength,
+  UINTN                *OutLength,
+  char                 *MatchedNameOut,
+  UINTN                MatchedNameCap
+  )
+{
+  NTFS_VOL  Vol;
+  UINT64    DirMft     = 0;
+  UINT8     *DirRec    = NULL;
+  UINT8     *IdxRoot   = NULL;
+  UINTN     IdxRootSz  = 0;
+  UINT8     *IdxAlloc  = NULL;
+  UINTN     IdxAllocSz = 0;
+  BOOLEAN   Found      = FALSE;
+
+  if (ReadFn == NULL || DirPath == NULL || OutBuffer == NULL || OutLength == NULL || MaxLength == 0u) {
+    return FALSE;
+  }
+  *OutLength = 0;
+  if (MatchedNameOut != NULL && MatchedNameCap > 0u) {
+    MatchedNameOut[0] = '\0';
+  }
+
+  if (!MountNtfsVolume (ReadFn, Context, PartitionSizeBytes, &Vol)) {
+    return FALSE;
+  }
+  if (!WalkPathToMft (&Vol, DirPath, &DirMft)) {
+    UnmountNtfsVolume (&Vol);
+    return FALSE;
+  }
+
+  DirRec = (UINT8 *)NTFS_ALLOC (Vol.MftRecordSize);
+  if (DirRec != NULL && ReadMftRecord (&Vol, DirMft, DirRec)) {
+    if (ReadMftAttributeFull (&Vol, DirRec, NTFS_ATTR_INDEX_ROOT, FALSE, 64u * 1024u, &IdxRoot, &IdxRootSz)) {
+      if (IdxRootSz >= 32u) {
+        UINT32  EntriesOff = 16u + RdLe32 (IdxRoot + 16u);
+        UINT32  TotalLen   = 16u + RdLe32 (IdxRoot + 20u);
+        if (EntriesOff < IdxRootSz && TotalLen <= IdxRootSz && TotalLen > EntriesOff) {
+          Found = ScanEntriesForMagicBin (
+                    &Vol, IdxRoot + EntriesOff, TotalLen - EntriesOff,
+                    MagicLe32, OutBuffer, MaxLength, OutLength, MatchedNameOut, MatchedNameCap
+                    );
+        }
+      }
+      NTFS_FREE (IdxRoot);
+    }
+
+    if (!Found &&
+        ReadMftAttributeFull (&Vol, DirRec, NTFS_ATTR_INDEX_ALLOCATION, FALSE, NTFS_MAX_INDEX_ALLOC_SIZE, &IdxAlloc, &IdxAllocSz)) {
+      UINTN  Off;
+      for (Off = 0; Off + Vol.IndexBlockSize <= IdxAllocSz; Off += Vol.IndexBlockSize) {
+        UINT8  *Blk = IdxAlloc + Off;
+        if (Blk[0] != 'I' || Blk[1] != 'N' || Blk[2] != 'D' || Blk[3] != 'X') {
+          continue;
+        }
+        if (!ApplyUsaFixup (Blk, Vol.IndexBlockSize)) {
+          continue;
+        }
+        {
+          UINT32  EntriesOff = 24u + RdLe32 (Blk + 24u);
+          UINT32  TotalLen   = 24u + RdLe32 (Blk + 28u);
+          if (EntriesOff < Vol.IndexBlockSize && TotalLen <= Vol.IndexBlockSize && TotalLen > EntriesOff) {
+            if (ScanEntriesForMagicBin (
+                  &Vol, Blk + EntriesOff, TotalLen - EntriesOff,
+                  MagicLe32, OutBuffer, MaxLength, OutLength, MatchedNameOut, MatchedNameCap
+                  )) {
+              Found = TRUE;
+              break;
+            }
+          }
+        }
+      }
+      NTFS_FREE (IdxAlloc);
+    }
+  }
+
+  if (DirRec != NULL) {
+    NTFS_FREE (DirRec);
+  }
+  UnmountNtfsVolume (&Vol);
+  return Found;
 }

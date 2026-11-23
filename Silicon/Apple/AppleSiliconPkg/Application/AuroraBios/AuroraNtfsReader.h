@@ -2,8 +2,9 @@
   Read-only NTFS file reader for Aurora UEFI BIOS.
 
   Allows AuroraBios to load board-specific trackpad firmware directly from the
-  user's existing Windows installation (\Windows\System32\drivers\tpmtfw.bin)
-  via EFI_BLOCK_IO_PROTOCOL without bundling or duplicating Apple firmware.
+  user's existing Windows installation (\Windows\System32\drivers\tpmtfw.bin
+  or any HIDF *.bin in \Windows\System32\drivers\) via EFI_BLOCK_IO_PROTOCOL
+  without bundling or duplicating Apple firmware.
 
   Dual-compiled for AArch64 UEFI and host unit tests (AURORA_BIOS_HOST_TEST).
 
@@ -16,8 +17,6 @@
 
 #include "AuroraBiosConfig.h"
 
-// Abstract byte-level read callback backed by EFI_BLOCK_IO_PROTOCOL (UEFI)
-// or a memory/file buffer (host tests). Returns TRUE on success.
 typedef BOOLEAN (*AURORA_NTFS_READ_FN) (
   VOID    *Context,
   UINT64  ByteOffset,
@@ -25,11 +24,7 @@ typedef BOOLEAN (*AURORA_NTFS_READ_FN) (
   VOID    *OutBuffer
   );
 
-// Read a file by backslash-separated ASCII path (e.g. "Windows\\System32\\drivers\\tpmtfw.bin")
-// from an NTFS partition accessible through ReadFn.
-//
-// OutBuffer must have capacity MaxLength bytes.
-// On success, sets *OutLength to the exact file size and returns TRUE.
+// Read a specific file by backslash-separated ASCII path from an NTFS partition.
 BOOLEAN
 AuroraNtfsReadFile (
   AURORA_NTFS_READ_FN  ReadFn,
@@ -39,6 +34,23 @@ AuroraNtfsReadFile (
   UINT8                *OutBuffer,
   UINTN                MaxLength,
   UINTN                *OutLength
+  );
+
+// Scan a directory (e.g. "Windows\\System32\\drivers") for any .bin file whose
+// first 4 bytes equal MagicLe32 (e.g. 0x46444948 = 'HIDF'), returning its full
+// contents and matched filename.
+BOOLEAN
+AuroraNtfsFindMagicBinInDir (
+  AURORA_NTFS_READ_FN  ReadFn,
+  VOID                 *Context,
+  UINT64               PartitionSizeBytes,
+  const char           *DirPath,
+  UINT32               MagicLe32,
+  UINT8                *OutBuffer,
+  UINTN                MaxLength,
+  UINTN                *OutLength,
+  char                 *MatchedNameOut,
+  UINTN                MatchedNameCap
   );
 
 #endif  // AURORA_NTFS_READER_H_

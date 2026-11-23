@@ -1017,6 +1017,33 @@ LoadTrackpadFirmwareContainer (
         FreePool (Handles);
         return TRUE;
       }
+
+      // Fallback: auto-discover any HIDF *.bin trackpad firmware inside \Windows\System32\drivers
+      {
+        char  MatchedName[64];
+        if (AuroraNtfsFindMagicBinInDir (
+              UefiBlkIoReadBytes,
+              &RdCtx,
+              PartBytes,
+              "Windows\\System32\\drivers",
+              AURORA_MTP_FW_MAGIC,
+              OutBuf,
+              MaxBytes,
+              &FoundLen,
+              MatchedName,
+              sizeof (MatchedName)
+              )) {
+          DEBUG ((DEBUG_ERROR, "[AURORA MTP] Auto-discovered HIDF firmware in drivers\\%a (%u bytes)\r\n",
+                  MatchedName, (UINT32)FoundLen));
+          *OutLen = FoundLen;
+          AsciiStrCpyS (SourceOut, SourceCap, "NTFS");
+          if (RdCtx.BounceBuf != NULL) {
+            FreePool (RdCtx.BounceBuf);
+          }
+          FreePool (Handles);
+          return TRUE;
+        }
+      }
     }
 
     if (RdCtx.BounceBuf != NULL) {
