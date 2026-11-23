@@ -679,6 +679,50 @@ TranslateInputKey (
 
 STATIC
 VOID
+HandleRawKey (
+  IN OUT AURORA_BIOS_HOST  *Host,
+  IN CONST EFI_INPUT_KEY   *Key,
+  IN UINT32                KeyShiftState
+  )
+{
+  // Allow WASD cursor motion and C left-click for smooth cursor control even
+  // over keyboard/serial when no hardware pointer is attached.
+  switch (Key->UnicodeChar) {
+    case L'w':
+    case L'W':
+      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY - 18, FALSE);
+      return;
+    case L's':
+    case L'S':
+      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY + 18, FALSE);
+      return;
+    case L'a':
+    case L'A':
+      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX - 18, Host->State.MouseY, FALSE);
+      return;
+    case L'd':
+    case L'D':
+      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX + 18, Host->State.MouseY, FALSE);
+      return;
+    case L'c':
+    case L'C':
+      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY, TRUE);
+      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY, FALSE);
+      return;
+    default:
+      break;
+  }
+
+  {
+    AURORA_BIOS_KEY  K = TranslateInputKey (Key, KeyShiftState);
+    if (K != AURORA_KEY_NONE) {
+      AuroraBiosHandleKey (&Host->State, K);
+    }
+  }
+}
+
+STATIC
+VOID
 PollInputs (
   IN OUT AURORA_BIOS_HOST  *Host
   )
@@ -690,19 +734,13 @@ PollInputs (
     for (I = 0; I < Host->TextInExCount; I++) {
       EFI_KEY_DATA  KeyData;
       while (!EFI_ERROR (Host->TextInEx[I]->ReadKeyStrokeEx (Host->TextInEx[I], &KeyData))) {
-        AURORA_BIOS_KEY  K = TranslateInputKey (&KeyData.Key, KeyData.KeyState.KeyShiftState);
-        if (K != AURORA_KEY_NONE) {
-          AuroraBiosHandleKey (&Host->State, K);
-        }
+        HandleRawKey (Host, &KeyData.Key, KeyData.KeyState.KeyShiftState);
       }
     }
   } else if (gST->ConIn != NULL) {
     EFI_INPUT_KEY  Key;
     while (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
-      AURORA_BIOS_KEY  K = TranslateInputKey (&Key, 0);
-      if (K != AURORA_KEY_NONE) {
-        AuroraBiosHandleKey (&Host->State, K);
-      }
+      HandleRawKey (Host, &Key, 0);
     }
   }
 
@@ -834,6 +872,8 @@ AuroraBiosEntryPoint (
     (INT32)Host->Gop->Mode->Info->HorizontalResolution,
     (INT32)Host->Gop->Mode->Info->VerticalResolution
     );
+  Host->State.Info.GopBpp =
+    (Host->Gop->Mode->Info->PixelFormat == PixelBitMask) ? 30u : 32u;
 
   Host->SceneBuf = AllocateZeroPool ((UINTN)Host->State.Width * (UINTN)Host->State.Height * sizeof (UINT32));
   Host->BltScratchPixels =
@@ -855,6 +895,20 @@ AuroraBiosEntryPoint (
   AuroraBiosBuildLayout (&Host->State);
   Host->State.FullRedrawNeeded = TRUE;
 
+  DEBUG ((
+    DEBUG_ERROR,
+    "[AURORA BIOS] LIVE at %ux%u (%ux HiDPI, %u bpp) | BootEntries=%u | Ptr=%u+%u KB=%u\r\n"
+    "[AURORA BIOS] Controls: 1-5/F1-F5 Tabs | Arrows/Tab Nav | WASD Move Cursor | C Click | Enter/Space | F10 Save&Boot | ESC Exit\r\n",
+    Host->State.Info.GopWidth,
+    Host->State.Info.GopHeight,
+    (UINT32)Host->State.UiScale,
+    Host->State.Info.GopBpp,
+    Host->State.BootEntryCount,
+    Host->State.Info.SimplePointerCount,
+    Host->State.Info.AbsPointerCount,
+    Host->State.Info.KeyboardCount
+    ));
+
   if (gST->ConOut != NULL) {
     gST->ConOut->EnableCursor (gST->ConOut, FALSE);
   }
@@ -875,7 +929,22 @@ AuroraBiosEntryPoint (
       UpdateClock (Host);
       if (Host->State.Info.ClockSec != LastSec) {
         LastSec = Host->State.Info.ClockSec;
-        Host->State.FullRedrawNeeded = TRUE;
+        // Re-render scene in RAM and dirty only the small top-right clock box
+        // (and diagnostics tab if open) instead of re-blitting all 17 MiB.
+        AuroraBiosRender (&Host->State, Host->SceneBuf);
+        if (Host->State.ActiveTab == AURORA_TAB_DIAG) {
+          Host->State.Dirty.Valid = TRUE;
+          Host->State.Dirty.MinX  = 0;
+          Host->State.Dirty.MinY  = 0;
+          Host->State.Dirty.MaxX  = Host->State.Width;
+          Host->State.Dirty.MaxY  = Host->State.Height;
+        } else {
+          Host->State.Dirty.Valid = TRUE;
+          Host->State.Dirty.MinX  = Host->State.Width - 120;
+          Host->State.Dirty.MinY  = 10;
+          Host->State.Dirty.MaxX  = Host->State.Width - 16;
+          Host->State.Dirty.MaxY  = 46;
+        }
       }
     }
 
@@ -1004,5 +1073,8 @@ AuroraBiosEntryPoint (
   FreePool (Host->BltScratch);
   FreePool (Host);
 
-  return EFI_SUCCESS;
+  // Return EFI_ABORTED so MsPlatform.c:PlatformBootManagerPriorityBoot does not
+  // immediately re-open BootManagerMenu a second time, and proceeds straight to
+  // normal OS boot (bootmgfw.efi).
+  return EFI_ABORTED;
 }

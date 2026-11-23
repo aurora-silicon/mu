@@ -1197,6 +1197,12 @@ AuroraCheckBiosBootRequest (
   UINT32              TimeoutMs = 0;
   UINT32              ElapsedMs = 0;
 
+  // 0. Direct-to-BIOS build flag (e.g. interactive BIOS showcase boot).
+  if (FixedPcdGetBool (PcdAuroraBootToBios)) {
+    DEBUG ((DEBUG_ERROR, "[Bds] PcdAuroraBootToBios=TRUE -> entering Aurora Gaming UEFI BIOS\n"));
+    return TRUE;
+  }
+
   // 1. Always check pending boot hotkey (F2 / DEL / ESC / B) with zero delay.
   if (gST->ConIn != NULL) {
     while (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {

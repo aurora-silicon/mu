@@ -83,6 +83,7 @@
   gPcBdsPkgTokenSpaceGuid.PcdLowResolutionInternalShell
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectUsbKeyboardConsole
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectAllForInternalShell
+  gAppleSiliconPkgTokenSpaceGuid.PcdAuroraBootToBios
 
 [Depex]
   TRUE

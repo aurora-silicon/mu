@@ -136,6 +136,10 @@
   # declared as gPcBdsPkgTokenSpaceGuid 0x40000131 in the mu_plus fork before.
   gAppleSiliconPkgTokenSpaceGuid.PcdForceWindowsBootManager|FALSE|BOOLEAN|0x0000472D
 
+  # When TRUE, BDS boots directly into Aurora Gaming UEFI BIOS (PcdBootManagerMenuFile)
+  # before continuing to the OS. FALSE preserves instant unattended boot.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAuroraBootToBios|FALSE|BOOLEAN|0x00004735
+
   # Stack stuff (128k stack by default)
   #Fallback stack base in case ModuleEntryPoint setup won't work.
   gAppleSiliconPkgTokenSpaceGuid.PcdSecPhaseStackBase|0x0|UINT64|0x0000440b
