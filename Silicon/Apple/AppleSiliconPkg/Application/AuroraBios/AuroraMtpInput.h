@@ -158,10 +158,13 @@ typedef struct {
 
   // Synchronous command ACK tracking during bootstrap
   BOOLEAN                   AckWaiting;
+  UINT8                     AckExpectedIface;
   UINT8                     AckExpectedSeq;
   UINT8                     AckExpectedCmd;
   BOOLEAN                   AckReceived;
   UINT32                    AckReturnCode;
+  UINT32                    AckRespLen;
+  UINT8                     AckRespData[32];
 
   AURORA_MTP_KB_STATE       KbState;
   AURORA_MTP_TP_STATE       TpState;
@@ -173,6 +176,7 @@ typedef struct {
   UINT32                    FramingErrors;
   UINT32                    KbReports;
   UINT32                    TpReports;
+  UINT32                    TpTouchLogs;
 } AURORA_MTP_CONTEXT;
 
 typedef struct {

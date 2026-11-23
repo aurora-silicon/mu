@@ -44,9 +44,16 @@ STATIC EFI_GUID  mAuroraBiosConfigGuid = AURORA_BIOS_CONFIG_GUID_INIT;
 typedef struct {
   EFI_GRAPHICS_OUTPUT_PROTOCOL       *Gop;
   UINT32                             *SceneBuf;     // Logical Width * Height (0x00RRGGBB, no cursor)
-  UINT32                             *ScratchScene; // Pre-allocated dirty-rect scratch (no per-frame alloc)
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL      *BltScratch;   // Physical dirty-rect staging buffer
-  UINTN                              BltScratchPixels;
+  UINT32                             *FbBase;       // Direct GOP linear framebuffer pointer
+  UINTN                              FbStride;      // Physical PixelsPerScanLine
+  BOOLEAN                            FbIs30Bit;     // TRUE for Apple 10-bit X2R10G10B10 panel
+  UINT32                             LogRowBuf[2048];
+  UINT32                             PhysRowBuf[4096];
+
+  // Independent zero-lag cursor tracking
+  BOOLEAN                            CurDrawn;
+  INT32                              DrawnCurX;
+  INT32                              DrawnCurY;
 
   EFI_SIMPLE_POINTER_PROTOCOL        **SimplePtrs;
   UINTN                              SimplePtrCount;
@@ -543,107 +550,244 @@ UpdateClock (
 }
 
 // ---------------------------------------------------------------------------
-// Dirty-Rect Double-Buffered Fast GOP Presenter (Zero Per-Frame Allocations)
+// Direct Write-Combining Framebuffer Blitter + Independent Zero-Lag Cursor
 // ---------------------------------------------------------------------------
+#define CURSOR_W  18
+#define CURSOR_H  20
+
+STATIC
+VOID
+BlitLogicalRectDirect (
+  IN OUT AURORA_BIOS_HOST  *Host,
+  IN     INT32             X1,
+  IN     INT32             Y1,
+  IN     INT32             X2,
+  IN     INT32             Y2,
+  IN     BOOLEAN           IncludeCursor
+  )
+{
+  AURORA_BIOS_STATE  *S     = &Host->State;
+  INT32              Scale  = S->UiScale;
+  INT32              Lw, Lh, Ly, Lx, Sy;
+  UINTN              RowBytes;
+  BOOLEAN            CurOverlap;
+
+  if (Host->FbBase == NULL || Host->SceneBuf == NULL) {
+    return;
+  }
+  if (X1 < 0) X1 = 0;
+  if (Y1 < 0) Y1 = 0;
+  if (X2 > S->Width)  X2 = S->Width;
+  if (Y2 > S->Height) Y2 = S->Height;
+  Lw = X2 - X1;
+  Lh = Y2 - Y1;
+  if (Lw <= 0 || Lh <= 0 || Lw > 2048 || (Lw * Scale) > 4096) {
+    return;
+  }
+
+  CurOverlap = IncludeCursor && S->MouseVisible &&
+               (S->MouseX < X2) && (S->MouseX + CURSOR_W > X1) &&
+               (S->MouseY < Y2) && (S->MouseY + CURSOR_H > Y1);
+  RowBytes   = (UINTN)(Lw * Scale) * sizeof (UINT32);
+
+  for (Ly = 0; Ly < Lh; Ly++) {
+    INT32  AbsY = Y1 + Ly;
+
+    CopyMem (
+      Host->LogRowBuf,
+      Host->SceneBuf + (UINTN)AbsY * (UINTN)S->Width + (UINTN)X1,
+      (UINTN)Lw * sizeof (UINT32)
+      );
+
+    // Stamp cursor scanline directly onto L1-cached row if overlapping
+    if (CurOverlap && AbsY >= S->MouseY && AbsY < S->MouseY + 18) {
+      static const char  *Sprite[18] = {
+        "X...............",
+        "XX..............",
+        "XWX.............",
+        "XWWX............",
+        "XWWWX...........",
+        "XWWWWX..........",
+        "XWWWWWX.........",
+        "XWWWWWWX........",
+        "XWWWWWWWX.......",
+        "XWWWWWWWWX......",
+        "XWWWWWWWWWX.....",
+        "XWWWWWWXXXXX....",
+        "XWWXOWWX........",
+        "XWX.XWWX........",
+        "XX...XWWX.......",
+        "X....XWWX.......",
+        "......XX........",
+        "................"
+      };
+      const char  *SprRow = Sprite[AbsY - S->MouseY];
+      INT32       Sx;
+      for (Sx = 0; Sx < 16; Sx++) {
+        INT32  Px = S->MouseX + Sx - X1;
+        char   C  = SprRow[Sx];
+        if (C == '.' || Px < 0 || Px >= Lw) continue;
+        Host->LogRowBuf[Px] = (C == 'X') ? 0x00000000u : ((C == 'O') ? 0x00FF8533u : 0x00FFFFFFu);
+      }
+    }
+
+    // Encode row into L1-cached PhysRowBuf (exact pixel format + 1x/2x scale)
+    if (Host->FbIs30Bit) {
+      if (Scale == 2) {
+        UINT32  *Dst = Host->PhysRowBuf;
+        for (Lx = 0; Lx < Lw; Lx++) {
+          UINT32  C = Host->LogRowBuf[Lx];
+          UINT32  R = ((C >> 14) & 0x3FCu) | ((C >> 22) & 0x3u);
+          UINT32  G = ((C >> 6)  & 0x3FCu) | ((C >> 14) & 0x3u);
+          UINT32  B = ((C << 2)  & 0x3FCu) | ((C >> 6)  & 0x3u);
+          UINT32  Raw = (R << 20) | (G << 10) | B;
+          Dst[0] = Raw;
+          Dst[1] = Raw;
+          Dst += 2;
+        }
+      } else {
+        for (Lx = 0; Lx < Lw; Lx++) {
+          UINT32  C = Host->LogRowBuf[Lx];
+          UINT32  R = ((C >> 14) & 0x3FCu) | ((C >> 22) & 0x3u);
+          UINT32  G = ((C >> 6)  & 0x3FCu) | ((C >> 14) & 0x3u);
+          UINT32  B = ((C << 2)  & 0x3FCu) | ((C >> 6)  & 0x3u);
+          Host->PhysRowBuf[Lx] = (R << 20) | (G << 10) | B;
+        }
+      }
+    } else {
+      // 32-bit BGRA (0x00RRGGBB in little-endian matches SceneBuf identically!)
+      if (Scale == 2) {
+        UINT32  *Dst = Host->PhysRowBuf;
+        for (Lx = 0; Lx < Lw; Lx++) {
+          UINT32  Raw = Host->LogRowBuf[Lx];
+          Dst[0] = Raw;
+          Dst[1] = Raw;
+          Dst += 2;
+        }
+      } else {
+        CopyMem (Host->PhysRowBuf, Host->LogRowBuf, (UINTN)Lw * sizeof (UINT32));
+      }
+    }
+
+    // Burst write directly to Normal-NC VRAM via ARM64 write-combining CopyMem
+    for (Sy = 0; Sy < Scale; Sy++) {
+      UINTN   PhysY = (UINTN)(AbsY * Scale + Sy + S->TopInsetPx);
+      UINT32  *FbRow = Host->FbBase + PhysY * Host->FbStride + (UINTN)(X1 * Scale);
+      CopyMem (FbRow, Host->PhysRowBuf, RowBytes);
+    }
+  }
+}
+
 STATIC
 VOID
 PresentDirtyRect (
   IN OUT AURORA_BIOS_HOST  *Host
   )
 {
-  AURORA_BIOS_STATE  *S     = &Host->State;
-  INT32              Scale  = S->UiScale;
-  INT32              X1, Y1, X2, Y2;
-  INT32              Lw, Lh, Pw, Ph;
-  INT32              Ly, Lx, Sy, Sx;
-  BOOLEAN            DrawCur;
+  AURORA_BIOS_STATE  *S = &Host->State;
 
-  if (Host->Gop == NULL || Host->SceneBuf == NULL || Host->ScratchScene == NULL) {
+  if (Host->FbBase == NULL || Host->SceneBuf == NULL) {
     return;
   }
 
+  // Case 1: Full redraw (mode/tab switch, modal open/close, initial frame)
   if (S->FullRedrawNeeded) {
     AuroraBiosRender (S, Host->SceneBuf);
     S->FullRedrawNeeded = FALSE;
-    S->Dirty.Valid      = TRUE;
-    S->Dirty.MinX       = 0;
-    S->Dirty.MinY       = 0;
-    S->Dirty.MaxX       = S->Width;
-    S->Dirty.MaxY       = S->Height;
-  }
-
-  if (!S->Dirty.Valid) {
+    S->SceneDirty       = FALSE;
+    S->Dirty.Valid      = FALSE;
+    BlitLogicalRectDirect (Host, 0, 0, S->Width, S->Height, TRUE);
+    Host->CurDrawn  = S->MouseVisible;
+    Host->DrawnCurX = S->MouseX;
+    Host->DrawnCurY = S->MouseY;
     return;
   }
 
-  X1 = S->Dirty.MinX;
-  Y1 = S->Dirty.MinY;
-  X2 = S->Dirty.MaxX;
-  Y2 = S->Dirty.MaxY;
-  if (X1 < 0) X1 = 0;
-  if (Y1 < 0) Y1 = 0;
-  if (X2 > S->Width)  X2 = S->Width;
-  if (Y2 > S->Height) Y2 = S->Height;
-  S->Dirty.Valid = FALSE;
+  // Case 2: Partial scene update (hover highlight change, small control update)
+  if (S->SceneDirty || S->Dirty.Valid) {
+    INT32  Dx1 = S->Dirty.MinX;
+    INT32  Dy1 = S->Dirty.MinY;
+    INT32  Dx2 = S->Dirty.MaxX;
+    INT32  Dy2 = S->Dirty.MaxY;
+    BOOLEAN  HaveDirty = S->Dirty.Valid;
 
-  Lw = X2 - X1;
-  Lh = Y2 - Y1;
-  if (Lw <= 0 || Lh <= 0) {
-    return;
-  }
-
-  Pw = Lw * Scale;
-  Ph = Lh * Scale;
-  if ((UINTN)Pw * (UINTN)Ph > Host->BltScratchPixels) {
-    return;
-  }
-
-  DrawCur = S->MouseVisible &&
-            (S->MouseX < X2) && (S->MouseX + 18 > X1) &&
-            (S->MouseY < Y2) && (S->MouseY + 20 > Y1);
-
-  for (Ly = 0; Ly < Lh; Ly++) {
-    CopyMem (
-      Host->ScratchScene + (UINTN)Ly * (UINTN)Lw,
-      Host->SceneBuf + (UINTN)(Y1 + Ly) * (UINTN)S->Width + (UINTN)X1,
-      (UINTN)Lw * sizeof (UINT32)
-      );
-  }
-  if (DrawCur) {
-    AuroraBiosDrawCursor (Host->ScratchScene, Lw, Lh, S->MouseX - X1, S->MouseY - Y1);
-  }
-
-  for (Ly = 0; Ly < Lh; Ly++) {
-    CONST UINT32  *SrcRow = Host->ScratchScene + (UINTN)Ly * (UINTN)Lw;
-    for (Sy = 0; Sy < Scale; Sy++) {
-      EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *DstRow =
-        Host->BltScratch + (UINTN)(Ly * Scale + Sy) * (UINTN)Pw;
-      for (Lx = 0; Lx < Lw; Lx++) {
-        UINT32                         C = SrcRow[Lx];
-        EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Px;
-        Px.Red      = (UINT8)((C >> 16) & 0xFFu);
-        Px.Green    = (UINT8)((C >> 8) & 0xFFu);
-        Px.Blue     = (UINT8)(C & 0xFFu);
-        Px.Reserved = 0;
-        for (Sx = 0; Sx < Scale; Sx++) {
-          DstRow[Lx * Scale + Sx] = Px;
-        }
-      }
+    if (S->SceneDirty) {
+      AuroraBiosRender (S, Host->SceneBuf);
+      S->SceneDirty = FALSE;
     }
+    S->Dirty.Valid = FALSE;
+
+    // Erase previous cursor cleanly if it was outside Dirty
+    if (Host->CurDrawn &&
+        (Host->DrawnCurX != S->MouseX || Host->DrawnCurY != S->MouseY)) {
+      BlitLogicalRectDirect (
+        Host,
+        Host->DrawnCurX,
+        Host->DrawnCurY,
+        Host->DrawnCurX + CURSOR_W,
+        Host->DrawnCurY + CURSOR_H,
+        FALSE
+        );
+    }
+
+    if (HaveDirty) {
+      BlitLogicalRectDirect (Host, Dx1, Dy1, Dx2, Dy2, TRUE);
+    }
+
+    // Stamp new cursor (in case cursor sits outside Dirty)
+    if (S->MouseVisible) {
+      BlitLogicalRectDirect (
+        Host,
+        S->MouseX,
+        S->MouseY,
+        S->MouseX + CURSOR_W,
+        S->MouseY + CURSOR_H,
+        TRUE
+        );
+      Host->CurDrawn  = TRUE;
+      Host->DrawnCurX = S->MouseX;
+      Host->DrawnCurY = S->MouseY;
+    }
+    return;
   }
 
-  Host->Gop->Blt (
-               Host->Gop,
-               Host->BltScratch,
-               EfiBltBufferToVideo,
-               0,
-               0,
-               (UINTN)(X1 * Scale),
-               (UINTN)(Y1 * Scale + S->TopInsetPx),
-               (UINTN)Pw,
-               (UINTN)Ph,
-               (UINTN)Pw * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
-               );
+  // Case 3: Pure cursor movement
+  // - If old & new overlap (smooth glide): single atomic union blit (zero flicker, ~15-22 KiB!)
+  // - If disjoint (fast flick): two tiny 18x20 patches (11.5 KiB total, never a huge bbox!)
+  if (S->MouseVisible &&
+      (!Host->CurDrawn || Host->DrawnCurX != S->MouseX || Host->DrawnCurY != S->MouseY)) {
+    if (Host->CurDrawn &&
+        (Host->DrawnCurX < S->MouseX + CURSOR_W) && (S->MouseX < Host->DrawnCurX + CURSOR_W) &&
+        (Host->DrawnCurY < S->MouseY + CURSOR_H) && (S->MouseY < Host->DrawnCurY + CURSOR_H)) {
+      INT32  Ux1 = (Host->DrawnCurX < S->MouseX) ? Host->DrawnCurX : S->MouseX;
+      INT32  Uy1 = (Host->DrawnCurY < S->MouseY) ? Host->DrawnCurY : S->MouseY;
+      INT32  Ux2 = ((Host->DrawnCurX > S->MouseX) ? Host->DrawnCurX : S->MouseX) + CURSOR_W;
+      INT32  Uy2 = ((Host->DrawnCurY > S->MouseY) ? Host->DrawnCurY : S->MouseY) + CURSOR_H;
+      BlitLogicalRectDirect (Host, Ux1, Uy1, Ux2, Uy2, TRUE);
+    } else {
+      if (Host->CurDrawn) {
+        BlitLogicalRectDirect (
+          Host,
+          Host->DrawnCurX,
+          Host->DrawnCurY,
+          Host->DrawnCurX + CURSOR_W,
+          Host->DrawnCurY + CURSOR_H,
+          FALSE
+          );
+      }
+      BlitLogicalRectDirect (
+        Host,
+        S->MouseX,
+        S->MouseY,
+        S->MouseX + CURSOR_W,
+        S->MouseY + CURSOR_H,
+        TRUE
+        );
+    }
+    Host->CurDrawn  = TRUE;
+    Host->DrawnCurX = S->MouseX;
+    Host->DrawnCurY = S->MouseY;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -868,20 +1012,13 @@ AuroraBiosEntryPoint (
     (INT32)Host->Gop->Mode->Info->HorizontalResolution,
     (INT32)Host->Gop->Mode->Info->VerticalResolution
     );
-  Host->State.Info.GopBpp =
-    (Host->Gop->Mode->Info->PixelFormat == PixelBitMask) ? 30u : 32u;
+  Host->FbBase    = (UINT32 *)(UINTN)Host->Gop->Mode->FrameBufferBase;
+  Host->FbStride  = Host->Gop->Mode->Info->PixelsPerScanLine;
+  Host->FbIs30Bit = (Host->Gop->Mode->Info->PixelFormat == PixelBitMask);
+  Host->State.Info.GopBpp = Host->FbIs30Bit ? 30u : 32u;
 
-  Host->SceneBuf     = AllocateZeroPool ((UINTN)Host->State.Width * (UINTN)Host->State.Height * sizeof (UINT32));
-  Host->ScratchScene = AllocatePool ((UINTN)Host->State.Width * (UINTN)Host->State.Height * sizeof (UINT32));
-  Host->BltScratchPixels =
-    (UINTN)(Host->State.Width * Host->State.UiScale) *
-    (UINTN)(Host->State.Height * Host->State.UiScale);
-  Host->BltScratch = AllocatePool (Host->BltScratchPixels * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
-
-  if (Host->SceneBuf == NULL || Host->ScratchScene == NULL || Host->BltScratch == NULL) {
-    if (Host->SceneBuf != NULL)     FreePool (Host->SceneBuf);
-    if (Host->ScratchScene != NULL) FreePool (Host->ScratchScene);
-    if (Host->BltScratch != NULL)   FreePool (Host->BltScratch);
+  Host->SceneBuf = AllocateZeroPool ((UINTN)Host->State.Width * (UINTN)Host->State.Height * sizeof (UINT32));
+  if (Host->SceneBuf == NULL) {
     FreePool (Host);
     return EFI_OUT_OF_RESOURCES;
   }
@@ -941,25 +1078,26 @@ AuroraBiosEntryPoint (
     PollInputs (Host, NowMs);
     Host->State.TickCount++;
 
-    // Guaranteed live 1-second monotonic tick (never stalls even without RTC)
+    // Surgical 1-second monotonic tick: ONLY updates clock, uptime, and RX counter
+    // (< 25 KiB direct VRAM burst instead of re-rendering/blitting 17 MiB!).
     if (ElapsedS != LastSecTick) {
+      AURORA_DIRTY_RECT  DynRects[3];
+      UINT32             DynCount;
+      UINT32             R;
+
       LastSecTick = ElapsedS;
       Host->State.Info.UptimeSec = ElapsedS;
       UpdateClock (Host);
-      AuroraBiosRender (&Host->State, Host->SceneBuf);
-      // Partial dirty-rect update for clock, uptime, and live Peripherals/SysInfo readouts
-      Host->State.Dirty.Valid = TRUE;
-      Host->State.Dirty.MinX  = Host->State.Width - 115;
-      Host->State.Dirty.MinY  = 10;
-      Host->State.Dirty.MaxX  = Host->State.Width - 10;
-      Host->State.Dirty.MaxY  = 40;
-      if (Host->State.Mode == AURORA_MODE_EASY) {
-        // Also refresh Easy Mode Uptime hero readout & Peripherals packet counter
-        if (780 < Host->State.Dirty.MinX) Host->State.Dirty.MinX = 674;
-        Host->State.Dirty.MaxY = 534;
-      } else {
-        Host->State.Dirty.MinX = 0;
-        Host->State.Dirty.MaxY = Host->State.Height;
+      DynCount = AuroraBiosRenderDynamicOnly (&Host->State, Host->SceneBuf, DynRects);
+      for (R = 0; R < DynCount; R++) {
+        BlitLogicalRectDirect (
+          Host,
+          DynRects[R].MinX,
+          DynRects[R].MinY,
+          DynRects[R].MaxX,
+          DynRects[R].MaxY,
+          TRUE
+          );
       }
     }
 
@@ -1068,8 +1206,8 @@ AuroraBiosEntryPoint (
     }
 
     if (Running) {
-      // Non-blocking 8 ms (~125 Hz) stall: guaranteed never to hang on WaitForEvent
-      gBS->Stall (8000);
+      // Non-blocking 4 ms (~250 Hz) poll for ultra-smooth low-latency trackpad motion
+      gBS->Stall (4000);
     }
   }
 
@@ -1082,8 +1220,6 @@ AuroraBiosEntryPoint (
   }
   FreeInputProtocols (Host);
   FreePool (Host->SceneBuf);
-  FreePool (Host->ScratchScene);
-  FreePool (Host->BltScratch);
   FreePool (Host);
 
   return EFI_ABORTED;

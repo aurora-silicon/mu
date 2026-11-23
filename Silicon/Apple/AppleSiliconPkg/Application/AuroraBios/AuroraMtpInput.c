@@ -627,8 +627,8 @@ AuroraMtpTickKeyboardRepeat (
 #define SPI_TP_FINGER_COUNT_OFF  30u
 #define SPI_TP_BUTTONS_OFF       31u
 
-#define TP_MOTION_DIVISOR        6
-#define TP_JUMP_GUARD_RAW        1800
+#define TP_MOTION_DIVISOR        4
+#define TP_JUMP_GUARD_RAW        3500
 #define TP_TAP_MAX_TIME_MS       220u
 #define TP_TAP_MAX_DIST_RAW      260
 
@@ -1188,12 +1188,19 @@ HandleDecodedPacket (
   // Command ACK channel (0x11)
   if (Pkt->Channel == AURORA_DC_CHANNEL_CMD) {
     if (Ctx->AckWaiting &&
-        Pkt->Interface == AURORA_MTP_IFACE_COMM &&
+        Pkt->Interface == Ctx->AckExpectedIface &&
         Pkt->Sequence == Ctx->AckExpectedSeq &&
         Pkt->PayloadLength >= 1u &&
         Pkt->Payload[0] == Ctx->AckExpectedCmd) {
+      UINT32  CopyLen = (Pkt->PayloadLength > sizeof (Ctx->AckRespData))
+                          ? (UINT32)sizeof (Ctx->AckRespData)
+                          : (UINT32)Pkt->PayloadLength;
       Ctx->AckReceived   = TRUE;
       Ctx->AckReturnCode = Pkt->ReturnCode;
+      Ctx->AckRespLen    = Pkt->PayloadLength;
+      if (CopyLen > 0u) {
+        MTP_COPY (Ctx->AckRespData, Pkt->Payload, CopyLen);
+      }
     }
     return;
   }
@@ -1246,24 +1253,41 @@ HandleDecodedPacket (
           );
       }
     } else if (Ctx->MultiTouch.Present && Pkt->Interface == Ctx->MultiTouch.Interface) {
+      BOOLEAN  Decoded = FALSE;
+      INT32    PrevDx  = (Events != NULL) ? Events->DeltaX : 0;
+      INT32    PrevDy  = (Events != NULL) ? Events->DeltaY : 0;
+
       Ctx->TpReports++;
-      if (Ctx->TpReports <= 2u) {
+      if (Events != NULL) {
+        Decoded = AuroraMtpDecodeTrackpadReport (
+                    &Ctx->TpState,
+                    Pkt->Payload,
+                    Pkt->PayloadLength,
+                    NowMs,
+                    Events
+                    );
+      }
+      // Log initial status reports + first 10 non-heartbeat touch/button frames
+      if (Ctx->TpReports <= 2u ||
+          (Pkt->Payload[0] != 0x60u && Pkt->Payload[0] != 0x52u && Ctx->TpTouchLogs < 10u)) {
+        if (Pkt->Payload[0] != 0x60u && Pkt->Payload[0] != 0x52u) {
+          Ctx->TpTouchLogs++;
+        }
         DEBUG ((
           DEBUG_ERROR,
-          "[AURORA MTP] TP report #%u len=%u b0=0x%02x\r\n",
+          "[AURORA MTP] TP rpt #%u len=%u hdr=%02x %02x %02x %02x cnt=%u btn=%u dec=%u d=(%d,%d)\r\n",
           Ctx->TpReports,
           Pkt->PayloadLength,
-          Pkt->Payload[0]
+          Pkt->Payload[0],
+          (Pkt->PayloadLength > 1u) ? Pkt->Payload[1] : 0u,
+          (Pkt->PayloadLength > 2u) ? Pkt->Payload[2] : 0u,
+          (Pkt->PayloadLength > 3u) ? Pkt->Payload[3] : 0u,
+          (Pkt->PayloadLength > 23u) ? Pkt->Payload[23] : 0u,
+          (Pkt->PayloadLength > 24u) ? Pkt->Payload[24] : 0u,
+          Decoded ? 1u : 0u,
+          (Events != NULL) ? (Events->DeltaX - PrevDx) : 0,
+          (Events != NULL) ? (Events->DeltaY - PrevDy) : 0
           ));
-      }
-      if (Events != NULL) {
-        AuroraMtpDecodeTrackpadReport (
-          &Ctx->TpState,
-          Pkt->Payload,
-          Pkt->PayloadLength,
-          NowMs,
-          Events
-          );
       }
     }
   }
@@ -1280,8 +1304,8 @@ MtpDrainRx (
   UINT32  Budget;
   UINT32  Pass;
 
-  // Drain up to 4 FIFO bursts per poll to avoid unbounded spin
-  for (Pass = 0; Pass < 4u; Pass++) {
+  // Drain up to 8 FIFO bursts per poll so rapid 125Hz touch bursts never queue up
+  for (Pass = 0; Pass < 8u; Pass++) {
     Avail = MmioRead32 ((UINTN)(Ctx->DataBase + AURORA_DC_DATA_RX_COUNT));
     if (Avail == 0u) {
       break;
@@ -1349,11 +1373,13 @@ MtpSendCommCmdAndWaitAck (
     return FALSE;
   }
 
-  Ctx->AckWaiting     = TRUE;
-  Ctx->AckExpectedSeq = Seq;
-  Ctx->AckExpectedCmd = CmdPayload[0];
-  Ctx->AckReceived    = FALSE;
-  Ctx->AckReturnCode  = 0xFFFFFFFFu;
+  Ctx->AckWaiting       = TRUE;
+  Ctx->AckExpectedIface = AURORA_MTP_IFACE_COMM;
+  Ctx->AckExpectedSeq   = Seq;
+  Ctx->AckExpectedCmd   = CmdPayload[0];
+  Ctx->AckReceived      = FALSE;
+  Ctx->AckReturnCode    = 0xFFFFFFFFu;
+  Ctx->AckRespLen       = 0;
 
   if (!MtpTxPacket (Ctx, PktBuf, PktLen)) {
     Ctx->AckWaiting = FALSE;
@@ -1423,6 +1449,58 @@ MtpSendResetInterface (
   Cmd[4] = Phase;
   MtpWrLe32 (Cmd + 5u, 0u);
   return MtpSendCommCmdAndWaitAck (Ctx, Cmd, 9u, 800u);
+}
+
+static BOOLEAN
+MtpQuerySensorDimensions (
+  IN OUT AURORA_MTP_CONTEXT  *Ctx,
+  IN     UINT8               TargetIface
+  )
+{
+  UINT8   PktBuf[64];
+  UINTN   PktLen   = 0;
+  UINT8   ReportId = 0xD9u;
+  UINT8   Seq      = Ctx->TxSeq[TargetIface]++;
+  UINT32  StartMs;
+
+  if (!AuroraMtpBuildCommandPacket (
+         Seq,
+         TargetIface,
+         2u,  // Feature report
+         1u,  // Get report
+         &ReportId,
+         1u,
+         PktBuf,
+         sizeof (PktBuf),
+         &PktLen
+         )) {
+    return FALSE;
+  }
+
+  Ctx->AckWaiting       = TRUE;
+  Ctx->AckExpectedIface = TargetIface;
+  Ctx->AckExpectedSeq   = Seq;
+  Ctx->AckExpectedCmd   = ReportId;
+  Ctx->AckReceived      = FALSE;
+  Ctx->AckReturnCode    = 0xFFFFFFFFu;
+  Ctx->AckRespLen       = 0;
+
+  if (!MtpTxPacket (Ctx, PktBuf, PktLen)) {
+    Ctx->AckWaiting = FALSE;
+    return FALSE;
+  }
+
+  StartMs = UefiNowMs ();
+  while ((UefiNowMs () - StartMs) < 350u) {
+    MtpDrainRx (Ctx, UefiNowMs (), NULL);
+    if (Ctx->AckReceived) {
+      Ctx->AckWaiting = FALSE;
+      return (Ctx->AckReturnCode == 0u);
+    }
+    MicroSecondDelay (1000);
+  }
+  Ctx->AckWaiting = FALSE;
+  return FALSE;
 }
 
 BOOLEAN
@@ -1632,6 +1710,28 @@ AuroraMtpHwInit (
               Ctx->MultiTouch.Interface,
               Ctx->MultiTouch.Ready ? 1u : 0u
               ));
+            if (Ctx->MultiTouch.Ready) {
+              if (MtpQuerySensorDimensions (Ctx, Ctx->MultiTouch.Interface) && Ctx->AckRespLen >= 17u) {
+                DEBUG ((
+                  DEBUG_ERROR,
+                  "[AURORA MTP] TRACKPAD 0xD9 dims: %ux%u rawX=[%d..%d] rawY=[%d..%d]\r\n",
+                  MtpRdLe32 (Ctx->AckRespData + 1u),
+                  MtpRdLe32 (Ctx->AckRespData + 5u),
+                  (INT32)MtpRdLeS16 (Ctx->AckRespData + 9u),
+                  (INT32)MtpRdLeS16 (Ctx->AckRespData + 13u),
+                  (INT32)MtpRdLeS16 (Ctx->AckRespData + 11u),
+                  (INT32)MtpRdLeS16 (Ctx->AckRespData + 15u)
+                  ));
+              } else {
+                DEBUG ((
+                  DEBUG_ERROR,
+                  "[AURORA MTP] TRACKPAD 0xD9 query: rx=%u ret=0x%x len=%u\r\n",
+                  Ctx->AckReceived ? 1u : 0u,
+                  Ctx->AckReturnCode,
+                  Ctx->AckRespLen
+                  ));
+              }
+            }
           } else {
             DEBUG ((DEBUG_ERROR, "[AURORA MTP] TRACKPAD iface=%u bootstrap cmd failed\r\n",
                     Ctx->MultiTouch.Interface));

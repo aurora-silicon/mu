@@ -1133,8 +1133,8 @@ AuroraBiosHandleMouseMove (
   if (NewY >= State->Height) NewY = State->Height - 1;
 
   if (NewX != State->MouseX || NewY != State->MouseY) {
-    MarkDirtyRect (State, State->MouseX - 2, State->MouseY - 2, State->MouseX + 24, State->MouseY + 26);
-    MarkDirtyRect (State, NewX - 2, NewY - 2, NewX + 24, NewY + 26);
+    // Cursor erase/stamp is handled directly by the host blitter as two tiny
+    // independent 20x24 patches (avoiding giant bounding-box merges on fast swipes!).
     State->PrevMouseX = State->MouseX;
     State->PrevMouseY = State->MouseY;
     State->MouseX     = NewX;
@@ -1165,7 +1165,7 @@ AuroraBiosHandleMouseMove (
       MarkDirtyRect (State, Cur->X - 6, Cur->Y - 4, Cur->X + Cur->W + 6, Cur->Y + Cur->H + 4);
     }
     State->HoveredCtrlIdx = Hit;
-    // Also refresh Item Help panel in Advanced Mode
+    State->SceneDirty     = TRUE;
     if (State->Mode == AURORA_MODE_ADVANCED) {
       MarkDirtyRect (State, State->Width - 360, 470, State->Width - 20, State->Height - 50);
     }
@@ -2674,7 +2674,137 @@ AuroraBiosRender (
 }
 
 // ---------------------------------------------------------------------------
-// Crisp Pointer Arrow Sprite (White Fill, Pure Black Outline, Subtle Orange Edge)
+// Fast Surgical 1-Second Dynamic Stats Redraw (Zero Full-Screen Redraw Lag!)
+// ---------------------------------------------------------------------------
+UINT32
+AuroraBiosRenderDynamicOnly (
+  const AURORA_BIOS_STATE  *State,
+  UINT32                   *BackBuffer,
+  AURORA_DIRTY_RECT        OutRects[3]
+  )
+{
+  INT32   W     = State->Width;
+  INT32   H     = State->Height;
+  UINT32  Count = 0;
+  char    Tmp[64];
+  char    Num[24];
+  char    Hh[4];
+  char    Mm[4];
+  char    Ss[4];
+
+  if (State->ShowHelpModal) {
+    return 0;
+  }
+
+  // 1. Top-right clock & blinking heartbeat dot
+  {
+    INT32  Cx = W - 110;
+    INT32  Cy = 10;
+    INT32  Cw = 104;
+    INT32  Ch = 26;
+
+    FillGradV (BackBuffer, W, H, Cx, Cy, Cw, Ch, 0x00110C09u, 0x00070504u);
+    if (State->Info.ClockHour != 0u || State->Info.ClockMin != 0u || State->Info.ClockSec != 0u) {
+      BiosFmt2D (Hh, State->Info.ClockHour);
+      BiosFmt2D (Mm, State->Info.ClockMin);
+      BiosFmt2D (Ss, State->Info.ClockSec);
+    } else {
+      BiosFmt2D (Hh, (State->Info.UptimeSec / 3600u) % 24u);
+      BiosFmt2D (Mm, (State->Info.UptimeSec / 60u) % 60u);
+      BiosFmt2D (Ss, State->Info.UptimeSec % 60u);
+    }
+    BiosStrCpy (Tmp, sizeof (Tmp), Hh);
+    BiosStrCat (Tmp, sizeof (Tmp), ":");
+    BiosStrCat (Tmp, sizeof (Tmp), Mm);
+    BiosStrCat (Tmp, sizeof (Tmp), ":");
+    BiosStrCat (Tmp, sizeof (Tmp), Ss);
+    FillRect (BackBuffer, W, H, W - 102, 20, 6, 6, (State->Info.UptimeSec & 1u) ? COL_ORANGE_HI : COL_ORANGE_DEEP);
+    DrawTextFace (BackBuffer, W, H, &mAuroraFontSmall, W - 90, 16, COL_TEXT_SEC, Tmp);
+
+    OutRects[Count].Valid = TRUE;
+    OutRects[Count].MinX  = Cx;
+    OutRects[Count].MinY  = Cy;
+    OutRects[Count].MaxX  = Cx + Cw;
+    OutRects[Count].MaxY  = Cy + Ch;
+    Count++;
+  }
+
+  if (State->Mode == AURORA_MODE_EASY) {
+    // 2. Easy Mode: Setup Uptime hero readout (pure black background!)
+    INT32  Ux = 786;
+    INT32  Uy = 240;
+    INT32  Uw = 156;
+    INT32  Uh = 42;
+    FillRect (BackBuffer, W, H, Ux, Uy, Uw, Uh, COL_BLACK);
+    BiosFmt2D (Mm, (State->Info.UptimeSec / 60u) % 100u);
+    BiosFmt2D (Ss, State->Info.UptimeSec % 60u);
+    BiosStrCpy (Tmp, sizeof (Tmp), Mm);
+    BiosStrCat (Tmp, sizeof (Tmp), ":");
+    BiosStrCat (Tmp, sizeof (Tmp), Ss);
+    DrawTextFace (BackBuffer, W, H, &mAuroraFontHero, 790, 242, COL_WHITE, Tmp);
+    DrawTextFace (BackBuffer, W, H, &mAuroraFontSmall, 790 + MeasureText (&mAuroraFontHero, Tmp) + 6, 256, COL_ORANGE_HI, "LIVE");
+
+    OutRects[Count].Valid = TRUE;
+    OutRects[Count].MinX  = Ux;
+    OutRects[Count].MinY  = Uy;
+    OutRects[Count].MaxX  = Ux + Uw;
+    OutRects[Count].MaxY  = Uy + Uh;
+    Count++;
+
+    // 3. Easy Mode: Peripherals live RX packet counter
+    {
+      INT32  Rx = 674 + 62;
+      INT32  Ry = 338 + 18 + 4 * 28 - 2;
+      INT32  Rw = (W - 324 - 14 - 674) - 66;
+      INT32  Rh = 22;
+      if (Rw > 40) {
+        FillRect (BackBuffer, W, H, Rx, Ry, Rw, Rh, COL_BG_CARD);
+        BiosFmtU32 (Tmp, sizeof (Tmp), State->Info.MtpPacketsRx);
+        BiosStrCat (Tmp, sizeof (Tmp), " pkts (");
+        BiosFmtU32 (Num, sizeof (Num), State->Info.MtpKbReports);
+        BiosStrCat (Tmp, sizeof (Tmp), Num);
+        BiosStrCat (Tmp, sizeof (Tmp), "K / ");
+        BiosFmtU32 (Num, sizeof (Num), State->Info.MtpTpReports);
+        BiosStrCat (Tmp, sizeof (Tmp), Num);
+        BiosStrCat (Tmp, sizeof (Tmp), "T)");
+        DrawTextFace (BackBuffer, W, H, &mAuroraFontSmall, 674 + 64, 338 + 18 + 4 * 28, COL_TEXT_SEC, Tmp);
+
+        OutRects[Count].Valid = TRUE;
+        OutRects[Count].MinX  = Rx;
+        OutRects[Count].MinY  = Ry;
+        OutRects[Count].MaxX  = Rx + Rw;
+        OutRects[Count].MaxY  = Ry + Rh;
+        Count++;
+      }
+    }
+  } else {
+    // 2. Advanced Mode: Hardware Monitor Uptime row
+    INT32  SideX = 24 + (W - 384) + 16;
+    INT32  Vx    = SideX + 132;
+    INT32  Uy    = 148 + 36 + 8 * 28 - 2;
+    INT32  Uw    = 96;
+    INT32  Uh    = 22;
+    FillRect (BackBuffer, W, H, Vx - 2, Uy, Uw, Uh, COL_BG_CARD);
+    BiosFmt2D (Mm, (State->Info.UptimeSec / 60u) % 100u);
+    BiosFmt2D (Ss, State->Info.UptimeSec % 60u);
+    BiosStrCpy (Tmp, sizeof (Tmp), Mm);
+    BiosStrCat (Tmp, sizeof (Tmp), ":");
+    BiosStrCat (Tmp, sizeof (Tmp), Ss);
+    DrawTextFace (BackBuffer, W, H, &mAuroraFontSmall, Vx, 148 + 36 + 8 * 28, COL_WHITE, Tmp);
+
+    OutRects[Count].Valid = TRUE;
+    OutRects[Count].MinX  = Vx - 2;
+    OutRects[Count].MinY  = Uy;
+    OutRects[Count].MaxX  = Vx - 2 + Uw;
+    OutRects[Count].MaxY  = Uy + Uh;
+    Count++;
+  }
+
+  return Count;
+}
+
+// ---------------------------------------------------------------------------
+// Crisp Pointer Arrow Sprite (High-Visibility 18x22 White + Black + Orange)
 // ---------------------------------------------------------------------------
 VOID
 AuroraBiosDrawCursor (

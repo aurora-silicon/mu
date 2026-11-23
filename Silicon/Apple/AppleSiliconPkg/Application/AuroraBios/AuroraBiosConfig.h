@@ -273,8 +273,9 @@ typedef struct {
   AURORA_BIOS_ACTION    PendingAction;
   UINT32                PendingActionArg;
 
-  // Dirty-rect tracking for lag-free partial GOP blitting
+  // Dirty-rect tracking for lag-free partial direct-VRAM compositing
   BOOLEAN               FullRedrawNeeded;
+  BOOLEAN               SceneDirty;       // Re-render SceneBuf before blitting Dirty rect
   AURORA_DIRTY_RECT     Dirty;
 } AURORA_BIOS_STATE;
 
@@ -360,7 +361,16 @@ AuroraBiosRender (
   UINT32             *BackBuffer
   );
 
-// Draw crisp pointer sprite on top of BackBuffer
+// Fast surgical 1-second partial redraw (clock, uptime, live MTP packet count)
+// Returns up to 3 tiny logical dirty rects without redrawing the whole screen!
+UINT32
+AuroraBiosRenderDynamicOnly (
+  const AURORA_BIOS_STATE  *State,
+  UINT32                   *BackBuffer,
+  AURORA_DIRTY_RECT        OutRects[3]
+  );
+
+// Draw crisp pointer sprite on top of BackBuffer (or single scanline overlay)
 VOID
 AuroraBiosDrawCursor (
   UINT32  *BackBuffer,

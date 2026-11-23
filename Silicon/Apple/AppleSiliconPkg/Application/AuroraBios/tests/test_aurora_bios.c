@@ -157,10 +157,31 @@ TestConfigAndUi (
     }
   }
 
-  // Test mouse click back to Easy Mode tab
-  AuroraBiosHandleMouseMove (&S, S.Controls[0].X + 40, S.Controls[0].Y + 15, TRUE);
-  AuroraBiosHandleMouseMove (&S, S.Controls[0].X + 40, S.Controls[0].Y + 15, FALSE);
-  assert (S.Mode == AURORA_MODE_EASY);
+  // Test surgical dynamic-only rendering in Advanced + Easy Mode and hover SceneDirty
+  {
+    AURORA_DIRTY_RECT  DynRects[3];
+    UINT32             DynCount;
+
+    S.Info.UptimeSec = 75u;
+    DynCount = AuroraBiosRenderDynamicOnly (&S, Fb, DynRects);
+    assert (DynCount == 2u);
+    assert (DynRects[0].Valid && DynRects[1].Valid);
+
+    // Click back to Easy Mode tab
+    AuroraBiosHandleMouseMove (&S, S.Controls[0].X + 40, S.Controls[0].Y + 15, TRUE);
+    AuroraBiosHandleMouseMove (&S, S.Controls[0].X + 40, S.Controls[0].Y + 15, FALSE);
+    assert (S.Mode == AURORA_MODE_EASY);
+
+    // Verify hover sets SceneDirty so hovered buttons highlight immediately
+    S.SceneDirty = FALSE;
+    AuroraBiosHandleMouseMove (&S, S.Controls[1].X + 40, S.Controls[1].Y + 15, FALSE);
+    assert (S.HoveredCtrlIdx == 1 && S.SceneDirty);
+
+    // Verify Easy Mode dynamic-only update returns all 3 lightweight dirty rects
+    DynCount = AuroraBiosRenderDynamicOnly (&S, Fb, DynRects);
+    assert (DynCount == 3u);
+    assert (DynRects[0].Valid && DynRects[1].Valid && DynRects[2].Valid);
+  }
 
   free (Fb);
   printf ("  [PASS] Config CRC32, Easy Mode, Advanced Mode, live KBL action\n");
@@ -261,8 +282,8 @@ TestMtpProtocolAndDecoders (
     WrLe16 (F1 + 1 + 38 + 18, 400u);
 
     F2[0] = 0x75u; F2[1 + 22] = 1u; F2[1 + 23] = 0u;
-    WrLe16 (F2 + 1 + 38 + 4, (UINT16)(INT16)160); // +60 -> +10 px
-    WrLe16 (F2 + 1 + 38 + 6, (UINT16)(INT16)230); // +30 raw Y -> -5 px screen Y
+    WrLe16 (F2 + 1 + 38 + 4, (UINT16)(INT16)160); // +60 / 4 -> +15 px
+    WrLe16 (F2 + 1 + 38 + 6, (UINT16)(INT16)230); // +30 raw Y / 4 -> -7 px screen Y
     WrLe16 (F2 + 1 + 38 + 18, 400u);
 
     F3[0] = 0x75u; F3[1 + 22] = 0u; F3[1 + 23] = 0u;
@@ -273,7 +294,7 @@ TestMtpProtocolAndDecoders (
 
     memset (&Ev, 0, sizeof (Ev));
     assert (AuroraMtpDecodeTrackpadReport (&Tp, F2, sizeof (F2), 1050u, &Ev));
-    assert (Ev.DeltaX == 10 && Ev.DeltaY == -5 && !Ev.LeftDown);
+    assert (Ev.DeltaX == 15 && Ev.DeltaY == -7 && !Ev.LeftDown);
 
     // Quick lift (< 220 ms, dist < 260) triggers tap-to-click pulse!
     memset (&Ev, 0, sizeof (Ev));
