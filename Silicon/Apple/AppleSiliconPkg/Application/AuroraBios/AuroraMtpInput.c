@@ -1872,6 +1872,14 @@ AuroraMtpHwPublishHandoff (
     return;
   }
 
+  // Keep DockChannel channel-1 quiet across OS boot and IoConnectInterruptEx
+  if (Ctx->IrqBase != 0ULL && Ctx->DataBase != 0ULL) {
+    UINT32  Mask = MmioRead32 ((UINTN)(Ctx->IrqBase + AURORA_DC_IRQ_MASK));
+    MmioWrite32 ((UINTN)(Ctx->IrqBase + AURORA_DC_IRQ_MASK), Mask & ~0x0Cu);
+    MtpDrainRx (Ctx, UefiNowMs (), NULL);
+    MmioWrite32 ((UINTN)(Ctx->IrqBase + AURORA_DC_IRQ_FLAG), 0x0Cu);
+  }
+
   Dst = (AURORA_MTP_PREBOOT_HANDOFF *)(UINTN)(Ctx->StagingVa + AURORA_MTP_HANDOFF_OFFSET);
   if (AuroraMtpBuildPrebootHandoff (Ctx, Dst)) {
     WriteBackInvalidateDataCacheRange ((VOID *)Dst, sizeof (*Dst));
