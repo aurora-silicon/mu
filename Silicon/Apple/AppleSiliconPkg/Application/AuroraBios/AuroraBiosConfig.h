@@ -1,9 +1,10 @@
 /** @file
-  Aurora Silicon Gaming UEFI BIOS - Shared Configuration & Core UI API.
+  Aurora Silicon UEFI Setup - Shared Configuration & Core UI API.
 
   Dual-compiled for both AArch64 UEFI (CLANGPDB) and host desk unit tests
   (AURORA_BIOS_HOST_TEST) so layout, hit-testing, navigation, config CRC32
-  persistence, and rendering are thoroughly verified before flashing.
+  persistence, MTP protocol/HID decoding, NTFS reading, and rendering are
+  verified before flashing.
 
   Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -20,6 +21,8 @@ typedef uint8_t   UINT8;
 typedef uint16_t  UINT16;
 typedef uint32_t  UINT32;
 typedef uint64_t  UINT64;
+typedef int8_t    INT8;
+typedef int16_t   INT16;
 typedef int32_t   INT32;
 typedef int64_t   INT64;
 typedef size_t    UINTN;
@@ -44,11 +47,11 @@ typedef bool      BOOLEAN;
 #define AURORA_BIOS_CONFIG_VAR_NAME  L"AuroraBiosConfig"
 #define AURORA_BIOS_CONFIG_ESP_PATH  L"\\EFI\\Aurora\\bios.cfg"
 #define AURORA_BIOS_CONFIG_MAGIC     0x41555242u  // 'AURB'
-#define AURORA_BIOS_CONFIG_VERSION   1u
+#define AURORA_BIOS_CONFIG_VERSION   2u
 
 #define AURORA_BIOS_MAX_BOOT_ENTRIES 16
 #define AURORA_BIOS_MAX_TEXT         64
-#define AURORA_BIOS_MAX_CONTROLS     32
+#define AURORA_BIOS_MAX_CONTROLS     48
 
 // Performance Profiles
 #define AURORA_PROFILE_BALANCED      0u
@@ -65,12 +68,18 @@ typedef bool      BOOLEAN;
 #define AURORA_DEBUG_INFO            1u
 #define AURORA_DEBUG_VERBOSE         2u
 
-// Tabs
+// Top-Level Modes (Gigabyte 1:1 Easy Mode / Advanced Mode)
 typedef enum {
-  AURORA_TAB_DASHBOARD = 0,
-  AURORA_TAB_BOOT      = 1,
-  AURORA_TAB_HARDWARE  = 2,
-  AURORA_TAB_DIAG      = 3,
+  AURORA_MODE_EASY     = 0,
+  AURORA_MODE_ADVANCED = 1
+} AURORA_BIOS_MODE;
+
+// Advanced Mode Sub-Tabs (Gigabyte-style: Tweaker | Settings | System Info. | Boot | Save & Exit)
+typedef enum {
+  AURORA_TAB_TWEAKER   = 0,
+  AURORA_TAB_SETTINGS  = 1,
+  AURORA_TAB_SYSINFO   = 2,
+  AURORA_TAB_BOOT      = 3,
   AURORA_TAB_EXIT      = 4,
   AURORA_TAB_COUNT     = 5
 } AURORA_BIOS_TAB;
@@ -86,10 +95,11 @@ typedef enum {
   AURORA_ACTION_LAUNCH_SHELL,
   AURORA_ACTION_SCAN_USB_HID,
   AURORA_ACTION_POWER_OFF,
-  AURORA_ACTION_REORDER_BOOT      // Reorder occurred in BootEntries[]
+  AURORA_ACTION_REORDER_BOOT,     // Reorder occurred in BootEntries[]
+  AURORA_ACTION_SET_KBD_BACKLIGHT // ActionArg = brightness 0..255
 } AURORA_BIOS_ACTION;
 
-// Input key abstraction (normalized from UEFI SimpleTextInputEx & serial)
+// Normalized keyboard input abstraction (MTP DockChannel + UEFI ConInEx + serial)
 typedef enum {
   AURORA_KEY_NONE = 0,
   AURORA_KEY_UP,
@@ -106,8 +116,10 @@ typedef enum {
   AURORA_KEY_F3,
   AURORA_KEY_F4,
   AURORA_KEY_F5,
+  AURORA_KEY_F7,
   AURORA_KEY_F9,
   AURORA_KEY_F10,
+  AURORA_KEY_F11,
   AURORA_KEY_PLUS,
   AURORA_KEY_MINUS
 } AURORA_BIOS_KEY;
@@ -118,7 +130,7 @@ typedef struct {
   UINT32  Magic;
   UINT32  Version;
   UINT32  PerformanceProfile;   // 0=Balanced, 1=Performance, 2=Quiet
-  UINT32  BootTimeoutSec;       // 0..10s (0 = instant boot unless hotkey held)
+  UINT32  BootTimeoutSec;       // 0..10s
   UINT8   FastBoot;             // 0/1
   UINT8   BootSplashLogo;       // 0/1
   UINT8   DefaultBootTarget;    // 0=OS, 1=UEFI Shell, 2=BIOS
@@ -129,14 +141,15 @@ typedef struct {
   UINT8   UsbHidAutoConnect;    // 0=On-Demand Safe, 1=Auto
   UINT8   ExternalUsbBoot;      // 0/1
   UINT8   EnterBiosOnce;        // One-shot flag consumed on boot
-  UINT8   Reserved[2];
+  UINT8   KbdBacklightLevel;    // 0..4 (0=Off, 1=25%, 2=50%, 3=75%, 4=100%)
+  UINT8   DirectScanout;        // 0/1 (display direct scanout preference)
   UINT32  Crc32;
 } AURORA_BIOS_CONFIG;
 #pragma pack(pop)
 
 // Live Boot Option entry populated from EfiBootManagerGetLoadOptions
 typedef struct {
-  UINT16  OptionNumber;         // e.g. 0x0001 for Boot0001
+  UINT16  OptionNumber;
   BOOLEAN IsActive;
   BOOLEAN IsShell;
   char    Description[AURORA_BIOS_MAX_TEXT];
@@ -145,9 +158,9 @@ typedef struct {
 
 // Live Hardware Telemetry populated at UEFI startup & updated dynamically
 typedef struct {
-  char    PlatformName[48];     // e.g. "Apple MacBook Air (J813 / M5)"
-  char    SocName[48];          // e.g. "Apple M5 (T8142) ARMv9"
-  char    FirmwareVersion[48];  // e.g. "Aurora Mu UEFI 2026.11"
+  char    PlatformName[48];     // e.g. "Apple Mac17,3 (J813)"
+  char    SocName[48];          // e.g. "Apple M5 (T8142) 10-Core"
+  char    FirmwareVersion[48];  // e.g. "Aurora Mu 2026"
   UINT32  CpuCores;
   UINT64  TotalRamMiB;
   UINT32  GopWidth;
@@ -161,6 +174,16 @@ typedef struct {
   UINT32  SimplePointerCount;
   UINT32  AbsPointerCount;
   UINT32  KeyboardCount;
+  // Native Apple MTP DockChannel + FPWM Backlight live telemetry
+  BOOLEAN MtpActive;
+  BOOLEAN MtpKbReady;
+  BOOLEAN MtpTpReady;
+  BOOLEAN MtpFwLoaded;
+  BOOLEAN KblActive;
+  char    MtpFwSource[24];      // "ESP", "NTFS", "NONE"
+  UINT32  MtpPacketsRx;
+  UINT32  MtpKbReports;
+  UINT32  MtpTpReports;
   UINT32  ClockHour;
   UINT32  ClockMin;
   UINT32  ClockSec;
@@ -175,11 +198,12 @@ typedef struct {
 // Interactive hit-testable UI control rectangle (in logical canvas coordinates)
 typedef enum {
   AURORA_CTRL_NONE = 0,
+  AURORA_CTRL_MODE_TAB,
   AURORA_CTRL_TAB,
+  AURORA_CTRL_UTIL_BTN,
   AURORA_CTRL_BUTTON,
   AURORA_CTRL_TOGGLE,
   AURORA_CTRL_CHOICE,
-  AURORA_CTRL_SLIDER,
   AURORA_CTRL_BOOT_ROW
 } AURORA_CTRL_KIND;
 
@@ -202,7 +226,7 @@ typedef struct {
   INT32   MaxY;
 } AURORA_DIRTY_RECT;
 
-// Complete Gaming BIOS UI State
+// Complete UEFI Setup UI State
 typedef struct {
   // Logical canvas geometry (e.g. 1280x832 on 2560x1664 HiDPI with Scale=2)
   INT32                 Width;
@@ -218,11 +242,13 @@ typedef struct {
   UINT32                SelectedBootIdx;
   BOOLEAN               BootOrderDirty;
 
+  AURORA_BIOS_MODE      Mode;
   AURORA_BIOS_TAB       ActiveTab;
+  BOOLEAN               ShowHelpModal;
   INT32                 FocusedCtrlIdx;
   INT32                 HoveredCtrlIdx;
 
-  // Mouse state in logical canvas coordinates
+  // Mouse / Trackpad state in logical canvas coordinates
   INT32                 MouseX;
   INT32                 MouseY;
   INT32                 PrevMouseX;
@@ -230,7 +256,6 @@ typedef struct {
   BOOLEAN               MouseLeftDown;
   BOOLEAN               MousePrevLeftDown;
   BOOLEAN               MouseVisible;
-  UINT32                DraggingSliderId;
   UINT32                LastClickTick;
   UINT32                LastClickBootIdx;
 
@@ -239,7 +264,7 @@ typedef struct {
   UINT32                StatusColor;
   UINT32                TickCount;
 
-  // Layout controls computed each frame for active tab
+  // Layout controls computed each frame for active mode/tab
   AURORA_UI_RECT        Controls[AURORA_BIOS_MAX_CONTROLS];
   INT32                 ControlCount;
 
@@ -251,6 +276,12 @@ typedef struct {
   BOOLEAN               FullRedrawNeeded;
   AURORA_DIRTY_RECT     Dirty;
 } AURORA_BIOS_STATE;
+
+// Map KbdBacklightLevel (0..4) -> PWM brightness (0..255)
+UINT32
+AuroraBiosKblLevelToPwm (
+  UINT8  Level
+  );
 
 // Config helpers
 UINT32
@@ -328,7 +359,7 @@ AuroraBiosRender (
   UINT32             *BackBuffer
   );
 
-// Draw just the cursor sprite on top of BackBuffer (or restore patch)
+// Draw crisp pointer sprite on top of BackBuffer
 VOID
 AuroraBiosDrawCursor (
   UINT32  *BackBuffer,

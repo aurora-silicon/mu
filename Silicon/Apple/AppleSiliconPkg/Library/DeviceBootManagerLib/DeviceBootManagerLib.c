@@ -1199,7 +1199,7 @@ AuroraCheckBiosBootRequest (
 
   // 0. Direct-to-BIOS build flag (e.g. interactive BIOS showcase boot).
   if (FixedPcdGetBool (PcdAuroraBootToBios)) {
-    DEBUG ((DEBUG_ERROR, "[Bds] PcdAuroraBootToBios=TRUE -> entering Aurora Gaming UEFI BIOS\n"));
+    DEBUG ((DEBUG_ERROR, "[Bds] PcdAuroraBootToBios=TRUE -> entering Aurora UEFI Setup\n"));
     return TRUE;
   }
 

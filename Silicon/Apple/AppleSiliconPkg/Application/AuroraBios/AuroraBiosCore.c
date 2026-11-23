@@ -1,8 +1,9 @@
 /** @file
-  Aurora Silicon Gaming UEFI BIOS - Core UI Layout, Input & Software Compositor.
+  Aurora Silicon UEFI Setup - Core UI State, Gigabyte-Style Easy/Advanced
+  Layout, Dirty-Rect Anti-Aliased Software Renderer & Input Controller.
 
-  Pure C, freestanding (no libc required), compiles both inside EDK2/Mu AArch64
-  and natively on host for unit tests (-DAURORA_BIOS_HOST_TEST).
+  Pure C99 freestanding implementation (dual-compiled for AArch64 UEFI and
+  host unit tests with ASan/UBSan).
 
   Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -11,122 +12,129 @@
 #include "AuroraBiosConfig.h"
 #include "AuroraBiosFont.h"
 
-// ---------------------------------------------------------------------------
-// Palette (Carbon Obsidian + Electric Cyan + Solar Amber + Emerald Telemetry)
-// ---------------------------------------------------------------------------
-#define COL_BG            0x000A0E17u
-#define COL_BG_GRAD_TOP   0x000F1726u
-#define COL_HEADER_BG     0x00111927u
-#define COL_CARD_BG       0x00141D2Cu
-#define COL_CARD_ALT      0x00192436u
-#define COL_CARD_HOVER    0x001F2E46u
-#define COL_BORDER        0x0024354Eu
-#define COL_BORDER_HI     0x0000E5FFu
-#define COL_ACCENT        0x0000E5FFu  // Electric Cyan
-#define COL_ACCENT_DIM    0x000A4F63u
-#define COL_ACCENT_DARK   0x000C2D3Eu
-#define COL_AMBER         0x00F59E0Bu  // Solar Amber
-#define COL_AMBER_DARK    0x003F2A08u
-#define COL_GREEN         0x0010B981u  // Emerald OK
-#define COL_GREEN_DARK    0x000A3528u
-#define COL_RED           0x00EF4444u  // Crimson Warning
-#define COL_RED_DARK      0x003D1418u
-#define COL_TEXT_BRIGHT   0x00F8FAFCu
-#define COL_TEXT          0x00CBD5E1u
-#define COL_TEXT_MUTED    0x0064748Bu
-#define COL_FOOTER_BG     0x000D131Fu
+#ifdef AURORA_BIOS_HOST_TEST
+#include <stdio.h>
+#include <string.h>
+#else
+#include <Library/BaseLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/PrintLib.h>
+#endif
 
-// Control IDs
+// ---------------------------------------------------------------------------
+// Gigabyte-Inspired Molten Orange / Obsidian Palette (0x00RRGGBB)
+// ---------------------------------------------------------------------------
+#define COL_BLACK         0x00000000u
+#define COL_BG_CARD       0x00050505u
+#define COL_BG_ROW_ALT    0x000A0A0Au
+#define COL_BG_ROW_HOV    0x001D1008u
+#define COL_BG_ROW_FOC    0x00261409u
+#define COL_BORDER        0x002C2C2Cu
+#define COL_BORDER_HI     0x00464646u
+#define COL_DIVIDER       0x001E1E1Eu
+#define COL_ORANGE        0x00F26522u
+#define COL_ORANGE_HI     0x00FF8533u
+#define COL_ORANGE_DEEP   0x007A2906u
+#define COL_ORANGE_DARK   0x00240C02u
+#define COL_WHITE         0x00FFFFFFu
+#define COL_TEXT_PRI      0x00E6E6E6u
+#define COL_TEXT_SEC      0x00A6A6A6u
+#define COL_TEXT_MUTED    0x006E6E6Eu
+#define COL_GREEN         0x0022C55Eu
+#define COL_AMBER         0x00F59E0Bu
+#define COL_RED           0x00EF4444u
+
+// Logical Control IDs
 enum {
-  CID_TAB_BASE            = 100, // 100..104
-  // Dashboard
-  CID_PROFILE_BALANCED    = 200,
-  CID_PROFILE_PERFORMANCE = 201,
-  CID_PROFILE_QUIET       = 202,
-  CID_BTN_BOOT_OS         = 210,
-  CID_BTN_UEFI_SHELL      = 211,
-  CID_BTN_SCAN_USB        = 212,
-  CID_BTN_SAVE_REBOOT     = 213,
-  // Boot Manager
-  CID_BOOT_ROW_BASE       = 300, // 300..307
-  CID_BOOT_MOVE_UP        = 320,
-  CID_BOOT_MOVE_DOWN      = 321,
-  CID_BOOT_LAUNCH_SEL     = 322,
-  CID_SLIDER_TIMEOUT      = 330,
-  CID_TOGGLE_FASTBOOT     = 331,
-  CID_TOGGLE_SPLASH       = 332,
-  CID_CHOICE_DEF_TARGET   = 333,
-  // Hardware & GPU
-  CID_TOGGLE_GPU_POOL     = 400,
-  CID_CHOICE_CON_SCALE    = 401,
-  CID_SLIDER_MOUSE_SPEED  = 402,
-  CID_CHOICE_SERIAL_DBG   = 403,
-  CID_TOGGLE_USB_AUTO     = 404,
-  CID_TOGGLE_USB_BOOT     = 405,
-  // Diagnostics
-  CID_DIAG_SCAN_USB       = 500,
-  CID_DIAG_RESET_INPUT    = 501,
-  // Save & Exit
-  CID_EXIT_SAVE_BOOT      = 600,
-  CID_EXIT_SAVE_REBOOT    = 601,
-  CID_EXIT_DISCARD_BOOT   = 602,
-  CID_EXIT_LOAD_DEFAULTS  = 603,
-  CID_EXIT_SHELL          = 604,
-  CID_EXIT_POWER_OFF      = 605
+  CTRL_MODE_EASY = 10,
+  CTRL_MODE_ADVANCED,
+
+  CTRL_UTIL_HELP = 20,
+  CTRL_UTIL_INPUT,
+  CTRL_UTIL_DEFAULTS,
+  CTRL_UTIL_SAVE_EXIT,
+  CTRL_UTIL_SHELL,
+  CTRL_UTIL_BOOT_OS,
+
+  CTRL_ADV_TAB_BASE = 40, // +0..4
+
+  // Easy Mode Quick-Link & Action Buttons
+  CTRL_EASY_POWER_BTN = 60,
+  CTRL_EASY_QA_SHELL,
+  CTRL_EASY_QA_SYSINFO,
+  CTRL_EASY_QA_BOOT,
+
+  // Settings Controls (shared IDs across Easy & Advanced Mode!)
+  CTRL_SET_PERF_PROFILE = 100,
+  CTRL_SET_DIRECT_SCANOUT,
+  CTRL_SET_GPU_POOL,
+  CTRL_SET_KBD_BACKLIGHT,
+  CTRL_SET_SCALE_MODE,
+  CTRL_SET_MOUSE_SPEED,
+  CTRL_SET_FAST_BOOT,
+  CTRL_SET_SPLASH_LOGO,
+  CTRL_SET_DEFAULT_TARGET,
+  CTRL_SET_BOOT_TIMEOUT,
+  CTRL_SET_SERIAL_DEBUG,
+  CTRL_SET_USB_AUTO,
+  CTRL_SET_EXT_USB_BOOT,
+  CTRL_SET_ENTER_ONCE,
+
+  // Action Buttons
+  CTRL_BTN_BOOT_UP = 200,
+  CTRL_BTN_BOOT_DOWN,
+  CTRL_BTN_BOOT_NOW,
+  CTRL_BTN_LAUNCH_SHELL,
+  CTRL_BTN_SCAN_USB,
+  CTRL_BTN_SAVE_EXIT,
+  CTRL_BTN_SAVE_ONLY,
+  CTRL_BTN_DISCARD_EXIT,
+  CTRL_BTN_LOAD_DEFAULTS,
+  CTRL_BTN_SAVE_REBOOT,
+  CTRL_BTN_POWER_OFF,
+
+  CTRL_BOOT_ROW_BASE = 300
 };
 
 // ---------------------------------------------------------------------------
-// Freestanding String / Formatting / Memory Helpers
+// Portable String / Memory Helpers
 // ---------------------------------------------------------------------------
 static VOID
-ZeroBytes (
-  VOID   *Dst,
-  UINTN  Len
+BiosZero (
+  VOID   *Ptr,
+  UINTN  Size
   )
 {
-  UINT8  *P = (UINT8 *)Dst;
-  while (Len--) {
-    *P++ = 0;
-  }
+#ifdef AURORA_BIOS_HOST_TEST
+  memset (Ptr, 0, Size);
+#else
+  ZeroMem (Ptr, Size);
+#endif
 }
 
 static VOID
-CopyBytes (
+BiosCopy (
   VOID        *Dst,
   const VOID  *Src,
-  UINTN       Len
+  UINTN       Size
   )
 {
-  UINT8        *D = (UINT8 *)Dst;
-  const UINT8  *S = (const UINT8 *)Src;
-  while (Len--) {
-    *D++ = *S++;
-  }
-}
-
-static UINTN
-StrLenA (
-  const char  *S
-  )
-{
-  UINTN  N = 0;
-  if (S == NULL) {
-    return 0;
-  }
-  while (S[N] != '\0') {
-    N++;
-  }
-  return N;
+#ifdef AURORA_BIOS_HOST_TEST
+  memcpy (Dst, Src, Size);
+#else
+  CopyMem (Dst, Src, Size);
+#endif
 }
 
 static VOID
-StrCopyA (
+BiosStrCpy (
   char        *Dst,
   UINTN       DstSize,
   const char  *Src
   )
 {
   UINTN  I = 0;
+
   if (Dst == NULL || DstSize == 0) {
     return;
   }
@@ -140,100 +148,99 @@ StrCopyA (
 }
 
 static VOID
-StrCatA (
-  char        *Dst,
-  UINTN       DstSize,
-  const char  *Src
-  )
-{
-  UINTN  Len = StrLenA (Dst);
-  if (Len < DstSize) {
-    StrCopyA (Dst + Len, DstSize - Len, Src);
-  }
-}
-
-static VOID
-AppendU64 (
+BiosFmtU32 (
   char    *Dst,
   UINTN   DstSize,
-  UINT64  Val,
-  UINTN   MinDigits
+  UINT32  Val
   )
 {
-  char   Tmp[24];
+  char   Tmp[16];
   UINTN  N = 0;
-  char   Out[24];
-  UINTN  O = 0;
+  UINTN  I = 0;
 
+  if (DstSize == 0) {
+    return;
+  }
   if (Val == 0) {
     Tmp[N++] = '0';
   } else {
     while (Val > 0 && N < sizeof (Tmp)) {
-      Tmp[N++] = (char)('0' + (Val % 10));
-      Val /= 10;
+      Tmp[N++] = (char)('0' + (Val % 10u));
+      Val /= 10u;
     }
   }
-  while (N < MinDigits && N < sizeof (Tmp)) {
-    Tmp[N++] = '0';
+  while (N > 0 && I + 1 < DstSize) {
+    Dst[I++] = Tmp[--N];
   }
-  while (N > 0 && O + 1 < sizeof (Out)) {
-    Out[O++] = Tmp[--N];
-  }
-  Out[O] = '\0';
-  StrCatA (Dst, DstSize, Out);
+  Dst[I] = '\0';
 }
 
 static VOID
-AppendI32 (
+BiosFmtI32 (
   char   *Dst,
   UINTN  DstSize,
   INT32  Val
   )
 {
+  if (DstSize < 2) {
+    if (DstSize == 1) Dst[0] = '\0';
+    return;
+  }
   if (Val < 0) {
-    StrCatA (Dst, DstSize, "-");
-    AppendU64 (Dst, DstSize, (UINT64)(-(INT64)Val), 1);
+    Dst[0] = '-';
+    BiosFmtU32 (Dst + 1, DstSize - 1, (UINT32)(-(INT64)Val));
   } else {
-    AppendU64 (Dst, DstSize, (UINT64)Val, 1);
+    BiosFmtU32 (Dst, DstSize, (UINT32)Val);
   }
 }
 
 static VOID
-AppendHex16 (
+BiosStrCat (
+  char        *Dst,
+  UINTN       DstSize,
+  const char  *Src
+  )
+{
+  UINTN  Len = 0;
+  UINTN  I   = 0;
+
+  if (Dst == NULL || Src == NULL || DstSize == 0) {
+    return;
+  }
+  while (Len < DstSize && Dst[Len] != '\0') {
+    Len++;
+  }
+  while (Len + 1 < DstSize && Src[I] != '\0') {
+    Dst[Len++] = Src[I++];
+  }
+  if (Len < DstSize) {
+    Dst[Len] = '\0';
+  }
+}
+
+static VOID
+BiosFmt2D (
   char    *Dst,
-  UINTN   DstSize,
-  UINT16  Val
+  UINT32  V
   )
 {
-  static const char  Hex[] = "0123456789ABCDEF";
-  char               Buf[5];
-  Buf[0] = Hex[(Val >> 12) & 0xF];
-  Buf[1] = Hex[(Val >> 8) & 0xF];
-  Buf[2] = Hex[(Val >> 4) & 0xF];
-  Buf[3] = Hex[Val & 0xF];
-  Buf[4] = '\0';
-  StrCatA (Dst, DstSize, Buf);
-}
-
-static INT32
-ClampI32 (
-  INT32  V,
-  INT32  Lo,
-  INT32  Hi
-  )
-{
-  if (V < Lo) {
-    return Lo;
-  }
-  if (V > Hi) {
-    return Hi;
-  }
-  return V;
+  Dst[0] = (char)('0' + ((V / 10u) % 10u));
+  Dst[1] = (char)('0' + (V % 10u));
+  Dst[2] = '\0';
 }
 
 // ---------------------------------------------------------------------------
-// CRC32 & Configuration Persistence Helpers
+// Backlight Level Mapping & Configuration CRC32
 // ---------------------------------------------------------------------------
+UINT32
+AuroraBiosKblLevelToPwm (
+  UINT8  Level
+  )
+{
+  static const UINT32  Table[5] = { 0u, 64u, 128u, 192u, 255u };
+  return (Level < 5u) ? Table[Level] : 192u;
+}
+
 UINT32
 AuroraBiosCrc32 (
   const VOID  *Data,
@@ -243,12 +250,12 @@ AuroraBiosCrc32 (
   const UINT8  *Bytes = (const UINT8 *)Data;
   UINT32       Crc    = 0xFFFFFFFFu;
   UINTN        I;
-  UINTN        Bit;
+  UINT32       Bit;
 
   for (I = 0; I < Length; I++) {
     Crc ^= (UINT32)Bytes[I];
-    for (Bit = 0; Bit < 8; Bit++) {
-      if ((Crc & 1u) != 0) {
+    for (Bit = 0; Bit < 8u; Bit++) {
+      if ((Crc & 1u) != 0u) {
         Crc = (Crc >> 1) ^ 0xEDB88320u;
       } else {
         Crc >>= 1;
@@ -263,24 +270,23 @@ AuroraBiosConfigSetDefaults (
   AURORA_BIOS_CONFIG  *Cfg
   )
 {
-  if (Cfg == NULL) {
-    return;
-  }
-  ZeroBytes (Cfg, sizeof (*Cfg));
+  BiosZero (Cfg, sizeof (*Cfg));
   Cfg->Magic              = AURORA_BIOS_CONFIG_MAGIC;
   Cfg->Version            = AURORA_BIOS_CONFIG_VERSION;
-  Cfg->PerformanceProfile = AURORA_PROFILE_PERFORMANCE;
-  Cfg->BootTimeoutSec     = 0;   // 0s default keeps unattended boots instant
-  Cfg->FastBoot           = 1;
-  Cfg->BootSplashLogo     = 1;
+  Cfg->PerformanceProfile = AURORA_PROFILE_BALANCED;
+  Cfg->BootTimeoutSec     = 3u;
+  Cfg->FastBoot           = 0u;
+  Cfg->BootSplashLogo     = 1u;
   Cfg->DefaultBootTarget  = AURORA_BOOT_TARGET_OS;
-  Cfg->GpuLocalPoolEnable = 1;
-  Cfg->ConsoleScaleMode   = 1;   // 1x native 2560x1664 coherent with Windows
-  Cfg->MouseSpeed         = 5;
-  Cfg->SerialDebugLevel   = AURORA_DEBUG_ERRORS;
-  Cfg->UsbHidAutoConnect  = 0;   // On-demand safe default
-  Cfg->ExternalUsbBoot    = 1;
-  Cfg->EnterBiosOnce      = 0;
+  Cfg->GpuLocalPoolEnable = 1u;
+  Cfg->ConsoleScaleMode   = 2u;
+  Cfg->MouseSpeed         = 5u;
+  Cfg->SerialDebugLevel   = AURORA_DEBUG_INFO;
+  Cfg->UsbHidAutoConnect  = 0u;
+  Cfg->ExternalUsbBoot    = 0u;
+  Cfg->EnterBiosOnce      = 0u;
+  Cfg->KbdBacklightLevel  = 3u;  // 75% crisp keyboard glow by default
+  Cfg->DirectScanout      = 1u;
   AuroraBiosConfigFinalize (Cfg);
 }
 
@@ -289,33 +295,10 @@ AuroraBiosConfigFinalize (
   AURORA_BIOS_CONFIG  *Cfg
   )
 {
-  if (Cfg == NULL) {
-    return;
-  }
   Cfg->Magic   = AURORA_BIOS_CONFIG_MAGIC;
   Cfg->Version = AURORA_BIOS_CONFIG_VERSION;
-  if (Cfg->PerformanceProfile > AURORA_PROFILE_QUIET) {
-    Cfg->PerformanceProfile = AURORA_PROFILE_PERFORMANCE;
-  }
-  if (Cfg->BootTimeoutSec > 10u) {
-    Cfg->BootTimeoutSec = 10u;
-  }
-  if (Cfg->MouseSpeed < 1u) {
-    Cfg->MouseSpeed = 1u;
-  }
-  if (Cfg->MouseSpeed > 10u) {
-    Cfg->MouseSpeed = 10u;
-  }
-  if (Cfg->ConsoleScaleMode != 1u && Cfg->ConsoleScaleMode != 2u) {
-    Cfg->ConsoleScaleMode = 1u;
-  }
-  if (Cfg->DefaultBootTarget > AURORA_BOOT_TARGET_BIOS) {
-    Cfg->DefaultBootTarget = AURORA_BOOT_TARGET_OS;
-  }
-  if (Cfg->SerialDebugLevel > AURORA_DEBUG_VERBOSE) {
-    Cfg->SerialDebugLevel = AURORA_DEBUG_ERRORS;
-  }
-  Cfg->Crc32 = AuroraBiosCrc32 (Cfg, AURORA_OFFSET_OF (AURORA_BIOS_CONFIG, Crc32));
+  Cfg->Crc32   = 0u;
+  Cfg->Crc32   = AuroraBiosCrc32 (Cfg, AURORA_OFFSET_OF (AURORA_BIOS_CONFIG, Crc32));
 }
 
 BOOLEAN
@@ -328,12 +311,23 @@ AuroraBiosConfigValidate (
   if (Cfg == NULL) {
     return FALSE;
   }
-  if (Cfg->Magic != AURORA_BIOS_CONFIG_MAGIC ||
-      Cfg->Version != AURORA_BIOS_CONFIG_VERSION) {
+  if (Cfg->Magic != AURORA_BIOS_CONFIG_MAGIC || Cfg->Version != AURORA_BIOS_CONFIG_VERSION) {
     return FALSE;
   }
   Expected = AuroraBiosCrc32 (Cfg, AURORA_OFFSET_OF (AURORA_BIOS_CONFIG, Crc32));
-  return (Cfg->Crc32 == Expected) ? TRUE : FALSE;
+  if (Expected != Cfg->Crc32) {
+    return FALSE;
+  }
+  if (Cfg->PerformanceProfile > AURORA_PROFILE_QUIET ||
+      Cfg->BootTimeoutSec > 10u ||
+      Cfg->DefaultBootTarget > AURORA_BOOT_TARGET_BIOS ||
+      Cfg->ConsoleScaleMode < 1u || Cfg->ConsoleScaleMode > 2u ||
+      Cfg->MouseSpeed < 1u || Cfg->MouseSpeed > 10u ||
+      Cfg->SerialDebugLevel > AURORA_DEBUG_VERBOSE ||
+      Cfg->KbdBacklightLevel > 4u) {
+    return FALSE;
+  }
+  return TRUE;
 }
 
 UINT32
@@ -341,66 +335,68 @@ AuroraBiosCountModified (
   const AURORA_BIOS_STATE  *State
   )
 {
-  UINT32                    Diff = 0;
-  const AURORA_BIOS_CONFIG  *A   = &State->Config;
-  const AURORA_BIOS_CONFIG  *B   = &State->SavedConfig;
+  UINT32                     Count = 0;
+  const AURORA_BIOS_CONFIG   *A    = &State->Config;
+  const AURORA_BIOS_CONFIG   *B    = &State->SavedConfig;
 
-  if (A->PerformanceProfile != B->PerformanceProfile) Diff++;
-  if (A->BootTimeoutSec != B->BootTimeoutSec)         Diff++;
-  if (A->FastBoot != B->FastBoot)                     Diff++;
-  if (A->BootSplashLogo != B->BootSplashLogo)         Diff++;
-  if (A->DefaultBootTarget != B->DefaultBootTarget)   Diff++;
-  if (A->GpuLocalPoolEnable != B->GpuLocalPoolEnable) Diff++;
-  if (A->ConsoleScaleMode != B->ConsoleScaleMode)     Diff++;
-  if (A->MouseSpeed != B->MouseSpeed)                 Diff++;
-  if (A->SerialDebugLevel != B->SerialDebugLevel)     Diff++;
-  if (A->UsbHidAutoConnect != B->UsbHidAutoConnect)   Diff++;
-  if (A->ExternalUsbBoot != B->ExternalUsbBoot)       Diff++;
-  if (State->BootOrderDirty)                          Diff++;
-  return Diff;
+  if (A->PerformanceProfile != B->PerformanceProfile) Count++;
+  if (A->BootTimeoutSec != B->BootTimeoutSec)         Count++;
+  if (A->FastBoot != B->FastBoot)                     Count++;
+  if (A->BootSplashLogo != B->BootSplashLogo)         Count++;
+  if (A->DefaultBootTarget != B->DefaultBootTarget)   Count++;
+  if (A->GpuLocalPoolEnable != B->GpuLocalPoolEnable) Count++;
+  if (A->ConsoleScaleMode != B->ConsoleScaleMode)     Count++;
+  if (A->MouseSpeed != B->MouseSpeed)                 Count++;
+  if (A->SerialDebugLevel != B->SerialDebugLevel)     Count++;
+  if (A->UsbHidAutoConnect != B->UsbHidAutoConnect)   Count++;
+  if (A->ExternalUsbBoot != B->ExternalUsbBoot)       Count++;
+  if (A->EnterBiosOnce != B->EnterBiosOnce)           Count++;
+  if (A->KbdBacklightLevel != B->KbdBacklightLevel)   Count++;
+  if (A->DirectScanout != B->DirectScanout)           Count++;
+  if (State->BootOrderDirty)                          Count++;
+  return Count;
 }
 
 // ---------------------------------------------------------------------------
-// Dirty Rect Helpers
+// Dirty Rect & State Management
 // ---------------------------------------------------------------------------
 static VOID
-MarkDirty (
+MarkDirtyRect (
   AURORA_BIOS_STATE  *State,
-  INT32              X,
-  INT32              Y,
-  INT32              W,
-  INT32              H
+  INT32              X0,
+  INT32              Y0,
+  INT32              X1,
+  INT32              Y1
   )
 {
-  INT32  X1 = ClampI32 (X, 0, State->Width);
-  INT32  Y1 = ClampI32 (Y, 0, State->Height);
-  INT32  X2 = ClampI32 (X + W, 0, State->Width);
-  INT32  Y2 = ClampI32 (Y + H, 0, State->Height);
-
-  if (X2 <= X1 || Y2 <= Y1) {
+  if (X0 < 0) X0 = 0;
+  if (Y0 < 0) Y0 = 0;
+  if (X1 > State->Width)  X1 = State->Width;
+  if (Y1 > State->Height) Y1 = State->Height;
+  if (X0 >= X1 || Y0 >= Y1) {
     return;
   }
   if (!State->Dirty.Valid) {
     State->Dirty.Valid = TRUE;
-    State->Dirty.MinX  = X1;
-    State->Dirty.MinY  = Y1;
-    State->Dirty.MaxX  = X2;
-    State->Dirty.MaxY  = Y2;
+    State->Dirty.MinX  = X0;
+    State->Dirty.MinY  = Y0;
+    State->Dirty.MaxX  = X1;
+    State->Dirty.MaxY  = Y1;
   } else {
-    if (X1 < State->Dirty.MinX) State->Dirty.MinX = X1;
-    if (Y1 < State->Dirty.MinY) State->Dirty.MinY = Y1;
-    if (X2 > State->Dirty.MaxX) State->Dirty.MaxX = X2;
-    if (Y2 > State->Dirty.MaxY) State->Dirty.MaxY = Y2;
+    if (X0 < State->Dirty.MinX) State->Dirty.MinX = X0;
+    if (Y0 < State->Dirty.MinY) State->Dirty.MinY = Y0;
+    if (X1 > State->Dirty.MaxX) State->Dirty.MaxX = X1;
+    if (Y1 > State->Dirty.MaxY) State->Dirty.MaxY = Y1;
   }
 }
 
 static VOID
-MarkFullRedraw (
+MarkFullDirty (
   AURORA_BIOS_STATE  *State
   )
 {
   State->FullRedrawNeeded = TRUE;
-  MarkDirty (State, 0, 0, State->Width, State->Height);
+  MarkDirtyRect (State, 0, 0, State->Width, State->Height);
 }
 
 VOID
@@ -410,17 +406,66 @@ AuroraBiosSetStatus (
   UINT32             ColorRgb
   )
 {
-  StrCopyA (State->StatusMsg, sizeof (State->StatusMsg), Message);
+  BiosStrCpy (State->StatusMsg, sizeof (State->StatusMsg), Message);
   State->StatusColor = ColorRgb;
-  MarkFullRedraw (State);
+  MarkFullDirty (State);
+}
+
+VOID
+AuroraBiosStateInit (
+  AURORA_BIOS_STATE  *State,
+  INT32              GopWidth,
+  INT32              GopHeight
+  )
+{
+  BiosZero (State, sizeof (*State));
+
+  if (GopWidth >= 2000 && GopHeight >= 1200) {
+    State->UiScale = 2;
+    State->Width   = GopWidth / 2;
+    State->Height  = GopHeight / 2;
+  } else {
+    State->UiScale = 1;
+    State->Width   = (GopWidth >= 640) ? GopWidth : 1280;
+    State->Height  = (GopHeight >= 480) ? GopHeight : 800;
+  }
+
+  AuroraBiosConfigSetDefaults (&State->Config);
+  BiosCopy (&State->SavedConfig, &State->Config, sizeof (State->Config));
+
+  State->Info.GopWidth  = (UINT32)GopWidth;
+  State->Info.GopHeight = (UINT32)GopHeight;
+  State->Info.GopBpp    = 32u;
+  BiosStrCpy (State->Info.PlatformName, sizeof (State->Info.PlatformName), "Apple Mac17,3 (J813)");
+  BiosStrCpy (State->Info.SocName, sizeof (State->Info.SocName), "Apple M5 (T8142) 10-Core");
+  BiosStrCpy (State->Info.FirmwareVersion, sizeof (State->Info.FirmwareVersion), "Aurora Mu 2026");
+  BiosStrCpy (State->Info.MtpFwSource, sizeof (State->Info.MtpFwSource), "NONE");
+
+  State->Mode           = AURORA_MODE_EASY;
+  State->ActiveTab      = AURORA_TAB_TWEAKER;
+  State->FocusedCtrlIdx = -1;
+  State->HoveredCtrlIdx = -1;
+  State->MouseX         = State->Width / 2;
+  State->MouseY         = State->Height / 2;
+  State->PrevMouseX     = State->MouseX;
+  State->PrevMouseY     = State->MouseY;
+  State->MouseVisible   = TRUE;
+
+  AuroraBiosSetStatus (
+    State,
+    "Ready  |  Use Trackpad / Mouse or Keyboard (F2: Easy/Advanced Mode, F10: Save & Exit)",
+    COL_TEXT_SEC
+    );
+  AuroraBiosBuildLayout (State);
+  MarkFullDirty (State);
 }
 
 // ---------------------------------------------------------------------------
-// Layout Engine (responsive to any canvas size >= 800x600; ideal 1280x832)
+// Layout Builder (Gigabyte 1:1 Easy Mode & Advanced Mode Geometry)
 // ---------------------------------------------------------------------------
 static VOID
 AddCtrl (
-  AURORA_BIOS_STATE  *S,
+  AURORA_BIOS_STATE  *State,
   INT32              X,
   INT32              Y,
   INT32              W,
@@ -430,11 +475,10 @@ AddCtrl (
   UINT32             Param
   )
 {
-  AURORA_UI_RECT  *R;
-  if (S->ControlCount >= AURORA_BIOS_MAX_CONTROLS) {
+  if (State->ControlCount >= AURORA_BIOS_MAX_CONTROLS) {
     return;
   }
-  R        = &S->Controls[S->ControlCount++];
+  AURORA_UI_RECT  *R = &State->Controls[State->ControlCount++];
   R->X     = X;
   R->Y     = Y;
   R->W     = W;
@@ -446,474 +490,455 @@ AddCtrl (
 
 VOID
 AuroraBiosBuildLayout (
-  AURORA_BIOS_STATE  *S
+  AURORA_BIOS_STATE  *State
   )
 {
-  INT32   M     = 24;
-  INT32   TabY  = 66;
-  INT32   TabH  = 38;
-  INT32   TabW  = (S->Width - M * 2 - 4 * 10) / AURORA_TAB_COUNT;
-  INT32   BodyY = 122;
-  INT32   BodyH = S->Height - BodyY - 52;
-  INT32   I;
+  INT32  W = State->Width;
+  INT32  H = State->Height;
+  INT32  U;
 
-  S->ControlCount = 0;
+  State->ControlCount = 0;
 
-  // 5 Top Navigation Tabs
-  for (I = 0; I < AURORA_TAB_COUNT; I++) {
-    AddCtrl (
-      S,
-      M + I * (TabW + 10),
-      TabY,
-      TabW,
-      TabH,
-      AURORA_CTRL_TAB,
-      (UINT32)(CID_TAB_BASE + I),
-      (UINT32)I
-      );
+  // 1. Top slanted Mode Tabs: EASY MODE / ADVANCED MODE (1:1 Gigabyte header)
+  {
+    INT32  TabW   = 226;
+    INT32  TabH   = 38;
+    INT32  StartX = (W / 2) - 48;
+    AddCtrl (State, StartX, 5, TabW, TabH, AURORA_CTRL_MODE_TAB, CTRL_MODE_EASY, AURORA_MODE_EASY);
+    AddCtrl (State, StartX + TabW + 12, 5, TabW, TabH, AURORA_CTRL_MODE_TAB, CTRL_MODE_ADVANCED, AURORA_MODE_ADVANCED);
   }
 
-  if (S->ActiveTab == AURORA_TAB_DASHBOARD) {
-    // 3 columns: Left (Telemetry), Mid (Gauges), Right (Quick Profile & Actions)
-    INT32  ColGap = 18;
-    INT32  ColW   = (S->Width - M * 2 - ColGap * 2) / 3;
-    INT32  RightX = M + (ColW + ColGap) * 2;
-    INT32  InnerX = RightX + 18;
-    INT32  InnerW = ColW - 36;
-    INT32  PillW  = (InnerW - 12) / 3;
-    INT32  Y;
-
-    // Performance Profile 3-pill selector
-    Y = BodyY + 54;
-    AddCtrl (S, InnerX, Y, PillW, 38, AURORA_CTRL_CHOICE, CID_PROFILE_BALANCED, AURORA_PROFILE_BALANCED);
-    AddCtrl (S, InnerX + PillW + 6, Y, PillW, 38, AURORA_CTRL_CHOICE, CID_PROFILE_PERFORMANCE, AURORA_PROFILE_PERFORMANCE);
-    AddCtrl (S, InnerX + (PillW + 6) * 2, Y, PillW, 38, AURORA_CTRL_CHOICE, CID_PROFILE_QUIET, AURORA_PROFILE_QUIET);
-
-    // Quick Action Buttons
-    Y = BodyY + 138;
-    AddCtrl (S, InnerX, Y, InnerW, 48, AURORA_CTRL_BUTTON, CID_BTN_BOOT_OS, 0);
-    Y += 62;
-    AddCtrl (S, InnerX, Y, InnerW, 44, AURORA_CTRL_BUTTON, CID_BTN_UEFI_SHELL, 0);
-    Y += 58;
-    AddCtrl (S, InnerX, Y, InnerW, 44, AURORA_CTRL_BUTTON, CID_BTN_SCAN_USB, 0);
-    Y += 58;
-    AddCtrl (S, InnerX, Y, InnerW, 44, AURORA_CTRL_BUTTON, CID_BTN_SAVE_REBOOT, 0);
-  } else if (S->ActiveTab == AURORA_TAB_BOOT) {
-    INT32   LeftW  = ((S->Width - M * 2 - 20) * 58) / 100;
-    INT32   RightX = M + LeftW + 20;
-    INT32   RightW = S->Width - M - RightX;
-    UINT32  Visible = S->BootEntryCount;
-    INT32   RowY;
-    INT32   BtnW;
-    INT32   Sy;
-
-    if (Visible > 8) {
-      Visible = 8;
+  // 2. Utility Action Strip (6 metallic beveled buttons across full width)
+  {
+    static const UINT32  UtilIds[6] = {
+      CTRL_UTIL_HELP, CTRL_UTIL_INPUT, CTRL_UTIL_DEFAULTS,
+      CTRL_UTIL_SAVE_EXIT, CTRL_UTIL_SHELL, CTRL_UTIL_BOOT_OS
+    };
+    INT32  Gap  = 12;
+    INT32  BtnW = (W - 48 - 5 * Gap) / 6;
+    for (U = 0; U < 6; U++) {
+      AddCtrl (State, 24 + U * (BtnW + Gap), 66, BtnW, 28, AURORA_CTRL_UTIL_BTN, UtilIds[U], (UINT32)U);
     }
-    RowY = BodyY + 54;
-    for (I = 0; I < (INT32)Visible; I++) {
-      AddCtrl (S, M + 16, RowY + I * 44, LeftW - 32, 38, AURORA_CTRL_BOOT_ROW, (UINT32)(CID_BOOT_ROW_BASE + I), (UINT32)I);
+  }
+
+  if (State->Mode == AURORA_MODE_EASY) {
+    // Left Column: Memory & Display dropdown controls (bottom half of left col)
+    INT32  LeftW   = 316;
+    INT32  DropY   = H - 220;
+    INT32  RowH    = 32;
+    AddCtrl (State, 34, DropY + 0 * RowH, LeftW - 20, 26, AURORA_CTRL_CHOICE, CTRL_SET_PERF_PROFILE, 0);
+    AddCtrl (State, 34, DropY + 1 * RowH, LeftW - 20, 26, AURORA_CTRL_CHOICE, CTRL_SET_KBD_BACKLIGHT, 0);
+    AddCtrl (State, 34, DropY + 2 * RowH, LeftW - 20, 26, AURORA_CTRL_CHOICE, CTRL_SET_GPU_POOL, 0);
+    AddCtrl (State, 34, DropY + 3 * RowH, LeftW - 20, 26, AURORA_CTRL_CHOICE, CTRL_SET_SCALE_MODE, 0);
+    AddCtrl (State, 34, DropY + 4 * RowH, LeftW - 20, 26, AURORA_CTRL_CHOICE, CTRL_SET_MOUSE_SPEED, 0);
+
+    // Top-Right Card: Aurora PerfDrive (5 Gigabyte orange toggle switches)
+    {
+      INT32  PdX = W - 324;
+      INT32  PdW = 300;
+      INT32  PdY = 152;
+      AddCtrl (State, PdX + 10, PdY + 0 * 29, PdW - 20, 24, AURORA_CTRL_TOGGLE, CTRL_SET_DIRECT_SCANOUT, 0);
+      AddCtrl (State, PdX + 10, PdY + 1 * 29, PdW - 20, 24, AURORA_CTRL_TOGGLE, CTRL_SET_GPU_POOL, 0);
+      AddCtrl (State, PdX + 10, PdY + 2 * 29, PdW - 20, 24, AURORA_CTRL_TOGGLE, CTRL_SET_FAST_BOOT, 0);
+      AddCtrl (State, PdX + 10, PdY + 3 * 29, PdW - 20, 24, AURORA_CTRL_TOGGLE, CTRL_SET_SPLASH_LOGO, 0);
+      AddCtrl (State, PdX + 10, PdY + 4 * 29, PdW - 20, 24, AURORA_CTRL_TOGGLE, CTRL_SET_EXT_USB_BOOT, 0);
     }
 
-    // Boot list action buttons
-    BtnW = (LeftW - 32 - 20) / 3;
-    RowY = BodyY + BodyH - 64;
-    AddCtrl (S, M + 16, RowY, BtnW, 42, AURORA_CTRL_BUTTON, CID_BOOT_MOVE_UP, 0);
-    AddCtrl (S, M + 16 + BtnW + 10, RowY, BtnW, 42, AURORA_CTRL_BUTTON, CID_BOOT_MOVE_DOWN, 0);
-    AddCtrl (S, M + 16 + (BtnW + 10) * 2, RowY, BtnW, 42, AURORA_CTRL_BUTTON, CID_BOOT_LAUNCH_SEL, 0);
+    // Middle Row: Power & Thermal button + Boot Sequence rows
+    {
+      INT32  MidX  = 360;
+      INT32  MidY  = 338;
+      INT32  MidH  = 196;
+      INT32  Col1W = 300;
+      INT32  BootX = W - 324;
+      INT32  BootW = 300;
+      UINT32 MaxVis = (State->BootEntryCount < 4u) ? State->BootEntryCount : 4u;
+      UINT32 B;
 
-    // Boot configuration controls on right card
-    Sy = BodyY + 60;
-    AddCtrl (S, RightX + 18, Sy, RightW - 36, 56, AURORA_CTRL_SLIDER, CID_SLIDER_TIMEOUT, 0);
-    Sy += 74;
-    AddCtrl (S, RightX + 18, Sy, RightW - 36, 48, AURORA_CTRL_TOGGLE, CID_TOGGLE_FASTBOOT, 0);
-    Sy += 64;
-    AddCtrl (S, RightX + 18, Sy, RightW - 36, 48, AURORA_CTRL_TOGGLE, CID_TOGGLE_SPLASH, 0);
-    Sy += 64;
-    AddCtrl (S, RightX + 18, Sy, RightW - 36, 48, AURORA_CTRL_CHOICE, CID_CHOICE_DEF_TARGET, 0);
-  } else if (S->ActiveTab == AURORA_TAB_HARDWARE) {
-    INT32  HalfW = (S->Width - M * 2 - 20) / 2;
-    INT32  RightX = M + HalfW + 20;
-    INT32  Sy = BodyY + 60;
+      AddCtrl (State, MidX + 16, MidY + MidH - 58, Col1W - 32, 40, AURORA_CTRL_BUTTON, CTRL_EASY_POWER_BTN, 0);
+      for (B = 0; B < MaxVis; B++) {
+        AddCtrl (State, BootX + 10, MidY + 72 + (INT32)B * 28, BootW - 20, 24, AURORA_CTRL_BOOT_ROW, CTRL_BOOT_ROW_BASE + B, B);
+      }
+    }
 
-    // Left card: GPU & Display
-    AddCtrl (S, M + 18, Sy, HalfW - 36, 52, AURORA_CTRL_TOGGLE, CID_TOGGLE_GPU_POOL, 0);
-    Sy += 70;
-    AddCtrl (S, M + 18, Sy, HalfW - 36, 52, AURORA_CTRL_CHOICE, CID_CHOICE_CON_SCALE, 0);
-    Sy += 70;
-    AddCtrl (S, M + 18, Sy, HalfW - 36, 56, AURORA_CTRL_SLIDER, CID_SLIDER_MOUSE_SPEED, 0);
+    // Bottom Wide Card: Quick Access (3 header buttons + 2x3 quick controls)
+    {
+      INT32  QaX   = 360;
+      INT32  QaW   = W - QaX - 24;
+      INT32  QaY   = 568;
+      INT32  ColW  = (QaW - 40) / 3;
+      INT32  BtnY  = QaY + 14;
+      INT32  Row1Y = QaY + 66;
+      INT32  Row2Y = QaY + 114;
 
-    // Right card: I/O & Firmware Debug
-    Sy = BodyY + 60;
-    AddCtrl (S, RightX + 18, Sy, HalfW - 36, 52, AURORA_CTRL_CHOICE, CID_CHOICE_SERIAL_DBG, 0);
-    Sy += 70;
-    AddCtrl (S, RightX + 18, Sy, HalfW - 36, 52, AURORA_CTRL_TOGGLE, CID_TOGGLE_USB_AUTO, 0);
-    Sy += 70;
-    AddCtrl (S, RightX + 18, Sy, HalfW - 36, 52, AURORA_CTRL_TOGGLE, CID_TOGGLE_USB_BOOT, 0);
-  } else if (S->ActiveTab == AURORA_TAB_DIAG) {
-    INT32  HalfW  = (S->Width - M * 2 - 20) / 2;
-    INT32  RightX = M + HalfW + 20;
-    INT32  BtnY   = BodyY + BodyH - 68;
-    INT32  BtnW   = (HalfW - 48) / 2;
+      AddCtrl (State, QaX + 12 + 0 * (ColW + 8), BtnY, ColW, 28, AURORA_CTRL_BUTTON, CTRL_EASY_QA_SHELL, 0);
+      AddCtrl (State, QaX + 12 + 1 * (ColW + 8), BtnY, ColW, 28, AURORA_CTRL_BUTTON, CTRL_EASY_QA_SYSINFO, 0);
+      AddCtrl (State, QaX + 12 + 2 * (ColW + 8), BtnY, ColW, 28, AURORA_CTRL_BUTTON, CTRL_EASY_QA_BOOT, 0);
 
-    AddCtrl (S, RightX + 18, BtnY, BtnW, 44, AURORA_CTRL_BUTTON, CID_DIAG_SCAN_USB, 0);
-    AddCtrl (S, RightX + 18 + BtnW + 12, BtnY, BtnW, 44, AURORA_CTRL_BUTTON, CID_DIAG_RESET_INPUT, 0);
-  } else if (S->ActiveTab == AURORA_TAB_EXIT) {
-    INT32  LeftW  = ((S->Width - M * 2 - 20) * 42) / 100;
-    INT32  RightX = M + LeftW + 20;
-    INT32  RightW = S->Width - M - RightX;
-    INT32  CardW  = (RightW - 48) / 2;
-    INT32  CardH  = 86;
-    INT32  Y0     = BodyY + 60;
+      // Row 1 controls
+      AddCtrl (State, QaX + 12 + 0 * (ColW + 8), Row1Y, ColW, 28, AURORA_CTRL_TOGGLE, CTRL_SET_ENTER_ONCE, 0);
+      AddCtrl (State, QaX + 12 + 1 * (ColW + 8), Row1Y, ColW, 28, AURORA_CTRL_CHOICE, CTRL_SET_DEFAULT_TARGET, 0);
+      AddCtrl (State, QaX + 12 + 2 * (ColW + 8), Row1Y, ColW, 28, AURORA_CTRL_CHOICE, CTRL_SET_SERIAL_DEBUG, 0);
 
-    AddCtrl (S, RightX + 18, Y0, CardW, CardH, AURORA_CTRL_BUTTON, CID_EXIT_SAVE_BOOT, 0);
-    AddCtrl (S, RightX + 18 + CardW + 12, Y0, CardW, CardH, AURORA_CTRL_BUTTON, CID_EXIT_SAVE_REBOOT, 0);
-    AddCtrl (S, RightX + 18, Y0 + CardH + 18, CardW, CardH, AURORA_CTRL_BUTTON, CID_EXIT_DISCARD_BOOT, 0);
-    AddCtrl (S, RightX + 18 + CardW + 12, Y0 + CardH + 18, CardW, CardH, AURORA_CTRL_BUTTON, CID_EXIT_LOAD_DEFAULTS, 0);
-    AddCtrl (S, RightX + 18, Y0 + (CardH + 18) * 2, CardW, CardH, AURORA_CTRL_BUTTON, CID_EXIT_SHELL, 0);
-    AddCtrl (S, RightX + 18 + CardW + 12, Y0 + (CardH + 18) * 2, CardW, CardH, AURORA_CTRL_BUTTON, CID_EXIT_POWER_OFF, 0);
-  }
-
-  if (S->FocusedCtrlIdx >= S->ControlCount) {
-    S->FocusedCtrlIdx = (S->ControlCount > AURORA_TAB_COUNT) ? AURORA_TAB_COUNT : 0;
-  }
-  if (S->HoveredCtrlIdx >= S->ControlCount) {
-    S->HoveredCtrlIdx = -1;
-  }
-}
-
-VOID
-AuroraBiosStateInit (
-  AURORA_BIOS_STATE  *State,
-  INT32              GopWidth,
-  INT32              GopHeight
-  )
-{
-  ZeroBytes (State, sizeof (*State));
-
-  if (GopWidth >= 2000 && GopHeight >= 1200) {
-    State->UiScale = 2;
+      // Row 2 controls
+      AddCtrl (State, QaX + 12 + 0 * (ColW + 8), Row2Y, ColW, 28, AURORA_CTRL_TOGGLE, CTRL_SET_USB_AUTO, 0);
+      AddCtrl (State, QaX + 12 + 1 * (ColW + 8), Row2Y, ColW, 28, AURORA_CTRL_CHOICE, CTRL_SET_BOOT_TIMEOUT, 0);
+      AddCtrl (State, QaX + 12 + 2 * (ColW + 8), Row2Y, ColW, 28, AURORA_CTRL_CHOICE, CTRL_SET_KBD_BACKLIGHT, 1);
+    }
   } else {
-    State->UiScale = 1;
-  }
-  State->Width  = GopWidth / State->UiScale;
-  State->Height = GopHeight / State->UiScale;
-  if (State->Width < 640)  State->Width  = 640;
-  if (State->Height < 480) State->Height = 480;
+    // ADVANCED MODE: 5 horizontal Gigabyte sub-tabs
+    INT32  SubY   = 106;
+    INT32  SubW   = 156;
+    INT32  PaneX  = 24;
+    INT32  PaneW  = W - 384;
+    INT32  RowY   = 166;
+    INT32  RowH   = 42;
 
-  AuroraBiosConfigSetDefaults (&State->Config);
-  CopyBytes (&State->SavedConfig, &State->Config, sizeof (AURORA_BIOS_CONFIG));
-
-  StrCopyA (State->Info.PlatformName, sizeof (State->Info.PlatformName), "MacBook Air (J813)");
-  StrCopyA (State->Info.SocName, sizeof (State->Info.SocName), "Apple M5 (T8142) ARMv9");
-  StrCopyA (State->Info.FirmwareVersion, sizeof (State->Info.FirmwareVersion), "Aurora Mu UEFI 2026.11");
-  State->Info.GopWidth  = (UINT32)GopWidth;
-  State->Info.GopHeight = (UINT32)GopHeight;
-  State->Info.GopBpp    = 30;
-  State->Info.CpuCores  = 10;
-
-  State->ActiveTab       = AURORA_TAB_DASHBOARD;
-  State->FocusedCtrlIdx  = AURORA_TAB_COUNT; // First content control
-  State->HoveredCtrlIdx  = -1;
-  State->MouseX          = State->Width / 2;
-  State->MouseY          = State->Height / 2;
-  State->PrevMouseX      = State->MouseX;
-  State->PrevMouseY      = State->MouseY;
-  State->MouseVisible    = TRUE;
-  State->LastClickBootIdx = 0xFFFFFFFFu;
-
-  AuroraBiosSetStatus (
-    State,
-    "READY  //  Mouse + Keyboard Active  |  F1-F5 Tabs  |  F10 Save & Boot  |  ESC Exit",
-    COL_ACCENT
-    );
-  AuroraBiosBuildLayout (State);
-  MarkFullRedraw (State);
-}
-
-// ---------------------------------------------------------------------------
-// Control Activation Logic (shared by Mouse Click and Keyboard Enter/Space)
-// ---------------------------------------------------------------------------
-static VOID
-SetTab (
-  AURORA_BIOS_STATE  *S,
-  AURORA_BIOS_TAB    Tab
-  )
-{
-  if (Tab >= AURORA_TAB_COUNT) {
-    return;
-  }
-  S->ActiveTab        = Tab;
-  S->DraggingSliderId = 0;
-  AuroraBiosBuildLayout (S);
-  S->FocusedCtrlIdx = (S->ControlCount > AURORA_TAB_COUNT) ? AURORA_TAB_COUNT : (INT32)Tab;
-  MarkFullRedraw (S);
-}
-
-static VOID
-MoveBootOption (
-  AURORA_BIOS_STATE  *S,
-  INT32              Delta
-  )
-{
-  UINT32             Cur = S->SelectedBootIdx;
-  INT32              Dst = (INT32)Cur + Delta;
-  AURORA_BOOT_ENTRY  Tmp;
-
-  if (S->BootEntryCount < 2 || Cur >= S->BootEntryCount) {
-    return;
-  }
-  if (Dst < 0 || Dst >= (INT32)S->BootEntryCount) {
-    return;
-  }
-  CopyBytes (&Tmp, &S->BootEntries[Cur], sizeof (Tmp));
-  CopyBytes (&S->BootEntries[Cur], &S->BootEntries[Dst], sizeof (Tmp));
-  CopyBytes (&S->BootEntries[Dst], &Tmp, sizeof (Tmp));
-  S->SelectedBootIdx = (UINT32)Dst;
-  S->BootOrderDirty  = TRUE;
-  S->PendingAction   = AURORA_ACTION_REORDER_BOOT;
-  AuroraBiosSetStatus (S, "Boot priority updated (press F10 or Save & Exit to commit)", COL_AMBER);
-}
-
-static VOID
-ApplySliderByX (
-  AURORA_BIOS_STATE     *S,
-  const AURORA_UI_RECT  *R,
-  INT32                 MouseX
-  )
-{
-  INT32  TrackX = R->X + 16;
-  INT32  TrackW = R->W - 110;
-  INT32  Rel;
-
-  if (TrackW < 40) {
-    TrackW = 40;
-  }
-  Rel = ClampI32 (MouseX - TrackX, 0, TrackW);
-
-  if (R->Id == CID_SLIDER_TIMEOUT) {
-    UINT32  Val = (UINT32)((Rel * 10 + TrackW / 2) / TrackW);
-    if (Val != S->Config.BootTimeoutSec) {
-      S->Config.BootTimeoutSec = Val;
-      AuroraBiosSetStatus (S, (Val == 0) ? "Boot menu prompt set to 0s (instant boot)" : "Boot menu prompt timeout updated", COL_ACCENT);
+    for (U = 0; U < (INT32)AURORA_TAB_COUNT; U++) {
+      AddCtrl (State, 24 + U * (SubW + 8), SubY, SubW, 30, AURORA_CTRL_TAB, CTRL_ADV_TAB_BASE + (UINT32)U, (UINT32)U);
     }
-  } else if (R->Id == CID_SLIDER_MOUSE_SPEED) {
-    UINT32  Val = (UINT32)(1 + (Rel * 9 + TrackW / 2) / TrackW);
-    if (Val != S->Config.MouseSpeed) {
-      S->Config.MouseSpeed = (UINT8)Val;
-      AuroraBiosSetStatus (S, "Mouse cursor sensitivity updated live", COL_ACCENT);
-    }
-  }
-}
 
-static VOID
-AdjustControlDelta (
-  AURORA_BIOS_STATE     *S,
-  const AURORA_UI_RECT  *R,
-  INT32                 Dir
-  )
-{
-  if (R == NULL) {
-    return;
-  }
-  if (R->Id == CID_SLIDER_TIMEOUT) {
-    INT32  V = ClampI32 ((INT32)S->Config.BootTimeoutSec + Dir, 0, 10);
-    S->Config.BootTimeoutSec = (UINT32)V;
-    AuroraBiosSetStatus (S, "Boot menu prompt timeout updated", COL_ACCENT);
-  } else if (R->Id == CID_SLIDER_MOUSE_SPEED) {
-    INT32  V = ClampI32 ((INT32)S->Config.MouseSpeed + Dir, 1, 10);
-    S->Config.MouseSpeed = (UINT8)V;
-    AuroraBiosSetStatus (S, "Mouse cursor sensitivity updated live", COL_ACCENT);
-  } else if (R->Id == CID_CHOICE_DEF_TARGET) {
-    S->Config.DefaultBootTarget = (UINT8)((S->Config.DefaultBootTarget + (Dir > 0 ? 1 : 2)) % 3);
-    AuroraBiosSetStatus (S, "Default boot target updated", COL_ACCENT);
-  } else if (R->Id == CID_CHOICE_CON_SCALE) {
-    S->Config.ConsoleScaleMode = (S->Config.ConsoleScaleMode == 1) ? 2 : 1;
-    AuroraBiosSetStatus (S, "Console scale mode updated (takes effect on next boot)", COL_ACCENT);
-  } else if (R->Id == CID_CHOICE_SERIAL_DBG) {
-    S->Config.SerialDebugLevel = (UINT8)((S->Config.SerialDebugLevel + (Dir > 0 ? 1 : 2)) % 3);
-    AuroraBiosSetStatus (S, "Serial debug verbosity updated", COL_ACCENT);
-  } else if (R->Kind == AURORA_CTRL_TOGGLE) {
-    switch (R->Id) {
-      case CID_TOGGLE_FASTBOOT:
-        S->Config.FastBoot ^= 1;
-        AuroraBiosSetStatus (S, S->Config.FastBoot ? "Fast Boot ENABLED" : "Fast Boot DISABLED", COL_ACCENT);
+    switch (State->ActiveTab) {
+      case AURORA_TAB_TWEAKER:
+        AddCtrl (State, PaneX + 12, RowY + 0 * RowH, PaneW - 24, 34, AURORA_CTRL_CHOICE, CTRL_SET_PERF_PROFILE, 0);
+        AddCtrl (State, PaneX + 12, RowY + 1 * RowH, PaneW - 24, 34, AURORA_CTRL_TOGGLE, CTRL_SET_DIRECT_SCANOUT, 0);
+        AddCtrl (State, PaneX + 12, RowY + 2 * RowH, PaneW - 24, 34, AURORA_CTRL_TOGGLE, CTRL_SET_GPU_POOL, 0);
+        AddCtrl (State, PaneX + 12, RowY + 3 * RowH, PaneW - 24, 34, AURORA_CTRL_CHOICE, CTRL_SET_KBD_BACKLIGHT, 0);
+        AddCtrl (State, PaneX + 12, RowY + 4 * RowH, PaneW - 24, 34, AURORA_CTRL_CHOICE, CTRL_SET_SCALE_MODE, 0);
+        AddCtrl (State, PaneX + 12, RowY + 5 * RowH, PaneW - 24, 34, AURORA_CTRL_CHOICE, CTRL_SET_MOUSE_SPEED, 0);
+        AddCtrl (State, PaneX + 12, RowY + 6 * RowH, PaneW - 24, 34, AURORA_CTRL_TOGGLE, CTRL_SET_SPLASH_LOGO, 0);
         break;
-      case CID_TOGGLE_SPLASH:
-        S->Config.BootSplashLogo ^= 1;
-        AuroraBiosSetStatus (S, S->Config.BootSplashLogo ? "Boot Splash Logo ENABLED" : "Boot Splash Logo DISABLED", COL_ACCENT);
+
+      case AURORA_TAB_SETTINGS:
+        AddCtrl (State, PaneX + 12, RowY + 0 * RowH, PaneW - 24, 34, AURORA_CTRL_CHOICE, CTRL_SET_SERIAL_DEBUG, 0);
+        AddCtrl (State, PaneX + 12, RowY + 1 * RowH, PaneW - 24, 34, AURORA_CTRL_TOGGLE, CTRL_SET_USB_AUTO, 0);
+        AddCtrl (State, PaneX + 12, RowY + 2 * RowH, PaneW - 24, 34, AURORA_CTRL_TOGGLE, CTRL_SET_EXT_USB_BOOT, 0);
+        AddCtrl (State, PaneX + 12, RowY + 3 * RowH, PaneW - 24, 34, AURORA_CTRL_TOGGLE, CTRL_SET_FAST_BOOT, 0);
+        AddCtrl (State, PaneX + 12, RowY + 4 * RowH, PaneW - 24, 34, AURORA_CTRL_TOGGLE, CTRL_SET_ENTER_ONCE, 0);
+        AddCtrl (State, PaneX + 12, RowY + 5 * RowH + 8, 280, 34, AURORA_CTRL_BUTTON, CTRL_BTN_SCAN_USB, 0);
+        AddCtrl (State, PaneX + 308, RowY + 5 * RowH + 8, 280, 34, AURORA_CTRL_BUTTON, CTRL_BTN_LOAD_DEFAULTS, 0);
         break;
-      case CID_TOGGLE_GPU_POOL:
-        S->Config.GpuLocalPoolEnable ^= 1;
-        AuroraBiosSetStatus (S, S->Config.GpuLocalPoolEnable ? "M5 GPU Local Pool ENABLED" : "M5 GPU Local Pool DISABLED", COL_AMBER);
+
+      case AURORA_TAB_SYSINFO:
+        AddCtrl (State, PaneX + 12, H - 112, 240, 34, AURORA_CTRL_BUTTON, CTRL_BTN_SCAN_USB, 0);
+        AddCtrl (State, PaneX + 268, H - 112, 240, 34, AURORA_CTRL_BUTTON, CTRL_BTN_LAUNCH_SHELL, 0);
         break;
-      case CID_TOGGLE_USB_AUTO:
-        S->Config.UsbHidAutoConnect ^= 1;
-        AuroraBiosSetStatus (S, S->Config.UsbHidAutoConnect ? "USB HID Auto-Connect ENABLED" : "USB HID set to On-Demand Safe", COL_ACCENT);
+
+      case AURORA_TAB_BOOT: {
+        UINT32  MaxVis = (State->BootEntryCount < 7u) ? State->BootEntryCount : 7u;
+        UINT32  B;
+        AddCtrl (State, PaneX + 12, RowY + 0 * RowH, PaneW - 24, 34, AURORA_CTRL_CHOICE, CTRL_SET_DEFAULT_TARGET, 0);
+        AddCtrl (State, PaneX + 12, RowY + 1 * RowH, PaneW - 24, 34, AURORA_CTRL_CHOICE, CTRL_SET_BOOT_TIMEOUT, 0);
+        for (B = 0; B < MaxVis; B++) {
+          AddCtrl (State, PaneX + 12, RowY + 104 + (INT32)B * 36, PaneW - 24, 30, AURORA_CTRL_BOOT_ROW, CTRL_BOOT_ROW_BASE + B, B);
+        }
+        AddCtrl (State, PaneX + 12, H - 112, 160, 34, AURORA_CTRL_BUTTON, CTRL_BTN_BOOT_UP, 0);
+        AddCtrl (State, PaneX + 184, H - 112, 160, 34, AURORA_CTRL_BUTTON, CTRL_BTN_BOOT_DOWN, 0);
+        AddCtrl (State, PaneX + 356, H - 112, 220, 34, AURORA_CTRL_BUTTON, CTRL_BTN_BOOT_NOW, 0);
+        AddCtrl (State, PaneX + 588, H - 112, 200, 34, AURORA_CTRL_BUTTON, CTRL_BTN_LAUNCH_SHELL, 0);
         break;
-      case CID_TOGGLE_USB_BOOT:
-        S->Config.ExternalUsbBoot ^= 1;
-        AuroraBiosSetStatus (S, S->Config.ExternalUsbBoot ? "External USB Boot ENABLED" : "External USB Boot DISABLED", COL_ACCENT);
+      }
+
+      case AURORA_TAB_EXIT:
+        AddCtrl (State, PaneX + 12, RowY + 0 * 48, PaneW - 24, 38, AURORA_CTRL_BUTTON, CTRL_BTN_SAVE_EXIT, 0);
+        AddCtrl (State, PaneX + 12, RowY + 1 * 48, PaneW - 24, 38, AURORA_CTRL_BUTTON, CTRL_BTN_SAVE_ONLY, 0);
+        AddCtrl (State, PaneX + 12, RowY + 2 * 48, PaneW - 24, 38, AURORA_CTRL_BUTTON, CTRL_BTN_DISCARD_EXIT, 0);
+        AddCtrl (State, PaneX + 12, RowY + 3 * 48, PaneW - 24, 38, AURORA_CTRL_BUTTON, CTRL_BTN_LOAD_DEFAULTS, 0);
+        AddCtrl (State, PaneX + 12, RowY + 4 * 48, PaneW - 24, 38, AURORA_CTRL_BUTTON, CTRL_BTN_SAVE_REBOOT, 0);
+        AddCtrl (State, PaneX + 12, RowY + 5 * 48, PaneW - 24, 38, AURORA_CTRL_BUTTON, CTRL_BTN_POWER_OFF, 0);
         break;
+
       default:
         break;
     }
   }
+
+  if (State->FocusedCtrlIdx >= State->ControlCount) {
+    State->FocusedCtrlIdx = (State->ControlCount > 8) ? 8 : (State->ControlCount - 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Control Activation & Adjustment
+// ---------------------------------------------------------------------------
+static VOID
+SwapBootEntries (
+  AURORA_BIOS_STATE  *State,
+  UINT32             A,
+  UINT32             B
+  )
+{
+  AURORA_BOOT_ENTRY  Tmp;
+
+  if (A >= State->BootEntryCount || B >= State->BootEntryCount || A == B) {
+    return;
+  }
+  BiosCopy (&Tmp, &State->BootEntries[A], sizeof (Tmp));
+  BiosCopy (&State->BootEntries[A], &State->BootEntries[B], sizeof (Tmp));
+  BiosCopy (&State->BootEntries[B], &Tmp, sizeof (Tmp));
+  State->SelectedBootIdx = B;
+  State->BootOrderDirty  = TRUE;
+  State->PendingAction   = AURORA_ACTION_REORDER_BOOT;
+  AuroraBiosSetStatus (State, "Boot sequence updated (Press F10 to Save & Exit)", COL_ORANGE_HI);
 }
 
 static VOID
 ActivateControl (
-  AURORA_BIOS_STATE  *S,
+  AURORA_BIOS_STATE  *State,
   INT32              CtrlIdx,
-  BOOLEAN            FromMouse,
-  INT32              ClickX
+  INT32              Dir
   )
 {
-  const AURORA_UI_RECT  *R;
-
-  if (CtrlIdx < 0 || CtrlIdx >= S->ControlCount) {
+  if (CtrlIdx < 0 || CtrlIdx >= State->ControlCount) {
     return;
   }
-  R = &S->Controls[CtrlIdx];
-
-  if (R->Kind == AURORA_CTRL_TAB) {
-    SetTab (S, (AURORA_BIOS_TAB)R->Param);
-    return;
-  }
-
-  if (R->Kind == AURORA_CTRL_SLIDER) {
-    if (FromMouse) {
-      S->DraggingSliderId = R->Id;
-      ApplySliderByX (S, R, ClickX);
-    } else {
-      AdjustControlDelta (S, R, 1);
-    }
-    return;
-  }
-
-  if (R->Kind == AURORA_CTRL_TOGGLE) {
-    AdjustControlDelta (S, R, 1);
-    return;
-  }
-
-  if (R->Kind == AURORA_CTRL_BOOT_ROW) {
-    UINT32  Idx = R->Param;
-    if (FromMouse &&
-        S->LastClickBootIdx == Idx &&
-        (S->TickCount - S->LastClickTick) <= 35u) {
-      // Double-click launches the selected OS immediately
-      S->SelectedBootIdx  = Idx;
-      S->PendingAction    = AURORA_ACTION_BOOT_OPTION;
-      S->PendingActionArg = Idx;
-      AuroraBiosSetStatus (S, "Launching selected boot option...", COL_GREEN);
-    } else {
-      S->SelectedBootIdx  = Idx;
-      S->LastClickBootIdx = Idx;
-      S->LastClickTick    = S->TickCount;
-      if (!FromMouse) {
-        S->PendingAction    = AURORA_ACTION_BOOT_OPTION;
-        S->PendingActionArg = Idx;
-        AuroraBiosSetStatus (S, "Launching selected boot option...", COL_GREEN);
-      } else {
-        AuroraBiosSetStatus (S, "Boot entry selected (double-click or click BOOT NOW to launch)", COL_ACCENT);
-      }
-    }
-    return;
-  }
+  AURORA_UI_RECT  *R = &State->Controls[CtrlIdx];
 
   switch (R->Id) {
-    case CID_PROFILE_BALANCED:
-      S->Config.PerformanceProfile = AURORA_PROFILE_BALANCED;
-      AuroraBiosSetStatus (S, "Profile set to BALANCED (Apple M5 optimal power/perf)", COL_ACCENT);
-      break;
-    case CID_PROFILE_PERFORMANCE:
-      S->Config.PerformanceProfile = AURORA_PROFILE_PERFORMANCE;
-      AuroraBiosSetStatus (S, "Profile set to PERFORMANCE (maximum M5 P-core + G17G responsiveness)", COL_GREEN);
-      break;
-    case CID_PROFILE_QUIET:
-      S->Config.PerformanceProfile = AURORA_PROFILE_QUIET;
-      AuroraBiosSetStatus (S, "Profile set to QUIET (cool thermal envelope)", COL_AMBER);
-      break;
-    case CID_BTN_BOOT_OS:
-    case CID_EXIT_SAVE_BOOT:
-      AuroraBiosConfigFinalize (&S->Config);
-      S->PendingAction = AURORA_ACTION_SAVE_AND_BOOT;
-      AuroraBiosSetStatus (S, "Saving configuration and booting operating system...", COL_GREEN);
-      break;
-    case CID_BTN_UEFI_SHELL:
-    case CID_EXIT_SHELL:
-      S->PendingAction = AURORA_ACTION_LAUNCH_SHELL;
-      AuroraBiosSetStatus (S, "Launching internal UEFI Shell...", COL_ACCENT);
-      break;
-    case CID_BTN_SCAN_USB:
-    case CID_DIAG_SCAN_USB:
-      S->PendingAction = AURORA_ACTION_SCAN_USB_HID;
-      AuroraBiosSetStatus (S, "Scanning USB / Type-C HID controllers for mouse & keyboard...", COL_AMBER);
-      break;
-    case CID_BTN_SAVE_REBOOT:
-    case CID_EXIT_SAVE_REBOOT:
-      AuroraBiosConfigFinalize (&S->Config);
-      S->PendingAction = AURORA_ACTION_SAVE_AND_REBOOT;
-      AuroraBiosSetStatus (S, "Saving settings and rebooting system...", COL_AMBER);
-      break;
-    case CID_BOOT_MOVE_UP:
-      MoveBootOption (S, -1);
-      break;
-    case CID_BOOT_MOVE_DOWN:
-      MoveBootOption (S, 1);
-      break;
-    case CID_BOOT_LAUNCH_SEL:
-      if (S->BootEntryCount > 0 && S->SelectedBootIdx < S->BootEntryCount) {
-        S->PendingAction    = AURORA_ACTION_BOOT_OPTION;
-        S->PendingActionArg = S->SelectedBootIdx;
-        AuroraBiosSetStatus (S, "Launching selected boot option...", COL_GREEN);
+    case CTRL_MODE_EASY:
+      if (State->Mode != AURORA_MODE_EASY) {
+        State->Mode           = AURORA_MODE_EASY;
+        State->FocusedCtrlIdx = 8;
+        State->HoveredCtrlIdx = -1;
+        AuroraBiosBuildLayout (State);
+        MarkFullDirty (State);
       }
-      break;
-    case CID_CHOICE_DEF_TARGET:
-    case CID_CHOICE_CON_SCALE:
-    case CID_CHOICE_SERIAL_DBG:
-      AdjustControlDelta (S, R, 1);
-      break;
-    case CID_DIAG_RESET_INPUT:
-      S->Info.MouseClicks = 0;
-      S->Info.KeyPresses  = 0;
-      S->Info.LastRawDx   = 0;
-      S->Info.LastRawDy   = 0;
-      S->Info.LastKeyCode = 0;
-      AuroraBiosSetStatus (S, "Input telemetry counters reset", COL_ACCENT);
-      break;
-    case CID_EXIT_DISCARD_BOOT:
-      CopyBytes (&S->Config, &S->SavedConfig, sizeof (AURORA_BIOS_CONFIG));
-      S->BootOrderDirty = FALSE;
-      S->PendingAction  = AURORA_ACTION_DISCARD_AND_BOOT;
-      AuroraBiosSetStatus (S, "Discarded unsaved changes; continuing boot...", COL_AMBER);
-      break;
-    case CID_EXIT_LOAD_DEFAULTS:
-      AuroraBiosConfigSetDefaults (&S->Config);
-      AuroraBiosSetStatus (S, "Loaded optimized Apple M5 J813 defaults (Save & Exit to commit)", COL_AMBER);
-      break;
-    case CID_EXIT_POWER_OFF:
-      S->PendingAction = AURORA_ACTION_POWER_OFF;
-      AuroraBiosSetStatus (S, "Powering off system...", COL_RED);
-      break;
+      return;
+
+    case CTRL_MODE_ADVANCED:
+      if (State->Mode != AURORA_MODE_ADVANCED) {
+        State->Mode           = AURORA_MODE_ADVANCED;
+        State->FocusedCtrlIdx = 13;
+        State->HoveredCtrlIdx = -1;
+        AuroraBiosBuildLayout (State);
+        MarkFullDirty (State);
+      }
+      return;
+
+    case CTRL_UTIL_HELP:
+      State->ShowHelpModal = !State->ShowHelpModal;
+      MarkFullDirty (State);
+      return;
+
+    case CTRL_UTIL_INPUT:
+      State->Mode      = AURORA_MODE_ADVANCED;
+      State->ActiveTab = AURORA_TAB_SYSINFO;
+      AuroraBiosBuildLayout (State);
+      AuroraBiosSetStatus (State, "Viewing live Hardware, MTP Input & Backlight status", COL_ORANGE_HI);
+      return;
+
+    case CTRL_UTIL_DEFAULTS:
+    case CTRL_BTN_LOAD_DEFAULTS:
+      AuroraBiosConfigSetDefaults (&State->Config);
+      State->PendingAction    = AURORA_ACTION_SET_KBD_BACKLIGHT;
+      State->PendingActionArg = AuroraBiosKblLevelToPwm (State->Config.KbdBacklightLevel);
+      AuroraBiosSetStatus (State, "Loaded Optimized Defaults (F10 to Save & Exit)", COL_AMBER);
+      return;
+
+    case CTRL_UTIL_SAVE_EXIT:
+    case CTRL_BTN_SAVE_EXIT:
+      AuroraBiosConfigFinalize (&State->Config);
+      State->PendingAction = AURORA_ACTION_SAVE_AND_BOOT;
+      AuroraBiosSetStatus (State, "Saving settings and booting OS...", COL_GREEN);
+      return;
+
+    case CTRL_UTIL_SHELL:
+    case CTRL_EASY_QA_SHELL:
+    case CTRL_BTN_LAUNCH_SHELL:
+      State->PendingAction = AURORA_ACTION_LAUNCH_SHELL;
+      AuroraBiosSetStatus (State, "Launching UEFI Shell...", COL_ORANGE_HI);
+      return;
+
+    case CTRL_UTIL_BOOT_OS:
+    case CTRL_BTN_DISCARD_EXIT:
+      State->PendingAction = AURORA_ACTION_DISCARD_AND_BOOT;
+      AuroraBiosSetStatus (State, "Exiting setup and booting OS...", COL_TEXT_PRI);
+      return;
+
+    case CTRL_EASY_POWER_BTN:
+      State->Mode      = AURORA_MODE_ADVANCED;
+      State->ActiveTab = AURORA_TAB_TWEAKER;
+      AuroraBiosBuildLayout (State);
+      MarkFullDirty (State);
+      return;
+
+    case CTRL_EASY_QA_SYSINFO:
+      State->Mode      = AURORA_MODE_ADVANCED;
+      State->ActiveTab = AURORA_TAB_SYSINFO;
+      AuroraBiosBuildLayout (State);
+      MarkFullDirty (State);
+      return;
+
+    case CTRL_EASY_QA_BOOT:
+      State->Mode      = AURORA_MODE_ADVANCED;
+      State->ActiveTab = AURORA_TAB_BOOT;
+      AuroraBiosBuildLayout (State);
+      MarkFullDirty (State);
+      return;
+
+    case CTRL_SET_PERF_PROFILE:
+      State->Config.PerformanceProfile = (State->Config.PerformanceProfile + (Dir < 0 ? 2u : 1u)) % 3u;
+      AuroraBiosSetStatus (State, "Performance Mode updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_DIRECT_SCANOUT:
+      State->Config.DirectScanout = (State->Config.DirectScanout == 0u) ? 1u : 0u;
+      AuroraBiosSetStatus (State, "Direct Scanout preference updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_GPU_POOL:
+      State->Config.GpuLocalPoolEnable = (State->Config.GpuLocalPoolEnable == 0u) ? 1u : 0u;
+      AuroraBiosSetStatus (State, "GPU Local Pool preference updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_KBD_BACKLIGHT: {
+      INT32  Lvl = (INT32)State->Config.KbdBacklightLevel + (Dir < 0 ? -1 : 1);
+      if (Lvl < 0) Lvl = 4;
+      if (Lvl > 4) Lvl = 0;
+      State->Config.KbdBacklightLevel = (UINT8)Lvl;
+      State->PendingAction            = AURORA_ACTION_SET_KBD_BACKLIGHT;
+      State->PendingActionArg         = AuroraBiosKblLevelToPwm (State->Config.KbdBacklightLevel);
+      AuroraBiosSetStatus (State, "Keyboard Backlight brightness applied live", COL_ORANGE_HI);
+      return;
+    }
+
+    case CTRL_SET_SCALE_MODE:
+      State->Config.ConsoleScaleMode = (State->Config.ConsoleScaleMode == 2u) ? 1u : 2u;
+      AuroraBiosSetStatus (State, "HiDPI Display Scale updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_MOUSE_SPEED: {
+      INT32  Spd = (INT32)State->Config.MouseSpeed + (Dir < 0 ? -1 : 1);
+      if (Spd < 1)  Spd = 10;
+      if (Spd > 10) Spd = 1;
+      State->Config.MouseSpeed = (UINT8)Spd;
+      AuroraBiosSetStatus (State, "Pointer sensitivity updated", COL_ORANGE_HI);
+      return;
+    }
+
+    case CTRL_SET_FAST_BOOT:
+      State->Config.FastBoot = (State->Config.FastBoot == 0u) ? 1u : 0u;
+      AuroraBiosSetStatus (State, "Fast Boot updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_SPLASH_LOGO:
+      State->Config.BootSplashLogo = (State->Config.BootSplashLogo == 0u) ? 1u : 0u;
+      AuroraBiosSetStatus (State, "Boot Splash Logo updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_DEFAULT_TARGET:
+      State->Config.DefaultBootTarget = (UINT8)((State->Config.DefaultBootTarget + (Dir < 0 ? 2u : 1u)) % 3u);
+      AuroraBiosSetStatus (State, "Default Boot Target updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_BOOT_TIMEOUT: {
+      INT32  V = (INT32)State->Config.BootTimeoutSec + (Dir < 0 ? -1 : 1);
+      if (V < 0)  V = 10;
+      if (V > 10) V = 0;
+      State->Config.BootTimeoutSec = (UINT32)V;
+      AuroraBiosSetStatus (State, "Boot Timeout updated", COL_ORANGE_HI);
+      return;
+    }
+
+    case CTRL_SET_SERIAL_DEBUG:
+      State->Config.SerialDebugLevel = (UINT8)((State->Config.SerialDebugLevel + (Dir < 0 ? 2u : 1u)) % 3u);
+      AuroraBiosSetStatus (State, "Serial Debug verbosity updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_USB_AUTO:
+      State->Config.UsbHidAutoConnect = (State->Config.UsbHidAutoConnect == 0u) ? 1u : 0u;
+      AuroraBiosSetStatus (State, "USB HID Auto-Scan preference updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_EXT_USB_BOOT:
+      State->Config.ExternalUsbBoot = (State->Config.ExternalUsbBoot == 0u) ? 1u : 0u;
+      AuroraBiosSetStatus (State, "External USB Boot preference updated", COL_ORANGE_HI);
+      return;
+
+    case CTRL_SET_ENTER_ONCE:
+      State->Config.EnterBiosOnce = (State->Config.EnterBiosOnce == 0u) ? 1u : 0u;
+      AuroraBiosSetStatus (State, "One-Shot Enter Setup on next boot toggled", COL_ORANGE_HI);
+      return;
+
+    case CTRL_BTN_BOOT_UP:
+      if (State->SelectedBootIdx > 0u) {
+        SwapBootEntries (State, State->SelectedBootIdx, State->SelectedBootIdx - 1u);
+      }
+      return;
+
+    case CTRL_BTN_BOOT_DOWN:
+      if (State->SelectedBootIdx + 1u < State->BootEntryCount) {
+        SwapBootEntries (State, State->SelectedBootIdx, State->SelectedBootIdx + 1u);
+      }
+      return;
+
+    case CTRL_BTN_BOOT_NOW:
+      if (State->SelectedBootIdx < State->BootEntryCount) {
+        State->PendingAction    = AURORA_ACTION_BOOT_OPTION;
+        State->PendingActionArg = State->SelectedBootIdx;
+        AuroraBiosSetStatus (State, "Booting selected UEFI entry...", COL_GREEN);
+      }
+      return;
+
+    case CTRL_BTN_SCAN_USB:
+      State->PendingAction = AURORA_ACTION_SCAN_USB_HID;
+      AuroraBiosSetStatus (State, "Scanning input protocols...", COL_ORANGE_HI);
+      return;
+
+    case CTRL_BTN_SAVE_ONLY:
+      AuroraBiosConfigFinalize (&State->Config);
+      State->PendingAction = AURORA_ACTION_SAVE_CONFIG;
+      return;
+
+    case CTRL_BTN_SAVE_REBOOT:
+      AuroraBiosConfigFinalize (&State->Config);
+      State->PendingAction = AURORA_ACTION_SAVE_AND_REBOOT;
+      AuroraBiosSetStatus (State, "Saving settings and rebooting...", COL_AMBER);
+      return;
+
+    case CTRL_BTN_POWER_OFF:
+      State->PendingAction = AURORA_ACTION_POWER_OFF;
+      AuroraBiosSetStatus (State, "Powering off system...", COL_RED);
+      return;
+
     default:
-      break;
+      if (R->Kind == AURORA_CTRL_TAB) {
+        State->ActiveTab      = (AURORA_BIOS_TAB)(R->Param % AURORA_TAB_COUNT);
+        State->FocusedCtrlIdx = 13;
+        State->HoveredCtrlIdx = -1;
+        AuroraBiosBuildLayout (State);
+        MarkFullDirty (State);
+      } else if (R->Kind == AURORA_CTRL_BOOT_ROW) {
+        UINT32  Idx = R->Param;
+        if (Idx < State->BootEntryCount) {
+          if (State->SelectedBootIdx == Idx &&
+              State->LastClickBootIdx == Idx &&
+              (State->TickCount - State->LastClickTick) <= 45u) {
+            State->PendingAction    = AURORA_ACTION_BOOT_OPTION;
+            State->PendingActionArg = Idx;
+            AuroraBiosSetStatus (State, "Booting selected entry...", COL_GREEN);
+          } else {
+            State->SelectedBootIdx  = Idx;
+            State->LastClickBootIdx = Idx;
+            State->LastClickTick    = State->TickCount;
+            MarkFullDirty (State);
+          }
+        }
+      }
+      return;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Input Event Handlers (Keyboard + Absolute Mouse + Relative Mouse)
-// ---------------------------------------------------------------------------
 static INT32
-HitTest (
-  const AURORA_BIOS_STATE  *S,
+HitTestControl (
+  const AURORA_BIOS_STATE  *State,
   INT32                    X,
   INT32                    Y
   )
 {
   INT32  I;
-  for (I = S->ControlCount - 1; I >= 0; I--) {
-    const AURORA_UI_RECT  *R = &S->Controls[I];
+  for (I = 0; I < State->ControlCount; I++) {
+    const AURORA_UI_RECT  *R = &State->Controls[I];
     if (X >= R->X && X < R->X + R->W && Y >= R->Y && Y < R->Y + R->H) {
       return I;
     }
@@ -923,1155 +948,1759 @@ HitTest (
 
 VOID
 AuroraBiosHandleKey (
-  AURORA_BIOS_STATE  *S,
+  AURORA_BIOS_STATE  *State,
   AURORA_BIOS_KEY    Key
   )
 {
   if (Key == AURORA_KEY_NONE) {
     return;
   }
-  S->Info.KeyPresses++;
-  S->Info.LastKeyCode = (UINT32)Key;
+  State->Info.KeyPresses++;
+  State->Info.LastKeyCode = (UINT32)Key;
+
+  if (State->ShowHelpModal) {
+    State->ShowHelpModal = FALSE;
+    MarkFullDirty (State);
+    return;
+  }
 
   switch (Key) {
-    case AURORA_KEY_F1: SetTab (S, AURORA_TAB_DASHBOARD); return;
-    case AURORA_KEY_F2: SetTab (S, AURORA_TAB_BOOT);      return;
-    case AURORA_KEY_F3: SetTab (S, AURORA_TAB_HARDWARE);  return;
-    case AURORA_KEY_F4: SetTab (S, AURORA_TAB_DIAG);      return;
-    case AURORA_KEY_F5: SetTab (S, AURORA_TAB_EXIT);      return;
+    case AURORA_KEY_F1:
+      State->ShowHelpModal = TRUE;
+      MarkFullDirty (State);
+      return;
+
+    case AURORA_KEY_F2:
+      State->Mode           = (State->Mode == AURORA_MODE_EASY) ? AURORA_MODE_ADVANCED : AURORA_MODE_EASY;
+      State->FocusedCtrlIdx = (State->Mode == AURORA_MODE_EASY) ? 8 : 13;
+      State->HoveredCtrlIdx = -1;
+      AuroraBiosBuildLayout (State);
+      MarkFullDirty (State);
+      return;
+
+    case AURORA_KEY_F3:
+    case AURORA_KEY_F4:
+    case AURORA_KEY_F5:
+      State->Mode      = AURORA_MODE_ADVANCED;
+      State->ActiveTab = (AURORA_BIOS_TAB)((Key - AURORA_KEY_F3 + 2) % AURORA_TAB_COUNT);
+      State->FocusedCtrlIdx = 13;
+      AuroraBiosBuildLayout (State);
+      MarkFullDirty (State);
+      return;
+
+    case AURORA_KEY_F7:
     case AURORA_KEY_F9:
-      AuroraBiosConfigSetDefaults (&S->Config);
-      AuroraBiosSetStatus (S, "Loaded optimized Apple M5 J813 defaults", COL_AMBER);
+      AuroraBiosConfigSetDefaults (&State->Config);
+      State->PendingAction    = AURORA_ACTION_SET_KBD_BACKLIGHT;
+      State->PendingActionArg = AuroraBiosKblLevelToPwm (State->Config.KbdBacklightLevel);
+      AuroraBiosSetStatus (State, "Loaded Optimized Defaults (Press F10 to Save & Exit)", COL_AMBER);
       return;
+
     case AURORA_KEY_F10:
-      AuroraBiosConfigFinalize (&S->Config);
-      S->PendingAction = AURORA_ACTION_SAVE_AND_BOOT;
-      AuroraBiosSetStatus (S, "F10: Saving configuration and booting OS...", COL_GREEN);
+      AuroraBiosConfigFinalize (&State->Config);
+      State->PendingAction = AURORA_ACTION_SAVE_AND_BOOT;
+      AuroraBiosSetStatus (State, "Saving settings and booting OS...", COL_GREEN);
       return;
+
+    case AURORA_KEY_F11:
+      State->PendingAction = AURORA_ACTION_LAUNCH_SHELL;
+      AuroraBiosSetStatus (State, "Launching UEFI Shell...", COL_ORANGE_HI);
+      return;
+
     case AURORA_KEY_ESC:
-      if (S->ActiveTab != AURORA_TAB_EXIT && AuroraBiosCountModified (S) > 0) {
-        SetTab (S, AURORA_TAB_EXIT);
-        AuroraBiosSetStatus (S, "Unsaved changes pending - Save or Discard below", COL_AMBER);
+      if (State->Mode == AURORA_MODE_ADVANCED && State->ActiveTab != AURORA_TAB_EXIT) {
+        State->ActiveTab = AURORA_TAB_EXIT;
+        AuroraBiosBuildLayout (State);
+        MarkFullDirty (State);
       } else {
-        S->PendingAction = AURORA_ACTION_DISCARD_AND_BOOT;
+        State->PendingAction = AURORA_ACTION_DISCARD_AND_BOOT;
+        AuroraBiosSetStatus (State, "Exiting setup...", COL_TEXT_PRI);
       }
       return;
+
     case AURORA_KEY_TAB:
-      if (S->ControlCount > 0) {
-        S->FocusedCtrlIdx = (S->FocusedCtrlIdx + 1) % S->ControlCount;
-        MarkFullRedraw (S);
+    case AURORA_KEY_DOWN: {
+      INT32  Start = (State->Mode == AURORA_MODE_EASY) ? 8 : 13;
+      if (State->ControlCount <= Start) Start = 0;
+      if (State->FocusedCtrlIdx < Start || State->FocusedCtrlIdx + 1 >= State->ControlCount) {
+        State->FocusedCtrlIdx = Start;
+      } else {
+        State->FocusedCtrlIdx++;
       }
+      MarkFullDirty (State);
       return;
+    }
+
     case AURORA_KEY_SHIFT_TAB:
-      if (S->ControlCount > 0) {
-        S->FocusedCtrlIdx = (S->FocusedCtrlIdx + S->ControlCount - 1) % S->ControlCount;
-        MarkFullRedraw (S);
+    case AURORA_KEY_UP: {
+      INT32  Start = (State->Mode == AURORA_MODE_EASY) ? 8 : 13;
+      if (State->ControlCount <= Start) Start = 0;
+      if (State->FocusedCtrlIdx <= Start) {
+        State->FocusedCtrlIdx = State->ControlCount - 1;
+      } else {
+        State->FocusedCtrlIdx--;
       }
+      MarkFullDirty (State);
       return;
-    case AURORA_KEY_UP:
-      if (S->ControlCount > 0) {
-        S->FocusedCtrlIdx = (S->FocusedCtrlIdx + S->ControlCount - 1) % S->ControlCount;
-        if (S->Controls[S->FocusedCtrlIdx].Kind == AURORA_CTRL_BOOT_ROW) {
-          S->SelectedBootIdx = S->Controls[S->FocusedCtrlIdx].Param;
-        }
-        MarkFullRedraw (S);
-      }
-      return;
-    case AURORA_KEY_DOWN:
-      if (S->ControlCount > 0) {
-        S->FocusedCtrlIdx = (S->FocusedCtrlIdx + 1) % S->ControlCount;
-        if (S->Controls[S->FocusedCtrlIdx].Kind == AURORA_CTRL_BOOT_ROW) {
-          S->SelectedBootIdx = S->Controls[S->FocusedCtrlIdx].Param;
-        }
-        MarkFullRedraw (S);
-      }
-      return;
+    }
+
     case AURORA_KEY_LEFT:
-      if (S->FocusedCtrlIdx >= 0 && S->FocusedCtrlIdx < S->ControlCount) {
-        const AURORA_UI_RECT  *R = &S->Controls[S->FocusedCtrlIdx];
-        if (R->Kind == AURORA_CTRL_SLIDER || R->Kind == AURORA_CTRL_CHOICE || R->Kind == AURORA_CTRL_TOGGLE) {
-          AdjustControlDelta (S, R, -1);
-          return;
+      if (State->Mode == AURORA_MODE_ADVANCED &&
+          (State->FocusedCtrlIdx < 13 || State->Controls[State->FocusedCtrlIdx].Kind == AURORA_CTRL_TAB)) {
+        State->ActiveTab = (AURORA_BIOS_TAB)((State->ActiveTab + AURORA_TAB_COUNT - 1) % AURORA_TAB_COUNT);
+        AuroraBiosBuildLayout (State);
+        MarkFullDirty (State);
+      } else if (State->FocusedCtrlIdx >= 0 && State->FocusedCtrlIdx < State->ControlCount) {
+        AURORA_CTRL_KIND  K = State->Controls[State->FocusedCtrlIdx].Kind;
+        if (K == AURORA_CTRL_CHOICE || K == AURORA_CTRL_TOGGLE) {
+          ActivateControl (State, State->FocusedCtrlIdx, -1);
+        } else if (State->Mode == AURORA_MODE_ADVANCED) {
+          State->ActiveTab = (AURORA_BIOS_TAB)((State->ActiveTab + AURORA_TAB_COUNT - 1) % AURORA_TAB_COUNT);
+          AuroraBiosBuildLayout (State);
+          MarkFullDirty (State);
         }
       }
-      SetTab (S, (AURORA_BIOS_TAB)((S->ActiveTab + AURORA_TAB_COUNT - 1) % AURORA_TAB_COUNT));
       return;
+
     case AURORA_KEY_RIGHT:
-      if (S->FocusedCtrlIdx >= 0 && S->FocusedCtrlIdx < S->ControlCount) {
-        const AURORA_UI_RECT  *R = &S->Controls[S->FocusedCtrlIdx];
-        if (R->Kind == AURORA_CTRL_SLIDER || R->Kind == AURORA_CTRL_CHOICE || R->Kind == AURORA_CTRL_TOGGLE) {
-          AdjustControlDelta (S, R, 1);
-          return;
+      if (State->Mode == AURORA_MODE_ADVANCED &&
+          (State->FocusedCtrlIdx < 13 || State->Controls[State->FocusedCtrlIdx].Kind == AURORA_CTRL_TAB)) {
+        State->ActiveTab = (AURORA_BIOS_TAB)((State->ActiveTab + 1) % AURORA_TAB_COUNT);
+        AuroraBiosBuildLayout (State);
+        MarkFullDirty (State);
+      } else if (State->FocusedCtrlIdx >= 0 && State->FocusedCtrlIdx < State->ControlCount) {
+        AURORA_CTRL_KIND  K = State->Controls[State->FocusedCtrlIdx].Kind;
+        if (K == AURORA_CTRL_CHOICE || K == AURORA_CTRL_TOGGLE) {
+          ActivateControl (State, State->FocusedCtrlIdx, +1);
+        } else if (State->Mode == AURORA_MODE_ADVANCED) {
+          State->ActiveTab = (AURORA_BIOS_TAB)((State->ActiveTab + 1) % AURORA_TAB_COUNT);
+          AuroraBiosBuildLayout (State);
+          MarkFullDirty (State);
         }
       }
-      SetTab (S, (AURORA_BIOS_TAB)((S->ActiveTab + 1) % AURORA_TAB_COUNT));
       return;
+
     case AURORA_KEY_PLUS:
-      if (S->ActiveTab == AURORA_TAB_BOOT) {
-        MoveBootOption (S, -1);
-      } else if (S->FocusedCtrlIdx >= 0 && S->FocusedCtrlIdx < S->ControlCount) {
-        AdjustControlDelta (S, &S->Controls[S->FocusedCtrlIdx], 1);
-      }
+      ActivateControl (State, State->FocusedCtrlIdx, +1);
       return;
+
     case AURORA_KEY_MINUS:
-      if (S->ActiveTab == AURORA_TAB_BOOT) {
-        MoveBootOption (S, 1);
-      } else if (S->FocusedCtrlIdx >= 0 && S->FocusedCtrlIdx < S->ControlCount) {
-        AdjustControlDelta (S, &S->Controls[S->FocusedCtrlIdx], -1);
-      }
+      ActivateControl (State, State->FocusedCtrlIdx, -1);
       return;
+
     case AURORA_KEY_ENTER:
     case AURORA_KEY_SPACE:
-      ActivateControl (S, S->FocusedCtrlIdx, FALSE, 0);
+      if (State->FocusedCtrlIdx >= 0) {
+        ActivateControl (State, State->FocusedCtrlIdx, +1);
+      }
       return;
+
     default:
-      break;
+      return;
   }
 }
 
 VOID
 AuroraBiosHandleMouseMove (
-  AURORA_BIOS_STATE  *S,
+  AURORA_BIOS_STATE  *State,
   INT32              NewX,
   INT32              NewY,
   BOOLEAN            LeftDown
   )
 {
-  INT32    ClampedX = ClampI32 (NewX, 0, S->Width - 1);
-  INT32    ClampedY = ClampI32 (NewY, 0, S->Height - 1);
-  INT32    NewHover;
-  BOOLEAN  JustPressed  = LeftDown && !S->MouseLeftDown;
-  BOOLEAN  JustReleased = !LeftDown && S->MouseLeftDown;
+  INT32    Hit;
+  BOOLEAN  Clicked;
 
-  S->MouseVisible = TRUE;
+  if (NewX < 0) NewX = 0;
+  if (NewY < 0) NewY = 0;
+  if (NewX >= State->Width)  NewX = State->Width - 1;
+  if (NewY >= State->Height) NewY = State->Height - 1;
 
-  if (ClampedX != S->MouseX || ClampedY != S->MouseY) {
-    MarkDirty (S, S->MouseX - 2, S->MouseY - 2, 24, 28);
-    S->PrevMouseX = S->MouseX;
-    S->PrevMouseY = S->MouseY;
-    S->MouseX     = ClampedX;
-    S->MouseY     = ClampedY;
-    MarkDirty (S, S->MouseX - 2, S->MouseY - 2, 24, 28);
+  if (NewX != State->MouseX || NewY != State->MouseY) {
+    MarkDirtyRect (State, State->MouseX - 2, State->MouseY - 2, State->MouseX + 24, State->MouseY + 26);
+    MarkDirtyRect (State, NewX - 2, NewY - 2, NewX + 24, NewY + 26);
+    State->PrevMouseX = State->MouseX;
+    State->PrevMouseY = State->MouseY;
+    State->MouseX     = NewX;
+    State->MouseY     = NewY;
   }
 
-  NewHover = HitTest (S, ClampedX, ClampedY);
-  if (NewHover != S->HoveredCtrlIdx) {
-    if (S->HoveredCtrlIdx >= 0 && S->HoveredCtrlIdx < S->ControlCount) {
-      const AURORA_UI_RECT  *OldR = &S->Controls[S->HoveredCtrlIdx];
-      MarkDirty (S, OldR->X - 2, OldR->Y - 2, OldR->W + 4, OldR->H + 4);
+  State->MouseVisible      = TRUE;
+  Clicked                  = (LeftDown && !State->MouseLeftDown);
+  State->MousePrevLeftDown = State->MouseLeftDown;
+  State->MouseLeftDown     = LeftDown;
+
+  if (State->ShowHelpModal) {
+    if (Clicked) {
+      State->ShowHelpModal = FALSE;
+      MarkFullDirty (State);
     }
-    S->HoveredCtrlIdx = NewHover;
-    if (NewHover >= 0 && NewHover < S->ControlCount) {
-      const AURORA_UI_RECT  *CurR = &S->Controls[NewHover];
-      MarkDirty (S, CurR->X - 2, CurR->Y - 2, CurR->W + 4, CurR->H + 4);
-    }
-    S->FullRedrawNeeded = TRUE;
+    return;
   }
 
-  if (JustPressed) {
-    S->Info.MouseClicks++;
-    if (NewHover >= 0) {
-      S->FocusedCtrlIdx = NewHover;
-      ActivateControl (S, NewHover, TRUE, ClampedX);
+  Hit = HitTestControl (State, NewX, NewY);
+  if (Hit != State->HoveredCtrlIdx) {
+    if (State->HoveredCtrlIdx >= 0 && State->HoveredCtrlIdx < State->ControlCount) {
+      AURORA_UI_RECT  *Old = &State->Controls[State->HoveredCtrlIdx];
+      MarkDirtyRect (State, Old->X - 6, Old->Y - 4, Old->X + Old->W + 6, Old->Y + Old->H + 4);
     }
-  } else if (LeftDown && S->DraggingSliderId != 0) {
-    INT32  I;
-    for (I = 0; I < S->ControlCount; I++) {
-      if (S->Controls[I].Id == S->DraggingSliderId) {
-        ApplySliderByX (S, &S->Controls[I], ClampedX);
-        break;
-      }
+    if (Hit >= 0 && Hit < State->ControlCount) {
+      AURORA_UI_RECT  *Cur = &State->Controls[Hit];
+      MarkDirtyRect (State, Cur->X - 6, Cur->Y - 4, Cur->X + Cur->W + 6, Cur->Y + Cur->H + 4);
+    }
+    State->HoveredCtrlIdx = Hit;
+    // Also refresh Item Help panel in Advanced Mode
+    if (State->Mode == AURORA_MODE_ADVANCED) {
+      MarkDirtyRect (State, State->Width - 360, 470, State->Width - 20, State->Height - 50);
     }
   }
 
-  if (JustReleased) {
-    S->DraggingSliderId = 0;
+  if (Clicked) {
+    State->Info.MouseClicks++;
+    if (Hit >= 0) {
+      State->FocusedCtrlIdx = Hit;
+      ActivateControl (State, Hit, +1);
+    }
   }
-
-  S->MousePrevLeftDown = S->MouseLeftDown;
-  S->MouseLeftDown     = LeftDown;
 }
 
 VOID
 AuroraBiosHandleMouseDelta (
-  AURORA_BIOS_STATE  *S,
+  AURORA_BIOS_STATE  *State,
   INT32              DeltaX,
   INT32              DeltaY,
   BOOLEAN            LeftDown
   )
 {
-  INT32  Speed = (INT32)S->Config.MouseSpeed;
-  INT32  ScaledDx;
-  INT32  ScaledDy;
+  INT32  Mult = (INT32)State->Config.MouseSpeed;
+  INT32  Sx;
+  INT32  Sy;
 
-  S->Info.LastRawDx = DeltaX;
-  S->Info.LastRawDy = DeltaY;
+  if (Mult < 1)  Mult = 1;
+  if (Mult > 10) Mult = 10;
 
-  if (Speed < 1) Speed = 1;
-  ScaledDx = (DeltaX * Speed + (DeltaX >= 0 ? 2 : -2)) / 4;
-  ScaledDy = (DeltaY * Speed + (DeltaY >= 0 ? 2 : -2)) / 4;
-  if (DeltaX != 0 && ScaledDx == 0) ScaledDx = (DeltaX > 0) ? 1 : -1;
-  if (DeltaY != 0 && ScaledDy == 0) ScaledDy = (DeltaY > 0) ? 1 : -1;
+  State->Info.LastRawDx = DeltaX;
+  State->Info.LastRawDy = DeltaY;
 
-  AuroraBiosHandleMouseMove (S, S->MouseX + ScaledDx, S->MouseY + ScaledDy, LeftDown);
+  Sx = (DeltaX * (3 + Mult)) / 8;
+  Sy = (DeltaY * (3 + Mult)) / 8;
+  if (DeltaX != 0 && Sx == 0) Sx = (DeltaX > 0) ? 1 : -1;
+  if (DeltaY != 0 && Sy == 0) Sy = (DeltaY > 0) ? 1 : -1;
+
+  AuroraBiosHandleMouseMove (State, State->MouseX + Sx, State->MouseY + Sy, LeftDown);
 }
 
-// ---------------------------------------------------------------------------
-// 2D Software Rasterizer Primitives (0x00RRGGBB in RAM BackBuffer)
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// High-Craft Gigabyte-Style Software Renderer (Anti-Aliased Fonts & Gradients)
+// ===========================================================================
+static UINT32
+BlendRgb (
+  UINT32  Bg,
+  UINT32  Fg,
+  UINT32  Alpha255
+  )
+{
+  UINT32  Inv = 255u - Alpha255;
+  UINT32  R   = (((Bg >> 16) & 0xFFu) * Inv + ((Fg >> 16) & 0xFFu) * Alpha255) / 255u;
+  UINT32  G   = (((Bg >> 8) & 0xFFu) * Inv + ((Fg >> 8) & 0xFFu) * Alpha255) / 255u;
+  UINT32  B   = ((Bg & 0xFFu) * Inv + (Fg & 0xFFu) * Alpha255) / 255u;
+  return (R << 16) | (G << 8) | B;
+}
+
+static VOID
+PutPx (
+  UINT32  *Buf,
+  INT32   W,
+  INT32   H,
+  INT32   X,
+  INT32   Y,
+  UINT32  Col
+  )
+{
+  if (X >= 0 && X < W && Y >= 0 && Y < H) {
+    Buf[Y * W + X] = Col;
+  }
+}
+
 static VOID
 FillRect (
   UINT32  *Buf,
-  INT32   Bw,
-  INT32   Bh,
-  INT32   X,
-  INT32   Y,
   INT32   W,
   INT32   H,
-  UINT32  Color
+  INT32   X,
+  INT32   Y,
+  INT32   RW,
+  INT32   RH,
+  UINT32  Col
   )
 {
-  INT32  X1 = ClampI32 (X, 0, Bw);
-  INT32  Y1 = ClampI32 (Y, 0, Bh);
-  INT32  X2 = ClampI32 (X + W, 0, Bw);
-  INT32  Y2 = ClampI32 (Y + H, 0, Bh);
+  INT32  X0 = (X < 0) ? 0 : X;
+  INT32  Y0 = (Y < 0) ? 0 : Y;
+  INT32  X1 = (X + RW > W) ? W : (X + RW);
+  INT32  Y1 = (Y + RH > H) ? H : (Y + RH);
   INT32  Py;
   INT32  Px;
 
-  for (Py = Y1; Py < Y2; Py++) {
-    UINT32  *Row = Buf + (UINTN)Py * (UINTN)Bw;
-    for (Px = X1; Px < X2; Px++) {
-      Row[Px] = Color;
+  for (Py = Y0; Py < Y1; Py++) {
+    UINT32  *Row = Buf + Py * W;
+    for (Px = X0; Px < X1; Px++) {
+      Row[Px] = Col;
     }
   }
 }
 
 static VOID
-DrawRectOutline (
+FillGradV (
   UINT32  *Buf,
-  INT32   Bw,
-  INT32   Bh,
-  INT32   X,
-  INT32   Y,
   INT32   W,
   INT32   H,
-  INT32   Thick,
-  UINT32  Color
-  )
-{
-  FillRect (Buf, Bw, Bh, X, Y, W, Thick, Color);
-  FillRect (Buf, Bw, Bh, X, Y + H - Thick, W, Thick, Color);
-  FillRect (Buf, Bw, Bh, X, Y, Thick, H, Color);
-  FillRect (Buf, Bw, Bh, X + W - Thick, Y, Thick, H, Color);
-}
-
-static VOID
-DrawChamferedCard (
-  UINT32  *Buf,
-  INT32   Bw,
-  INT32   Bh,
   INT32   X,
   INT32   Y,
-  INT32   W,
-  INT32   H,
-  UINT32  FillCol,
-  UINT32  BorderCol,
-  UINT32  AccentCol
+  INT32   RW,
+  INT32   RH,
+  UINT32  TopCol,
+  UINT32  BotCol
   )
 {
-  FillRect (Buf, Bw, Bh, X, Y, W, H, FillCol);
-  DrawRectOutline (Buf, Bw, Bh, X, Y, W, H, 1, BorderCol);
-  // Gaming top accent bar + sharp corner ticks
-  if (AccentCol != 0) {
-    FillRect (Buf, Bw, Bh, X, Y, W, 3, AccentCol);
-    FillRect (Buf, Bw, Bh, X, Y, 10, 3, COL_TEXT_BRIGHT);
-    FillRect (Buf, Bw, Bh, X + W - 10, Y + H - 2, 10, 2, AccentCol);
+  INT32  Py;
+  if (RH <= 0 || RW <= 0) return;
+  for (Py = 0; Py < RH; Py++) {
+    UINT32  A   = (RH > 1) ? ((UINT32)Py * 255u) / (UINT32)(RH - 1) : 0u;
+    UINT32  Col = BlendRgb (TopCol, BotCol, A);
+    FillRect (Buf, W, H, X, Y + Py, RW, 1, Col);
   }
 }
 
 static VOID
-DrawChar (
+DrawRectBorder (
   UINT32  *Buf,
-  INT32   Bw,
-  INT32   Bh,
+  INT32   W,
+  INT32   H,
   INT32   X,
   INT32   Y,
-  char    Ch,
-  UINT32  Color,
-  INT32   Scale,
-  BOOLEAN Bold
+  INT32   RW,
+  INT32   RH,
+  UINT32  Col
   )
 {
-  INT32         Idx;
-  INT32         Row;
-  INT32         Col;
-  const UINT8   *Glyph;
+  FillRect (Buf, W, H, X, Y, RW, 1, Col);
+  FillRect (Buf, W, H, X, Y + RH - 1, RW, 1, Col);
+  FillRect (Buf, W, H, X, Y, 1, RH, Col);
+  FillRect (Buf, W, H, X + RW - 1, Y, 1, RH, Col);
+}
 
-  if (Ch < 0x20 || Ch > 0x7E) {
-    Ch = '?';
+// Gigabyte Signature Molten-Orange Horizontal Light Streak
+static VOID
+DrawOrangeLightBar (
+  UINT32  *Buf,
+  INT32   W,
+  INT32   H,
+  INT32   CenterY,
+  INT32   HalfThickness
+  )
+{
+  INT32  Dy;
+  INT32  Px;
+
+  for (Dy = -HalfThickness; Dy <= HalfThickness; Dy++) {
+    INT32   Y    = CenterY + Dy;
+    INT32   Dist = (Dy < 0) ? -Dy : Dy;
+    UINT32  VertStrength;
+    if (Y < 0 || Y >= H) continue;
+    // Sharp bright core at Dist==0, exponential warm orange falloff
+    if (Dist == 0) {
+      VertStrength = 255u;
+    } else if (Dist == 1) {
+      VertStrength = 175u;
+    } else if (Dist == 2) {
+      VertStrength = 105u;
+    } else {
+      INT32  Rem = HalfThickness - Dist + 1;
+      VertStrength = (Rem > 0) ? (UINT32)((Rem * 70) / HalfThickness) : 0u;
+    }
+
+    for (Px = 0; Px < W; Px++) {
+      // Subtle edge fade at extreme left/right 10%
+      UINT32  HScale = 255u;
+      if (Px < W / 10) {
+        HScale = 70u + (UINT32)(Px * 185) / (UINT32)(W / 10);
+      } else if (Px > W - W / 10) {
+        HScale = 70u + (UINT32)((W - 1 - Px) * 185) / (UINT32)(W / 10);
+      }
+      UINT32  Alpha = (VertStrength * HScale) / 255u;
+      UINT32  Tint  = (Dist == 0) ? 0x00FF8E3Cu : COL_ORANGE;
+      Buf[Y * W + Px] = BlendRgb (Buf[Y * W + Px], Tint, Alpha);
+    }
   }
-  Idx   = (INT32)(Ch - 0x20);
-  Glyph = mAuroraFont8x8[Idx];
+}
 
-  for (Row = 0; Row < 8; Row++) {
-    UINT8  Bits = Glyph[Row];
-    if (Bits == 0) {
+// Anti-Aliased 4-Bit Proportional Text Measurement & Drawing
+static INT32
+MeasureText (
+  const AURORA_FONT_FACE  *Face,
+  const char              *Str
+  )
+{
+  INT32  W = 0;
+  if (Str == NULL || Face == NULL) return 0;
+  while (*Str != '\0') {
+    UINT8  C = (UINT8)*Str++;
+    if (C < Face->FirstChar || C > Face->LastChar) C = ' ';
+    W += Face->Glyphs[C - Face->FirstChar].Advance;
+  }
+  return W;
+}
+
+static VOID
+DrawTextFace (
+  UINT32                  *Buf,
+  INT32                   W,
+  INT32                   H,
+  const AURORA_FONT_FACE  *Face,
+  INT32                   X,
+  INT32                   Y,
+  UINT32                  Col,
+  const char              *Str
+  )
+{
+  INT32  CurX = X;
+  if (Str == NULL || Face == NULL) return;
+
+  while (*Str != '\0') {
+    UINT8                    C = (UINT8)*Str++;
+    const AURORA_GLYPH_META  *G;
+    INT32                    Gy;
+    INT32                    Gx;
+    UINT32                   RowBytes;
+
+    if (C < Face->FirstChar || C > Face->LastChar) {
+      C = ' ';
+    }
+    G = &Face->Glyphs[C - Face->FirstChar];
+    if (G->Width > 0u && G->Height > 0u) {
+      RowBytes = ((UINT32)G->Width + 1u) / 2u;
+      for (Gy = 0; Gy < (INT32)G->Height; Gy++) {
+        INT32        Py  = Y + (INT32)G->BearingY + Gy;
+        const UINT8  *Rp = Face->Bitmap + G->BitmapOffset + (UINT32)Gy * RowBytes;
+        if (Py < 0 || Py >= H) continue;
+        for (Gx = 0; Gx < (INT32)G->Width; Gx++) {
+          UINT8   Byte  = Rp[Gx >> 1];
+          UINT32  Nib   = ((Gx & 1) == 0) ? (UINT32)(Byte >> 4) : (UINT32)(Byte & 0x0Fu);
+          INT32   Px    = CurX + (INT32)G->BearingX + Gx;
+          if (Nib != 0u && Px >= 0 && Px < W) {
+            if (Nib == 15u) {
+              Buf[Py * W + Px] = Col;
+            } else {
+              Buf[Py * W + Px] = BlendRgb (Buf[Py * W + Px], Col, Nib * 17u);
+            }
+          }
+        }
+      }
+    }
+    CurX += (INT32)G->Advance;
+  }
+}
+
+static VOID
+DrawTextCentered (
+  UINT32                  *Buf,
+  INT32                   W,
+  INT32                   H,
+  const AURORA_FONT_FACE  *Face,
+  INT32                   Rx,
+  INT32                   Ry,
+  INT32                   Rw,
+  INT32                   Rh,
+  UINT32                  Col,
+  const char              *Str
+  )
+{
+  INT32  Tw = MeasureText (Face, Str);
+  INT32  Tx = Rx + (Rw - Tw) / 2;
+  INT32  Ty = Ry + (Rh - (INT32)Face->LineHeight) / 2;
+  DrawTextFace (Buf, W, H, Face, Tx, Ty, Col, Str);
+}
+
+// ---------------------------------------------------------------------------
+// Gigabyte Slanted Trapezoid Mode Tab (EASY MODE / ADVANCED MODE)
+// ---------------------------------------------------------------------------
+static VOID
+DrawSlantedModeTab (
+  UINT32         *Buf,
+  INT32          W,
+  INT32          H,
+  INT32          X,
+  INT32          Y,
+  INT32          TW,
+  INT32          TH,
+  BOOLEAN        Active,
+  BOOLEAN        Hovered,
+  const char     *Label
+  )
+{
+  INT32  Row;
+  INT32  Slant = 18;
+
+  for (Row = 0; Row < TH; Row++) {
+    // Slant bottom-left to top-right (EXACT Gigabyte angled slash tabs!)
+    INT32   Shift = ((TH - 1 - Row) * Slant) / (TH > 1 ? TH - 1 : 1);
+    INT32   Lx    = X + Shift;
+    INT32   Rx    = X + TW - Slant + Shift;
+    UINT32  FillCol;
+    UINT32  EdgeCol;
+
+    if (Active) {
+      UINT32  G = (Row < TH / 2) ? (UINT32)((TH / 2 - Row) * 255 / (TH / 2)) : (UINT32)((Row - TH / 2) * 255 / (TH / 2));
+      FillCol = BlendRgb (0x000D0603u, 0x00331405u, G);
+      EdgeCol = COL_ORANGE_HI;
+    } else if (Hovered) {
+      FillCol = BlendRgb (0x002C2C2Cu, 0x001A1A1Au, (UINT32)(Row * 255 / TH));
+      EdgeCol = COL_ORANGE;
+    } else {
+      FillCol = BlendRgb (0x002A2A2Au, 0x00161616u, (UINT32)(Row * 255 / TH));
+      EdgeCol = 0x00404040u;
+    }
+
+    FillRect (Buf, W, H, Lx, Y + Row, Rx - Lx, 1, FillCol);
+    if (Row == 0 || Row == TH - 1) {
+      FillRect (Buf, W, H, Lx, Y + Row, Rx - Lx, 1, EdgeCol);
+    } else {
+      PutPx (Buf, W, H, Lx, Y + Row, EdgeCol);
+      PutPx (Buf, W, H, Lx + 1, Y + Row, BlendRgb (FillCol, EdgeCol, 120u));
+      PutPx (Buf, W, H, Rx - 1, Y + Row, EdgeCol);
+      PutPx (Buf, W, H, Rx - 2, Y + Row, BlendRgb (FillCol, EdgeCol, 120u));
+    }
+  }
+
+  DrawTextCentered (
+    Buf, W, H, &mAuroraFontBold, X, Y, TW, TH,
+    Active ? COL_ORANGE_HI : (Hovered ? COL_WHITE : 0x00929292u),
+    Label
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bold Geometric White Brand Wordmark ("AURORA" - 1:1 weight to GIGABYTE)
+// ---------------------------------------------------------------------------
+static VOID
+DrawAuroraLogo (
+  UINT32  *Buf,
+  INT32   W,
+  INT32   H,
+  INT32   X,
+  INT32   Y
+  )
+{
+  // Crisp geometric 22px-tall clean modern block letters for "AURORA"
+  // A: [0..18], U: [24..42], R: [48..66], O: [72..92], R: [98..116], A: [122..140]
+  INT32  S = 4;  // Stroke thickness
+  INT32  LH = 20;
+
+  // 'A'
+  FillRect (Buf, W, H, X + 2, Y, 14, S, COL_WHITE);
+  FillRect (Buf, W, H, X, Y + 2, S, LH - 2, COL_WHITE);
+  FillRect (Buf, W, H, X + 14, Y + 2, S, LH - 2, COL_WHITE);
+  FillRect (Buf, W, H, X + S, Y + 10, 10, 3, COL_WHITE);
+
+  // 'U'
+  {
+    INT32  Ux = X + 24;
+    FillRect (Buf, W, H, Ux, Y, S, LH - 2, COL_WHITE);
+    FillRect (Buf, W, H, Ux + 14, Y, S, LH - 2, COL_WHITE);
+    FillRect (Buf, W, H, Ux + 2, Y + LH - S, 14, S, COL_WHITE);
+  }
+
+  // 'R'
+  {
+    INT32  Rx = X + 48;
+    FillRect (Buf, W, H, Rx, Y, S, LH, COL_WHITE);
+    FillRect (Buf, W, H, Rx, Y, 15, S, COL_WHITE);
+    FillRect (Buf, W, H, Rx + 14, Y + 2, S, 7, COL_WHITE);
+    FillRect (Buf, W, H, Rx, Y + 9, 15, 3, COL_WHITE);
+    FillRect (Buf, W, H, Rx + 11, Y + 12, 4, 4, COL_WHITE);
+    FillRect (Buf, W, H, Rx + 14, Y + 15, 4, 5, COL_WHITE);
+  }
+
+  // 'O' (subtle molten orange accent dot in center? No, keep pure crisp white like GIGABYTE!)
+  {
+    INT32  Ox = X + 72;
+    FillRect (Buf, W, H, Ox + 2, Y, 16, S, COL_WHITE);
+    FillRect (Buf, W, H, Ox + 2, Y + LH - S, 16, S, COL_WHITE);
+    FillRect (Buf, W, H, Ox, Y + 2, S, LH - 4, COL_WHITE);
+    FillRect (Buf, W, H, Ox + 16, Y + 2, S, LH - 4, COL_WHITE);
+  }
+
+  // 'R'
+  {
+    INT32  Rx = X + 98;
+    FillRect (Buf, W, H, Rx, Y, S, LH, COL_WHITE);
+    FillRect (Buf, W, H, Rx, Y, 15, S, COL_WHITE);
+    FillRect (Buf, W, H, Rx + 14, Y + 2, S, 7, COL_WHITE);
+    FillRect (Buf, W, H, Rx, Y + 9, 15, 3, COL_WHITE);
+    FillRect (Buf, W, H, Rx + 11, Y + 12, 4, 4, COL_WHITE);
+    FillRect (Buf, W, H, Rx + 14, Y + 15, 4, 5, COL_WHITE);
+  }
+
+  // 'A'
+  {
+    INT32  Ax = X + 122;
+    FillRect (Buf, W, H, Ax + 2, Y, 14, S, COL_WHITE);
+    FillRect (Buf, W, H, Ax, Y + 2, S, LH - 2, COL_WHITE);
+    FillRect (Buf, W, H, Ax + 14, Y + 2, S, LH - 2, COL_WHITE);
+    FillRect (Buf, W, H, Ax + S, Y + 10, 10, 3, COL_WHITE);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gigabyte Widgets: Metallic Button, Orange Toggle Switch, Dropdown Box, Icons
+// ---------------------------------------------------------------------------
+static VOID
+DrawMetallicButton (
+  UINT32      *Buf,
+  INT32       W,
+  INT32       H,
+  INT32       X,
+  INT32       Y,
+  INT32       BW,
+  INT32       BH,
+  BOOLEAN     Hovered,
+  BOOLEAN     Focused,
+  UINT32      TextCol,
+  const char  *Label
+  )
+{
+  UINT32  TopC = Hovered ? 0x00422412u : (Focused ? 0x003B2110u : 0x00343434u);
+  UINT32  BotC = Hovered ? 0x001D0E06u : (Focused ? 0x00180C05u : 0x000F0F0Fu);
+  UINT32  BdrC = (Hovered || Focused) ? COL_ORANGE : 0x00383838u;
+
+  FillGradV (Buf, W, H, X + 1, Y + 1, BW - 2, BH - 2, TopC, BotC);
+  DrawRectBorder (Buf, W, H, X, Y, BW, BH, BdrC);
+  // Crisp metallic top highlight
+  FillRect (Buf, W, H, X + 1, Y + 1, BW - 2, 1, (Hovered || Focused) ? COL_ORANGE_HI : 0x00525252u);
+  DrawTextCentered (Buf, W, H, &mAuroraFontBody, X, Y, BW, BH, TextCol, Label);
+}
+
+// Gigabyte Signature Metallic Toggle Switch (Orange left track when ON, brushed silver thumb)
+static VOID
+DrawGigabyteToggle (
+  UINT32   *Buf,
+  INT32    W,
+  INT32    H,
+  INT32    X,
+  INT32    Y,
+  BOOLEAN  On
+  )
+{
+  INT32  TW = 46;
+  INT32  TH = 18;
+  INT32  ThumbW = 22;
+  INT32  ThumbX = On ? (X + TW - ThumbW - 1) : (X + 1);
+
+  // Outer recessed bezel
+  FillRect (Buf, W, H, X, Y, TW, TH, 0x00141414u);
+  DrawRectBorder (Buf, W, H, X, Y, TW, TH, 0x00383838u);
+
+  if (On) {
+    // Glowing molten-orange active track behind thumb
+    FillGradV (Buf, W, H, X + 1, Y + 1, TW - ThumbW - 2, TH - 2, COL_ORANGE_HI, 0x00B83D08u);
+  } else {
+    FillRect (Buf, W, H, X + ThumbW + 1, Y + 1, TW - ThumbW - 2, TH - 2, 0x00202020u);
+  }
+
+  // Brushed silver-metallic sliding thumb
+  FillGradV (Buf, W, H, ThumbX, Y + 1, ThumbW, TH - 2, 0x00D8D8D8u, 0x007C7C7Cu);
+  DrawRectBorder (Buf, W, H, ThumbX, Y + 1, ThumbW, TH - 2, 0x00E8E8E8u);
+}
+
+// Gigabyte Metallic Dropdown Selector Box with Right Chevron Button
+static VOID
+DrawGigabyteDropdown (
+  UINT32      *Buf,
+  INT32       W,
+  INT32       H,
+  INT32       X,
+  INT32       Y,
+  INT32       DW,
+  INT32       DH,
+  BOOLEAN     Hovered,
+  BOOLEAN     Focused,
+  const char  *Value
+  )
+{
+  INT32   ArrW = 20;
+  UINT32  TopC = (Hovered || Focused) ? 0x00462A18u : 0x003A3A3Au;
+  UINT32  BotC = (Hovered || Focused) ? 0x0026140Au : 0x00242424u;
+  UINT32  BdrC = (Hovered || Focused) ? COL_ORANGE : 0x00484848u;
+
+  FillGradV (Buf, W, H, X + 1, Y + 1, DW - 2, DH - 2, TopC, BotC);
+  DrawRectBorder (Buf, W, H, X, Y, DW, DH, BdrC);
+  // Right chevron compartment
+  FillRect (Buf, W, H, X + DW - ArrW, Y + 1, 1, DH - 2, 0x004E4E4Eu);
+  // Draw crisp down-pointing triangle chevron
+  {
+    INT32  Cx = X + DW - ArrW / 2;
+    INT32  Cy = Y + DH / 2 - 2;
+    INT32  Row;
+    for (Row = 0; Row < 5; Row++) {
+      FillRect (Buf, W, H, Cx - (4 - Row), Cy + Row, (4 - Row) * 2 + 1, 1, (Hovered || Focused) ? COL_ORANGE_HI : 0x009C9C9Cu);
+    }
+  }
+  DrawTextFace (Buf, W, H, &mAuroraFontSmall, X + 8, Y + (DH - (INT32)mAuroraFontSmall.LineHeight) / 2, COL_WHITE, Value);
+}
+
+// Crisp Fan/Turbine Icon (mirrors Gigabyte Smart Fan 6 icon)
+static VOID
+DrawFanIcon (
+  UINT32  *Buf,
+  INT32   W,
+  INT32   H,
+  INT32   Cx,
+  INT32   Cy,
+  INT32   R,
+  UINT32  Col
+  )
+{
+  INT32  Y;
+  INT32  X;
+  for (Y = -R; Y <= R; Y++) {
+    for (X = -R; X <= R; X++) {
+      INT32  D2 = X * X + Y * Y;
+      if (D2 >= (R - 2) * (R - 2) && D2 <= R * R) {
+        PutPx (Buf, W, H, Cx + X, Cy + Y, Col);
+      } else if (D2 <= 5) {
+        PutPx (Buf, W, H, Cx + X, Cy + Y, Col);
+      } else if (D2 < (R - 2) * (R - 2)) {
+        // 4 curved blades
+        BOOLEAN  Blade = ((X > 0 && Y >= -2 && Y <= 2) ||
+                          (X < 0 && Y >= -2 && Y <= 2) ||
+                          (Y > 0 && X >= -2 && X <= 2) ||
+                          (Y < 0 && X >= -2 && X <= 2));
+        if (Blade) {
+          PutPx (Buf, W, H, Cx + X, Cy + Y, BlendRgb (COL_BLACK, Col, 210u));
+        }
+      }
+    }
+  }
+}
+
+// Crisp Storage Drive Icon (1:1 mirror of Gigabyte Boot Sequence HDD/SSD icon)
+static VOID
+DrawDriveIcon (
+  UINT32  *Buf,
+  INT32   W,
+  INT32   H,
+  INT32   X,
+  INT32   Y
+  )
+{
+  // Crisp white 26x32 drive chassis with dark circular platter & diagonal arm
+  FillRect (Buf, W, H, X + 1, Y, 24, 32, 0x00EAEAEAu);
+  FillRect (Buf, W, H, X, Y + 1, 26, 30, 0x00EAEAEAu);
+  // Corner screw dots
+  PutPx (Buf, W, H, X + 3, Y + 3, COL_BLACK);
+  PutPx (Buf, W, H, X + 22, Y + 3, COL_BLACK);
+  PutPx (Buf, W, H, X + 3, Y + 28, COL_BLACK);
+  PutPx (Buf, W, H, X + 22, Y + 28, COL_BLACK);
+  // Dark circular platter centered at (X+13, Y+13), R=8
+  {
+    INT32  Dy;
+    INT32  Dx;
+    for (Dy = -8; Dy <= 8; Dy++) {
+      for (Dx = -8; Dx <= 8; Dx++) {
+        INT32  D2 = Dx * Dx + Dy * Dy;
+        if (D2 <= 64 && D2 >= 9) {
+          PutPx (Buf, W, H, X + 13 + Dx, Y + 13 + Dy, 0x00161616u);
+        }
+      }
+    }
+  }
+  // Actuator arm
+  FillRect (Buf, W, H, X + 5, Y + 23, 12, 3, 0x00161616u);
+  FillRect (Buf, W, H, X + 11, Y + 18, 4, 6, 0x00161616u);
+}
+
+// Card Frame with Gigabyte Floating Title Above Top Border
+static VOID
+DrawGigabyteCard (
+  UINT32      *Buf,
+  INT32       W,
+  INT32       H,
+  INT32       X,
+  INT32       Y,
+  INT32       CW,
+  INT32       CH,
+  const char  *Title
+  )
+{
+  if (Title != NULL && Title[0] != '\0') {
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, X + 2, Y - 22, 0x00BDBDBDu, Title);
+  }
+  FillRect (Buf, W, H, X, Y, CW, CH, COL_BG_CARD);
+  DrawRectBorder (Buf, W, H, X, Y, CW, CH, COL_BORDER);
+}
+
+// ---------------------------------------------------------------------------
+// Setting Label & Value Formatters
+// ---------------------------------------------------------------------------
+static const char *
+GetControlLabel (
+  UINT32  Id
+  )
+{
+  switch (Id) {
+    case CTRL_SET_PERF_PROFILE:   return "Performance Mode";
+    case CTRL_SET_DIRECT_SCANOUT: return "Direct Scanout";
+    case CTRL_SET_GPU_POOL:       return "GPU Local Pool";
+    case CTRL_SET_KBD_BACKLIGHT:  return "Keyboard Backlight";
+    case CTRL_SET_SCALE_MODE:     return "Display HiDPI Scale";
+    case CTRL_SET_MOUSE_SPEED:    return "Pointer Sensitivity";
+    case CTRL_SET_FAST_BOOT:      return "Fast Boot";
+    case CTRL_SET_SPLASH_LOGO:    return "Boot Splash Logo";
+    case CTRL_SET_DEFAULT_TARGET: return "Default Boot Target";
+    case CTRL_SET_BOOT_TIMEOUT:   return "Boot Timeout";
+    case CTRL_SET_SERIAL_DEBUG:   return "Serial Debug Level";
+    case CTRL_SET_USB_AUTO:       return "USB HID Auto-Scan";
+    case CTRL_SET_EXT_USB_BOOT:   return "External USB Boot";
+    case CTRL_SET_ENTER_ONCE:     return "One-Shot Setup";
+    default:                      return "";
+  }
+}
+
+static VOID
+GetControlValueStr (
+  const AURORA_BIOS_STATE  *State,
+  UINT32                   Id,
+  char                     *Out,
+  UINTN                    OutSize
+  )
+{
+  const AURORA_BIOS_CONFIG  *C = &State->Config;
+
+  switch (Id) {
+    case CTRL_SET_PERF_PROFILE:
+      BiosStrCpy (Out, OutSize,
+        C->PerformanceProfile == AURORA_PROFILE_PERFORMANCE ? "Performance" :
+        (C->PerformanceProfile == AURORA_PROFILE_QUIET ? "Quiet" : "Balanced"));
+      return;
+    case CTRL_SET_DIRECT_SCANOUT:
+      BiosStrCpy (Out, OutSize, C->DirectScanout ? "Enabled" : "Disabled");
+      return;
+    case CTRL_SET_GPU_POOL:
+      BiosStrCpy (Out, OutSize, C->GpuLocalPoolEnable ? "Enabled" : "Disabled");
+      return;
+    case CTRL_SET_KBD_BACKLIGHT: {
+      static const char  *Lvls[5] = { "Off (0%)", "Low (25%)", "Med (50%)", "High (75%)", "Max (100%)" };
+      BiosStrCpy (Out, OutSize, Lvls[C->KbdBacklightLevel < 5u ? C->KbdBacklightLevel : 3u]);
+      return;
+    }
+    case CTRL_SET_SCALE_MODE:
+      BiosStrCpy (Out, OutSize, C->ConsoleScaleMode == 2u ? "2x Native" : "1x Raw");
+      return;
+    case CTRL_SET_MOUSE_SPEED: {
+      char  Num[8];
+      BiosFmtU32 (Num, sizeof (Num), C->MouseSpeed);
+      BiosStrCpy (Out, OutSize, "Level ");
+      BiosStrCat (Out, OutSize, Num);
+      return;
+    }
+    case CTRL_SET_FAST_BOOT:
+      BiosStrCpy (Out, OutSize, C->FastBoot ? "Enabled" : "Disabled");
+      return;
+    case CTRL_SET_SPLASH_LOGO:
+      BiosStrCpy (Out, OutSize, C->BootSplashLogo ? "Enabled" : "Disabled");
+      return;
+    case CTRL_SET_DEFAULT_TARGET:
+      BiosStrCpy (Out, OutSize,
+        C->DefaultBootTarget == AURORA_BOOT_TARGET_SHELL ? "UEFI Shell" :
+        (C->DefaultBootTarget == AURORA_BOOT_TARGET_BIOS ? "UEFI Setup" : "Windows OS"));
+      return;
+    case CTRL_SET_BOOT_TIMEOUT: {
+      char  Num[8];
+      BiosFmtU32 (Num, sizeof (Num), C->BootTimeoutSec);
+      BiosStrCpy (Out, OutSize, Num);
+      BiosStrCat (Out, OutSize, " sec");
+      return;
+    }
+    case CTRL_SET_SERIAL_DEBUG:
+      BiosStrCpy (Out, OutSize,
+        C->SerialDebugLevel == AURORA_DEBUG_VERBOSE ? "Verbose" :
+        (C->SerialDebugLevel == AURORA_DEBUG_ERRORS ? "Errors Only" : "Standard"));
+      return;
+    case CTRL_SET_USB_AUTO:
+      BiosStrCpy (Out, OutSize, C->UsbHidAutoConnect ? "Auto" : "On-Demand");
+      return;
+    case CTRL_SET_EXT_USB_BOOT:
+      BiosStrCpy (Out, OutSize, C->ExternalUsbBoot ? "Enabled" : "Disabled");
+      return;
+    case CTRL_SET_ENTER_ONCE:
+      BiosStrCpy (Out, OutSize, C->EnterBiosOnce ? "Armed" : "Off");
+      return;
+    default:
+      Out[0] = '\0';
+      return;
+  }
+}
+
+static BOOLEAN
+GetControlToggleBool (
+  const AURORA_BIOS_STATE  *State,
+  UINT32                   Id
+  )
+{
+  switch (Id) {
+    case CTRL_SET_DIRECT_SCANOUT: return State->Config.DirectScanout != 0u;
+    case CTRL_SET_GPU_POOL:       return State->Config.GpuLocalPoolEnable != 0u;
+    case CTRL_SET_FAST_BOOT:      return State->Config.FastBoot != 0u;
+    case CTRL_SET_SPLASH_LOGO:    return State->Config.BootSplashLogo != 0u;
+    case CTRL_SET_USB_AUTO:       return State->Config.UsbHidAutoConnect != 0u;
+    case CTRL_SET_EXT_USB_BOOT:   return State->Config.ExternalUsbBoot != 0u;
+    case CTRL_SET_ENTER_ONCE:     return State->Config.EnterBiosOnce != 0u;
+    default:                      return FALSE;
+  }
+}
+
+static const char *
+GetItemHelpText (
+  UINT32  Id
+  )
+{
+  switch (Id) {
+    case CTRL_SET_PERF_PROFILE:
+      return "Select Apple M5 power and thermal policy (Balanced, Performance, or Quiet).";
+    case CTRL_SET_DIRECT_SCANOUT:
+      return "Enable zero-copy direct scanout for DWM primary surfaces on DCP display.";
+    case CTRL_SET_GPU_POOL:
+      return "Reserve 512 MB contiguous unified memory pool for native AGX G17G WDDM driver.";
+    case CTRL_SET_KBD_BACKLIGHT:
+      return "Adjust built-in MacBook keyboard white LED backlight live via SoC FPWM0.";
+    case CTRL_SET_SCALE_MODE:
+      return "Choose 2x HiDPI scaling (crisp on 2560x1664 Retina) or raw 1x framebuffer mode.";
+    case CTRL_SET_MOUSE_SPEED:
+      return "Adjust Trackpad and USB Mouse pointer speed (Level 1 = slow, Level 10 = fast).";
+    case CTRL_SET_FAST_BOOT:
+      return "Skip non-essential boot delays and proceed directly to primary OS loader.";
+    case CTRL_SET_SPLASH_LOGO:
+      return "Display Aurora Silicon firmware splash banner during UEFI initialization.";
+    case CTRL_SET_DEFAULT_TARGET:
+      return "Choose whether normal startup boots Windows OS, UEFI Shell, or UEFI Setup.";
+    case CTRL_SET_BOOT_TIMEOUT:
+      return "Seconds to wait for setup hotkey before booting default OS loader.";
+    case CTRL_SET_SERIAL_DEBUG:
+      return "Control serial debug logging verbosity during UEFI boot and driver init.";
+    case CTRL_SET_USB_AUTO:
+      return "Automatically scan USB Type-C HID controllers on UEFI Setup entry.";
+    case CTRL_SET_EXT_USB_BOOT:
+      return "Allow booting UEFI loaders from external USB storage devices.";
+    case CTRL_SET_ENTER_ONCE:
+      return "One-shot flag: enter Aurora UEFI Setup automatically on the next restart.";
+    case CTRL_BTN_SAVE_EXIT:
+      return "Write modified settings to UEFI NVRAM + ESP:\\EFI\\Aurora\\bios.cfg and boot OS.";
+    case CTRL_BTN_DISCARD_EXIT:
+      return "Discard unsaved changes and continue booting the configured OS.";
+    default:
+      return "Use Trackpad/Mouse to click controls, or Arrow keys + Enter. Press F2 to switch Easy / Advanced Mode.";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Easy Mode Renderer (1:1 Gigabyte Reference Layout)
+// ---------------------------------------------------------------------------
+static VOID
+RenderEasyMode (
+  const AURORA_BIOS_STATE  *State,
+  UINT32                   *Buf
+  )
+{
+  INT32  W = State->Width;
+  INT32  H = State->Height;
+  INT32  I;
+  char   Tmp[64];
+  char   Num[24];
+
+  // =========================================================================
+  // LEFT COLUMN: Card 1 "Information" + Card 2 "Memory & Display"
+  // =========================================================================
+  {
+    INT32  Lx = 24;
+    INT32  Lw = 316;
+
+    // Card 1: Information (Y = 128..354)
+    DrawGigabyteCard (Buf, W, H, Lx, 128, Lw, 226, "Information");
+    {
+      INT32  Ky = 144;
+      INT32  Vy = 28;
+      INT32  Vx = Lx + 96;
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Ky + 0 * Vy, COL_TEXT_MUTED, "Model:");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,      Ky + 0 * Vy, COL_TEXT_PRI, State->Info.PlatformName);
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Ky + 1 * Vy, COL_TEXT_MUTED, "BIOS Ver.:");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,      Ky + 1 * Vy, COL_TEXT_PRI, State->Info.FirmwareVersion);
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Ky + 2 * Vy, COL_TEXT_MUTED, "CPU:");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,      Ky + 2 * Vy, COL_TEXT_PRI, State->Info.SocName);
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Ky + 3 * Vy, COL_TEXT_MUTED, "Memory:");
+      BiosFmtU32 (Num, sizeof (Num), (UINT32)((State->Info.TotalRamMiB + 512ULL) / 1024ULL));
+      BiosStrCpy (Tmp, sizeof (Tmp), Num);
+      BiosStrCat (Tmp, sizeof (Tmp), " GB Unified LPDDR5X");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,      Ky + 3 * Vy, COL_TEXT_PRI, Tmp);
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Ky + 4 * Vy, COL_TEXT_MUTED, "GPU:");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,      Ky + 4 * Vy, COL_TEXT_PRI, "Apple G17G C0 (M5)");
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Ky + 5 * Vy, COL_TEXT_MUTED, "Input:");
+      if (State->Info.MtpKbReady && State->Info.MtpTpReady) {
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Ky + 5 * Vy, COL_GREEN, "MTP KB + Trackpad LIVE");
+      } else if (State->Info.MtpKbReady) {
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Ky + 5 * Vy, COL_ORANGE_HI, "MTP Keyboard LIVE");
+      } else {
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Ky + 5 * Vy, COL_TEXT_SEC, "UEFI ConIn / Pointer");
+      }
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Ky + 6 * Vy, COL_TEXT_MUTED, "Kbd LED:");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Ky + 6 * Vy,
+        State->Info.KblActive ? COL_GREEN : COL_TEXT_MUTED,
+        State->Info.KblActive ? "FPWM0 Active" : "Unavailable");
+    }
+
+    // Card 2: Memory & Display (mirrors Gigabyte DRAM Status card, Y = 390..H-52)
+    DrawGigabyteCard (Buf, W, H, Lx, 390, Lw, H - 52 - 390, "Memory & Display");
+    {
+      INT32  Sy = 406;
+      INT32  Vx = Lx + 106;
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Sy + 0 * 24, COL_TEXT_MUTED, "UNIFIED_0");
+      BiosFmtU32 (Num, sizeof (Num), (UINT32)State->Info.TotalRamMiB);
+      BiosStrCpy (Tmp, sizeof (Tmp), Num);
+      BiosStrCat (Tmp, sizeof (Tmp), " MB Active");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Sy + 0 * 24, COL_TEXT_PRI, Tmp);
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Sy + 1 * 24, COL_TEXT_MUTED, "GPU_POOL");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Sy + 1 * 24,
+        State->Info.GpuPoolActive ? COL_ORANGE_HI : COL_TEXT_MUTED,
+        State->Info.GpuPoolActive ? "512 MB Reserved" : "Disabled");
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Sy + 2 * 24, COL_TEXT_MUTED, "DISPLAY");
+      BiosFmtU32 (Tmp, sizeof (Tmp), State->Info.GopWidth);
+      BiosStrCat (Tmp, sizeof (Tmp), "x");
+      BiosFmtU32 (Num, sizeof (Num), State->Info.GopHeight);
+      BiosStrCat (Tmp, sizeof (Tmp), Num);
+      BiosStrCat (Tmp, sizeof (Tmp), " 32bpp");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Sy + 2 * 24, COL_TEXT_PRI, Tmp);
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Lx + 12, Sy + 3 * 24, COL_TEXT_MUTED, "MTP_BUS");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Sy + 3 * 24,
+        State->Info.MtpActive ? COL_GREEN : COL_TEXT_MUTED,
+        State->Info.MtpActive ? "DockChannel CH1" : "Inactive");
+
+      FillRect (Buf, W, H, Lx + 10, H - 234, Lw - 20, 1, COL_DIVIDER);
+    }
+  }
+
+  // =========================================================================
+  // CENTER-TOP: Floating Hero Telemetry (Pure Black, NO Border - 1:1 Gigabyte!)
+  // =========================================================================
+  {
+    INT32  C1 = 384;
+    INT32  C2 = 592;
+    INT32  C3 = 790;
+    INT32  R1 = 128;
+    INT32  R2 = 224;
+
+    // Row 1 Col 1: CPU Cores
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C1, R1, COL_TEXT_SEC, "CPU Cores");
+    BiosFmtU32 (Num, sizeof (Num), State->Info.CpuCores > 0u ? State->Info.CpuCores : 10u);
+    DrawTextFace (Buf, W, H, &mAuroraFontHero, C1, R1 + 18, COL_WHITE, Num);
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C1 + MeasureText (&mAuroraFontHero, Num) + 6, R1 + 32, COL_TEXT_SEC, "ARMv9");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C1, R1 + 52, COL_TEXT_MUTED, "Apple M5 T8142");
+
+    // Row 1 Col 2: Display Resolution
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C2, R1, COL_TEXT_SEC, "Display");
+    BiosFmtU32 (Tmp, sizeof (Tmp), State->Info.GopWidth);
+    BiosStrCat (Tmp, sizeof (Tmp), "x");
+    BiosFmtU32 (Num, sizeof (Num), State->Info.GopHeight);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    DrawTextFace (Buf, W, H, &mAuroraFontHero, C2, R1 + 18, COL_WHITE, Tmp);
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C2, R1 + 52, COL_TEXT_MUTED, "DCP Retina 60Hz");
+
+    // Row 1 Col 3: Unified RAM
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C3, R1, COL_TEXT_SEC, "Memory");
+    BiosFmtU32 (Num, sizeof (Num), (UINT32)((State->Info.TotalRamMiB + 512ULL) / 1024ULL));
+    BiosStrCat (Num, sizeof (Num), ".0");
+    DrawTextFace (Buf, W, H, &mAuroraFontHero, C3, R1 + 18, COL_WHITE, Num);
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C3 + MeasureText (&mAuroraFontHero, Num) + 6, R1 + 32, COL_TEXT_SEC, "GB");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C3, R1 + 52, COL_TEXT_MUTED, "LPDDR5X Unified");
+
+    // Row 2 Col 1: GPU Local Pool
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C1, R2, COL_TEXT_SEC, "GPU Local Pool");
+    DrawTextFace (Buf, W, H, &mAuroraFontHero, C1, R2 + 18, COL_WHITE, State->Info.GpuPoolActive ? "512.0" : "0.0");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C1 + MeasureText (&mAuroraFontHero, State->Info.GpuPoolActive ? "512.0" : "0.0") + 6, R2 + 32, COL_TEXT_SEC, "MB");
+
+    // Row 2 Col 2: Input Rate
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C2, R2, COL_TEXT_SEC, "Input Poll Rate");
+    DrawTextFace (Buf, W, H, &mAuroraFontHero, C2, R2 + 18, COL_WHITE, "125");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C2 + MeasureText (&mAuroraFontHero, "125") + 6, R2 + 32, COL_TEXT_SEC, "Hz");
+
+    // Row 2 Col 3: Live Uptime (ticks visibly every second!)
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C3, R2, COL_TEXT_SEC, "Setup Uptime");
+    {
+      char  Mm[4];
+      char  Ss[4];
+      BiosFmt2D (Mm, (State->Info.UptimeSec / 60u) % 100u);
+      BiosFmt2D (Ss, State->Info.UptimeSec % 60u);
+      BiosStrCpy (Tmp, sizeof (Tmp), Mm);
+      BiosStrCat (Tmp, sizeof (Tmp), ":");
+      BiosStrCat (Tmp, sizeof (Tmp), Ss);
+      DrawTextFace (Buf, W, H, &mAuroraFontHero, C3, R2 + 18, COL_WHITE, Tmp);
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, C3 + MeasureText (&mAuroraFontHero, Tmp) + 6, R2 + 32, COL_ORANGE_HI, "LIVE");
+    }
+  }
+
+  // =========================================================================
+  // TOP-RIGHT CARD: "Aurora PerfDrive" (1:1 Mirror of GIGABYTE PerfDrive!)
+  // =========================================================================
+  {
+    INT32  Px = W - 324;
+    INT32  Py = 114;
+    INT32  Pw = 300;
+    INT32  Ph = 188;
+
+    FillRect (Buf, W, H, Px, Py, Pw, Ph, COL_BG_CARD);
+    DrawRectBorder (Buf, W, H, Px, Py, Pw, Ph, COL_BORDER);
+    // Signature glowing orange top header strip
+    FillGradV (Buf, W, H, Px + 1, Py + 1, Pw - 2, 30, 0x003D1806u, 0x00140702u);
+    FillRect (Buf, W, H, Px, Py, Pw, 2, COL_ORANGE);
+    FillRect (Buf, W, H, Px + 1, Py + 31, Pw - 2, 1, 0x005C250Au);
+    DrawTextCentered (Buf, W, H, &mAuroraFontBold, Px, Py + 1, Pw, 30, COL_ORANGE_HI, "Aurora PerfDrive");
+  }
+
+  // =========================================================================
+  // MIDDLE ROW: 3 Side-by-Side Cards (Power & Thermal | Peripherals | Boot Sequence)
+  // =========================================================================
+  {
+    INT32  MidY  = 338;
+    INT32  MidH  = 196;
+    INT32  Col1X = 360;
+    INT32  Col1W = 300;
+    INT32  Col2X = 674;
+    INT32  Col2W = W - 324 - 14 - Col2X;
+    INT32  Col3X = W - 324;
+    INT32  Col3W = 300;
+
+    // Card A: Power & Thermal (mirrors Smart Fan 6)
+    DrawGigabyteCard (Buf, W, H, Col1X, MidY, Col1W, MidH, "Power & Thermal");
+    DrawFanIcon (Buf, W, H, Col1X + 34, MidY + 34, 11, COL_TEXT_PRI);
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col1X + 54, MidY + 20, COL_TEXT_MUTED, "PROFILE");
+    GetControlValueStr (State, CTRL_SET_PERF_PROFILE, Tmp, sizeof (Tmp));
+    DrawTextFace (Buf, W, H, &mAuroraFontBody,  Col1X + 54, MidY + 38, COL_WHITE, Tmp);
+
+    DrawFanIcon (Buf, W, H, Col1X + 178, MidY + 34, 11, State->Info.KblActive ? COL_ORANGE_HI : COL_TEXT_MUTED);
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col1X + 198, MidY + 20, COL_TEXT_MUTED, "KBD LED");
+    GetControlValueStr (State, CTRL_SET_KBD_BACKLIGHT, Tmp, sizeof (Tmp));
+    DrawTextFace (Buf, W, H, &mAuroraFontBody,  Col1X + 198, MidY + 38, COL_WHITE, Tmp);
+
+    // Card B: Peripherals (mirrors Peripherals)
+    DrawGigabyteCard (Buf, W, H, Col2X, MidY, Col2W, MidH, "Peripherals");
+    {
+      INT32  Py = MidY + 18;
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 14, Py + 0 * 28, COL_TEXT_MUTED, "NVME:");
+      BiosFmtU32 (Num, sizeof (Num), (UINT32)State->Info.PrimaryDiskGiB);
+      BiosStrCpy (Tmp, sizeof (Tmp), "Apple ANS2 (");
+      BiosStrCat (Tmp, sizeof (Tmp), Num);
+      BiosStrCat (Tmp, sizeof (Tmp), " GB)");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 64, Py + 0 * 28, COL_TEXT_PRI, Tmp);
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 14, Py + 1 * 28, COL_TEXT_MUTED, "GPU:");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 64, Py + 1 * 28, COL_TEXT_PRI, "AGX G17G C0 Direct");
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 14, Py + 2 * 28, COL_TEXT_MUTED, "KBD:");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 64, Py + 2 * 28,
+        State->Info.MtpKbReady ? COL_GREEN : COL_TEXT_SEC,
+        State->Info.MtpKbReady ? "MTP Built-in LIVE" : "UEFI ConIn");
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 14, Py + 3 * 28, COL_TEXT_MUTED, "TPAD:");
+      if (State->Info.MtpTpReady) {
+        BiosStrCpy (Tmp, sizeof (Tmp), "MultiTouch LIVE (");
+        BiosStrCat (Tmp, sizeof (Tmp), State->Info.MtpFwSource);
+        BiosStrCat (Tmp, sizeof (Tmp), ")");
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 64, Py + 3 * 28, COL_GREEN, Tmp);
+      } else {
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 64, Py + 3 * 28, COL_AMBER, "FW Not Found");
+      }
+
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 14, Py + 4 * 28, COL_TEXT_MUTED, "RX:");
+      BiosFmtU32 (Tmp, sizeof (Tmp), State->Info.MtpPacketsRx);
+      BiosStrCat (Tmp, sizeof (Tmp), " pkts (");
+      BiosFmtU32 (Num, sizeof (Num), State->Info.MtpKbReports);
+      BiosStrCat (Tmp, sizeof (Tmp), Num);
+      BiosStrCat (Tmp, sizeof (Tmp), "K / ");
+      BiosFmtU32 (Num, sizeof (Num), State->Info.MtpTpReports);
+      BiosStrCat (Tmp, sizeof (Tmp), Num);
+      BiosStrCat (Tmp, sizeof (Tmp), "T)");
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col2X + 64, Py + 4 * 28, COL_TEXT_SEC, Tmp);
+    }
+
+    // Card C: Boot Sequence (mirrors Boot Sequence with drive icon)
+    DrawGigabyteCard (Buf, W, H, Col3X, MidY, Col3W, MidH, "Boot Sequence");
+    DrawDriveIcon (Buf, W, H, Col3X + 18, MidY + 18);
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Col3X + 56, MidY + 20, COL_TEXT_MUTED, "Primary Boot Device");
+    if (State->BootEntryCount > 0u) {
+      DrawTextFace (Buf, W, H, &mAuroraFontBody, Col3X + 56, MidY + 38, COL_WHITE, State->BootEntries[0].Description);
+    } else {
+      DrawTextFace (Buf, W, H, &mAuroraFontBody, Col3X + 56, MidY + 38, COL_TEXT_MUTED, "No UEFI Entries");
+    }
+    FillRect (Buf, W, H, Col3X + 10, MidY + 62, Col3W - 20, 1, COL_DIVIDER);
+  }
+
+  // =========================================================================
+  // BOTTOM WIDE CARD: "Quick Access" (1:1 Mirror of Gigabyte Quick Access!)
+  // =========================================================================
+  {
+    INT32  QaX = 360;
+    INT32  QaW = W - QaX - 24;
+    INT32  QaY = 568;
+    INT32  QaH = H - 52 - QaY;
+    DrawGigabyteCard (Buf, W, H, QaX, QaY, QaW, QaH, "Quick Access");
+  }
+
+  // =========================================================================
+  // Render Interactive Controls Registered for Easy Mode
+  // =========================================================================
+  for (I = 0; I < State->ControlCount; I++) {
+    const AURORA_UI_RECT  *R = &State->Controls[I];
+    BOOLEAN               Hov = (I == State->HoveredCtrlIdx);
+    BOOLEAN               Foc = (I == State->FocusedCtrlIdx);
+
+    if (R->Kind == AURORA_CTRL_MODE_TAB || R->Kind == AURORA_CTRL_UTIL_BTN) {
+      continue;  // Drawn in shared header
+    }
+
+    if (R->Kind == AURORA_CTRL_TOGGLE) {
+      BOOLEAN  On = GetControlToggleBool (State, R->Id);
+      if (Hov || Foc) {
+        FillRect (Buf, W, H, R->X - 4, R->Y - 1, R->W + 8, R->H + 2, Foc ? COL_BG_ROW_FOC : COL_BG_ROW_HOV);
+        FillRect (Buf, W, H, R->X - 4, R->Y - 1, 2, R->H + 2, COL_ORANGE);
+      }
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, R->X + 2, R->Y + (R->H - (INT32)mAuroraFontSmall.LineHeight) / 2,
+        (Hov || Foc) ? COL_WHITE : (On ? COL_TEXT_PRI : COL_TEXT_SEC),
+        GetControlLabel (R->Id));
+      DrawGigabyteToggle (Buf, W, H, R->X + R->W - 46, R->Y + (R->H - 18) / 2, On);
+    } else if (R->Kind == AURORA_CTRL_CHOICE) {
+      INT32  DropW = (R->W > 260) ? 116 : 108;
+      if (Hov || Foc) {
+        FillRect (Buf, W, H, R->X - 4, R->Y - 1, R->W + 8, R->H + 2, Foc ? COL_BG_ROW_FOC : COL_BG_ROW_HOV);
+      }
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, R->X + 2, R->Y + (R->H - (INT32)mAuroraFontSmall.LineHeight) / 2,
+        (Hov || Foc) ? COL_WHITE : COL_TEXT_PRI,
+        GetControlLabel (R->Id));
+      GetControlValueStr (State, R->Id, Tmp, sizeof (Tmp));
+      DrawGigabyteDropdown (Buf, W, H, R->X + R->W - DropW, R->Y + 2, DropW, R->H - 4, Hov, Foc, Tmp);
+    } else if (R->Kind == AURORA_CTRL_BUTTON) {
+      const char  *Lbl = "Action";
+      UINT32      TCol = (Hov || Foc) ? COL_WHITE : COL_TEXT_PRI;
+      if (R->Id == CTRL_EASY_POWER_BTN) {
+        Lbl  = "Power & Thermal Setup";
+        TCol = COL_ORANGE_HI;
+      } else if (R->Id == CTRL_EASY_QA_SHELL) {
+        Lbl = "UEFI Shell";
+      } else if (R->Id == CTRL_EASY_QA_SYSINFO) {
+        Lbl = "System & Input Info";
+      } else if (R->Id == CTRL_EASY_QA_BOOT) {
+        Lbl = "Boot Priority Setup";
+      }
+      DrawMetallicButton (Buf, W, H, R->X, R->Y, R->W, R->H, Hov, Foc, TCol, Lbl);
+    } else if (R->Kind == AURORA_CTRL_BOOT_ROW) {
+      UINT32   Idx = R->Param;
+      BOOLEAN  Sel = (Idx == State->SelectedBootIdx);
+      if (Sel || Hov || Foc) {
+        FillRect (Buf, W, H, R->X, R->Y, R->W, R->H, Sel ? COL_BG_ROW_FOC : COL_BG_ROW_HOV);
+        FillRect (Buf, W, H, R->X, R->Y, 3, R->H, Sel ? COL_ORANGE_HI : COL_ORANGE);
+      }
+      if (Idx < State->BootEntryCount) {
+        BiosFmtU32 (Num, sizeof (Num), Idx + 1u);
+        BiosStrCpy (Tmp, sizeof (Tmp), Num);
+        BiosStrCat (Tmp, sizeof (Tmp), ". ");
+        BiosStrCat (Tmp, sizeof (Tmp), State->BootEntries[Idx].Description);
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, R->X + 10, R->Y + 4,
+          Sel ? COL_WHITE : COL_TEXT_SEC, Tmp);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Advanced Mode Renderer (Authentic Gigabyte Advanced Mode 1:1)
+// ---------------------------------------------------------------------------
+static VOID
+RenderAdvancedMode (
+  const AURORA_BIOS_STATE  *State,
+  UINT32                   *Buf
+  )
+{
+  static const char  *SubTabNames[AURORA_TAB_COUNT] = {
+    "Tweaker", "Settings", "System Info.", "Boot", "Save & Exit"
+  };
+  INT32  W     = State->Width;
+  INT32  H     = State->Height;
+  INT32  PaneX = 24;
+  INT32  PaneY = 148;
+  INT32  PaneW = W - 384;
+  INT32  PaneH = H - 52 - PaneY;
+  INT32  SideX = PaneX + PaneW + 16;
+  INT32  SideW = W - SideX - 24;
+  INT32  I;
+  char   Tmp[80];
+  char   Num[24];
+
+  // Sub-tab bar underline
+  FillRect (Buf, W, H, 24, 136, W - 48, 1, COL_BORDER);
+
+  // Main Left Settings Container
+  FillRect (Buf, W, H, PaneX, PaneY, PaneW, PaneH, COL_BG_CARD);
+  DrawRectBorder (Buf, W, H, PaneX, PaneY, PaneW, PaneH, COL_BORDER);
+
+  // Right Sidebar: Hardware Monitor + Item Help
+  DrawGigabyteCard (Buf, W, H, SideX, PaneY + 22, SideW, 286, "Hardware Monitor");
+  {
+    INT32  Hy = PaneY + 36;
+    INT32  Vx = SideX + 132;
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 0 * 28, COL_TEXT_MUTED, "Platform");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 0 * 28, COL_TEXT_PRI, "Mac17,3 (J813)");
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 1 * 28, COL_TEXT_MUTED, "Processor");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 1 * 28, COL_TEXT_PRI, "Apple M5 10-Core");
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 2 * 28, COL_TEXT_MUTED, "Unified Memory");
+    BiosFmtU32 (Num, sizeof (Num), (UINT32)((State->Info.TotalRamMiB + 512ULL) / 1024ULL));
+    BiosStrCpy (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), " GB");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 2 * 28, COL_TEXT_PRI, Tmp);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 3 * 28, COL_TEXT_MUTED, "GPU Local Pool");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 3 * 28,
+      State->Info.GpuPoolActive ? COL_ORANGE_HI : COL_TEXT_MUTED,
+      State->Info.GpuPoolActive ? "512 MB Active" : "Off");
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 4 * 28, COL_TEXT_MUTED, "MTP Keyboard");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 4 * 28,
+      State->Info.MtpKbReady ? COL_GREEN : COL_TEXT_SEC,
+      State->Info.MtpKbReady ? "LIVE" : "Fallback");
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 5 * 28, COL_TEXT_MUTED, "MTP Trackpad");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 5 * 28,
+      State->Info.MtpTpReady ? COL_GREEN : COL_AMBER,
+      State->Info.MtpTpReady ? "LIVE" : "FW Missing");
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 6 * 28, COL_TEXT_MUTED, "Kbd Backlight");
+    GetControlValueStr (State, CTRL_SET_KBD_BACKLIGHT, Tmp, sizeof (Tmp));
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 6 * 28,
+      State->Info.KblActive ? COL_ORANGE_HI : COL_TEXT_MUTED, Tmp);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 7 * 28, COL_TEXT_MUTED, "Unsaved Edits");
+    BiosFmtU32 (Num, sizeof (Num), AuroraBiosCountModified (State));
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx,         Hy + 7 * 28,
+      AuroraBiosCountModified (State) > 0u ? COL_AMBER : COL_GREEN, Num);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Hy + 8 * 28, COL_TEXT_MUTED, "Setup Uptime");
+    {
+      char  Mm[4];
+      char  Ss[4];
+      BiosFmt2D (Mm, (State->Info.UptimeSec / 60u) % 100u);
+      BiosFmt2D (Ss, State->Info.UptimeSec % 60u);
+      BiosStrCpy (Tmp, sizeof (Tmp), Mm);
+      BiosStrCat (Tmp, sizeof (Tmp), ":");
+      BiosStrCat (Tmp, sizeof (Tmp), Ss);
+      DrawTextFace (Buf, W, H, &mAuroraFontSmall, Vx, Hy + 8 * 28, COL_WHITE, Tmp);
+    }
+  }
+
+  // Right Bottom Sidebar: Contextual Item Help
+  {
+    INT32   HelpY  = PaneY + 340;
+    INT32   HelpH  = H - 52 - HelpY;
+    UINT32  HelpId = 0;
+
+    if (State->HoveredCtrlIdx >= 0 && State->HoveredCtrlIdx < State->ControlCount) {
+      HelpId = State->Controls[State->HoveredCtrlIdx].Id;
+    } else if (State->FocusedCtrlIdx >= 0 && State->FocusedCtrlIdx < State->ControlCount) {
+      HelpId = State->Controls[State->FocusedCtrlIdx].Id;
+    }
+    DrawGigabyteCard (Buf, W, H, SideX, HelpY, SideW, HelpH, "Item Help");
+    FillRect (Buf, W, H, SideX + 1, HelpY + 1, SideW - 2, 2, COL_ORANGE);
+
+    // Simple word-wrap for contextual help inside sidebar
+    {
+      const char  *Msg = GetItemHelpText (HelpId);
+      char        Line[48];
+      INT32       Ly   = HelpY + 18;
+      UINTN       Pos  = 0;
+
+      while (Msg[Pos] != '\0' && Ly + 20 < HelpY + HelpH - 54) {
+        UINTN  Len = 0;
+        UINTN  LastSpace = 0;
+        while (Msg[Pos + Len] != '\0' && Len < 40u) {
+          if (Msg[Pos + Len] == ' ') LastSpace = Len;
+          Len++;
+        }
+        if (Msg[Pos + Len] != '\0' && LastSpace > 0u) {
+          Len = LastSpace;
+        }
+        BiosCopy (Line, Msg + Pos, Len);
+        Line[Len] = '\0';
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, Ly, COL_TEXT_PRI, Line);
+        Ly += 20;
+        Pos += Len;
+        while (Msg[Pos] == ' ') Pos++;
+      }
+    }
+
+    FillRect (Buf, W, H, SideX + 12, HelpY + HelpH - 52, SideW - 24, 1, COL_DIVIDER);
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, HelpY + HelpH - 42, COL_TEXT_MUTED, "Arrows / Mouse: Select & Change");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, SideX + 14, HelpY + HelpH - 24, COL_TEXT_MUTED, "F2: Easy Mode   |   F10: Save & Exit");
+  }
+
+  // If System Info tab is open, draw full live hardware + input diagnostics table
+  if (State->ActiveTab == AURORA_TAB_SYSINFO) {
+    INT32  Sy = PaneY + 20;
+    INT32  Step = 30;
+    INT32  Vx = PaneX + 260;
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBold, PaneX + 18, Sy, COL_ORANGE_HI, "System & Native Input Diagnostics");
+    Sy += 34;
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 0 * Step, COL_TEXT_SEC, "Platform / Board");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 0 * Step, COL_WHITE, State->Info.PlatformName);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 1 * Step, COL_TEXT_SEC, "Processor / SoC");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 1 * Step, COL_WHITE, State->Info.SocName);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 2 * Step, COL_TEXT_SEC, "UEFI Firmware Build");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 2 * Step, COL_WHITE, State->Info.FirmwareVersion);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 3 * Step, COL_TEXT_SEC, "Graphics Output (GOP)");
+    BiosFmtU32 (Tmp, sizeof (Tmp), State->Info.GopWidth);
+    BiosStrCat (Tmp, sizeof (Tmp), " x ");
+    BiosFmtU32 (Num, sizeof (Num), State->Info.GopHeight);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), "  (32 bpp, 2x HiDPI)");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 3 * Step, COL_WHITE, Tmp);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 4 * Step, COL_TEXT_SEC, "NVMe Storage / ESP");
+    BiosFmtU32 (Num, sizeof (Num), (UINT32)State->Info.PrimaryDiskGiB);
+    BiosStrCpy (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), " GB Apple ANS2  |  ESP: ");
+    BiosStrCat (Tmp, sizeof (Tmp), State->Info.EspWritable ? "Writable" : "Read-Only");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 4 * Step, COL_WHITE, Tmp);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 5 * Step, COL_TEXT_SEC, "Apple MTP Keyboard");
+    BiosStrCpy (Tmp, sizeof (Tmp), State->Info.MtpKbReady ? "ACTIVE  (" : "INACTIVE  (");
+    BiosFmtU32 (Num, sizeof (Num), State->Info.MtpKbReports);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), " reports, ");
+    BiosFmtU32 (Num, sizeof (Num), State->Info.KeyPresses);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), " key events)");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 5 * Step, State->Info.MtpKbReady ? COL_GREEN : COL_AMBER, Tmp);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 6 * Step, COL_TEXT_SEC, "Apple MTP Trackpad");
+    BiosStrCpy (Tmp, sizeof (Tmp), State->Info.MtpTpReady ? "ACTIVE  (FW: " : "INACTIVE  (FW: ");
+    BiosStrCat (Tmp, sizeof (Tmp), State->Info.MtpFwSource);
+    BiosStrCat (Tmp, sizeof (Tmp), ", ");
+    BiosFmtU32 (Num, sizeof (Num), State->Info.MtpTpReports);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), " reports)");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 6 * Step, State->Info.MtpTpReady ? COL_GREEN : COL_AMBER, Tmp);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 7 * Step, COL_TEXT_SEC, "Keyboard Backlight (FPWM0)");
+    GetControlValueStr (State, CTRL_SET_KBD_BACKLIGHT, Tmp, sizeof (Tmp));
+    BiosStrCat (Tmp, sizeof (Tmp), State->Info.KblActive ? "  (Hardware Active)" : "  (Unavailable)");
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 7 * Step, State->Info.KblActive ? COL_ORANGE_HI : COL_TEXT_MUTED, Tmp);
+
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, PaneX + 18, Sy + 8 * Step, COL_TEXT_SEC, "Live Pointer Telemetry");
+    BiosStrCpy (Tmp, sizeof (Tmp), "Pos (");
+    BiosFmtI32 (Num, sizeof (Num), State->MouseX);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), ", ");
+    BiosFmtI32 (Num, sizeof (Num), State->MouseY);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), ")  |  Delta (");
+    BiosFmtI32 (Num, sizeof (Num), State->Info.LastRawDx);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), ", ");
+    BiosFmtI32 (Num, sizeof (Num), State->Info.LastRawDy);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    BiosStrCat (Tmp, sizeof (Tmp), ")  |  Clicks: ");
+    BiosFmtU32 (Num, sizeof (Num), State->Info.MouseClicks);
+    BiosStrCat (Tmp, sizeof (Tmp), Num);
+    DrawTextFace (Buf, W, H, &mAuroraFontBody, Vx,         Sy + 8 * Step, COL_TEXT_PRI, Tmp);
+  } else if (State->ActiveTab == AURORA_TAB_BOOT) {
+    DrawTextFace (Buf, W, H, &mAuroraFontBold, PaneX + 18, PaneY + 100, COL_ORANGE_HI, "UEFI Boot Option Priorities (Double-Click to Boot)");
+  }
+
+  // Render all registered Advanced Mode controls
+  for (I = 0; I < State->ControlCount; I++) {
+    const AURORA_UI_RECT  *R = &State->Controls[I];
+    BOOLEAN               Hov = (I == State->HoveredCtrlIdx);
+    BOOLEAN               Foc = (I == State->FocusedCtrlIdx);
+
+    if (R->Kind == AURORA_CTRL_MODE_TAB || R->Kind == AURORA_CTRL_UTIL_BTN) {
       continue;
     }
-    for (Col = 0; Col < 8; Col++) {
-      if ((Bits & (0x80u >> Col)) != 0) {
-        FillRect (
-          Buf,
-          Bw,
-          Bh,
-          X + Col * Scale,
-          Y + Row * 2 * Scale,
-          Bold ? (Scale + 1) : Scale,
-          2 * Scale,
-          Color
-          );
+
+    if (R->Kind == AURORA_CTRL_TAB) {
+      BOOLEAN  Act = ((AURORA_BIOS_TAB)R->Param == State->ActiveTab);
+      if (Act) {
+        FillGradV (Buf, W, H, R->X, R->Y, R->W, R->H, 0x00241005u, 0x00100702u);
+        FillRect (Buf, W, H, R->X, R->Y + R->H - 2, R->W, 2, COL_ORANGE_HI);
+      } else if (Hov) {
+        FillRect (Buf, W, H, R->X, R->Y, R->W, R->H, 0x00181818u);
       }
+      DrawTextCentered (Buf, W, H, &mAuroraFontBold, R->X, R->Y, R->W, R->H,
+        Act ? COL_ORANGE_HI : (Hov ? COL_WHITE : 0x008A8A8Au),
+        SubTabNames[R->Param % AURORA_TAB_COUNT]);
+    } else if (R->Kind == AURORA_CTRL_TOGGLE) {
+      BOOLEAN  On = GetControlToggleBool (State, R->Id);
+      FillRect (Buf, W, H, R->X, R->Y, R->W, R->H, (Foc || Hov) ? (Foc ? COL_BG_ROW_FOC : COL_BG_ROW_HOV) : COL_BG_ROW_ALT);
+      if (Foc || Hov) {
+        FillRect (Buf, W, H, R->X, R->Y, 3, R->H, COL_ORANGE_HI);
+      }
+      DrawTextFace (Buf, W, H, &mAuroraFontBody, R->X + 16, R->Y + (R->H - (INT32)mAuroraFontBody.LineHeight) / 2,
+        (Foc || Hov) ? COL_WHITE : COL_TEXT_PRI, GetControlLabel (R->Id));
+      DrawGigabyteToggle (Buf, W, H, R->X + R->W - 60, R->Y + (R->H - 18) / 2, On);
+    } else if (R->Kind == AURORA_CTRL_CHOICE) {
+      FillRect (Buf, W, H, R->X, R->Y, R->W, R->H, (Foc || Hov) ? (Foc ? COL_BG_ROW_FOC : COL_BG_ROW_HOV) : COL_BG_ROW_ALT);
+      if (Foc || Hov) {
+        FillRect (Buf, W, H, R->X, R->Y, 3, R->H, COL_ORANGE_HI);
+      }
+      DrawTextFace (Buf, W, H, &mAuroraFontBody, R->X + 16, R->Y + (R->H - (INT32)mAuroraFontBody.LineHeight) / 2,
+        (Foc || Hov) ? COL_WHITE : COL_TEXT_PRI, GetControlLabel (R->Id));
+      GetControlValueStr (State, R->Id, Tmp, sizeof (Tmp));
+      DrawGigabyteDropdown (Buf, W, H, R->X + R->W - 180, R->Y + 4, 166, R->H - 8, Hov, Foc, Tmp);
+    } else if (R->Kind == AURORA_CTRL_BOOT_ROW) {
+      UINT32   Idx = R->Param;
+      BOOLEAN  Sel = (Idx == State->SelectedBootIdx);
+      FillRect (Buf, W, H, R->X, R->Y, R->W, R->H, (Sel || Foc || Hov) ? (Sel ? COL_BG_ROW_FOC : COL_BG_ROW_HOV) : COL_BG_ROW_ALT);
+      if (Sel || Foc) {
+        FillRect (Buf, W, H, R->X, R->Y, 3, R->H, COL_ORANGE_HI);
+      }
+      if (Idx < State->BootEntryCount) {
+        BiosFmtU32 (Num, sizeof (Num), Idx + 1u);
+        BiosStrCpy (Tmp, sizeof (Tmp), "Boot Option #");
+        BiosStrCat (Tmp, sizeof (Tmp), Num);
+        DrawTextFace (Buf, W, H, &mAuroraFontSmall, R->X + 14, R->Y + 7, COL_TEXT_MUTED, Tmp);
+        DrawTextFace (Buf, W, H, &mAuroraFontBody, R->X + 140, R->Y + 6, Sel ? COL_WHITE : COL_TEXT_PRI, State->BootEntries[Idx].Description);
+      }
+    } else if (R->Kind == AURORA_CTRL_BUTTON) {
+      const char  *Lbl  = "Action";
+      UINT32      TCol  = (Hov || Foc) ? COL_WHITE : COL_TEXT_PRI;
+      switch (R->Id) {
+        case CTRL_BTN_BOOT_UP:      Lbl = "Move Up"; break;
+        case CTRL_BTN_BOOT_DOWN:    Lbl = "Move Down"; break;
+        case CTRL_BTN_BOOT_NOW:     Lbl = "Boot Selected Entry"; TCol = COL_ORANGE_HI; break;
+        case CTRL_BTN_LAUNCH_SHELL: Lbl = "Launch UEFI Shell"; break;
+        case CTRL_BTN_SCAN_USB:     Lbl = "Re-Scan Input Devices"; break;
+        case CTRL_BTN_LOAD_DEFAULTS:Lbl = "Load Optimized Defaults (F7)"; TCol = COL_AMBER; break;
+        case CTRL_BTN_SAVE_EXIT:    Lbl = "Save & Exit Setup (F10)"; TCol = COL_ORANGE_HI; break;
+        case CTRL_BTN_SAVE_ONLY:    Lbl = "Save Configuration to NVRAM + ESP"; break;
+        case CTRL_BTN_DISCARD_EXIT: Lbl = "Discard Changes & Exit Setup"; break;
+        case CTRL_BTN_SAVE_REBOOT:  Lbl = "Save Changes & Cold Reboot"; break;
+        case CTRL_BTN_POWER_OFF:    Lbl = "Power Off System"; TCol = COL_RED; break;
+        default: break;
+      }
+      DrawMetallicButton (Buf, W, H, R->X, R->Y, R->W, R->H, Hov, Foc, TCol, Lbl);
     }
   }
 }
 
-static VOID
-DrawText (
-  UINT32      *Buf,
-  INT32       Bw,
-  INT32       Bh,
-  INT32       X,
-  INT32       Y,
-  const char  *Str,
-  UINT32      Color,
-  INT32       Scale,
-  BOOLEAN     Bold
-  )
-{
-  INT32  Step = 8 * Scale + (Bold ? 1 : 0);
-  if (Str == NULL) {
-    return;
-  }
-  while (*Str != '\0') {
-    if (X + Step > 0 && X < Bw) {
-      DrawChar (Buf, Bw, Bh, X, Y, *Str, Color, Scale, Bold);
-    }
-    X += Step;
-    Str++;
-  }
-}
-
-static VOID
-DrawTextClipped (
-  UINT32      *Buf,
-  INT32       Bw,
-  INT32       Bh,
-  INT32       X,
-  INT32       Y,
-  INT32       MaxW,
-  const char  *Str,
-  UINT32      Color,
-  INT32       Scale,
-  BOOLEAN     Bold
-  )
-{
-  INT32  Step = 8 * Scale + (Bold ? 1 : 0);
-  INT32  MaxX = X + MaxW;
-  if (Str == NULL) {
-    return;
-  }
-  while (*Str != '\0' && (X + Step) <= MaxX) {
-    DrawChar (Buf, Bw, Bh, X, Y, *Str, Color, Scale, Bold);
-    X += Step;
-    Str++;
-  }
-}
-
-static VOID
-DrawGaugeBar (
-  UINT32  *Buf,
-  INT32   Bw,
-  INT32   Bh,
-  INT32   X,
-  INT32   Y,
-  INT32   W,
-  INT32   H,
-  UINT32  Percent,
-  UINT32  FillCol
-  )
-{
-  INT32  Segs = 20;
-  INT32  Gap  = 3;
-  INT32  SegW = (W - (Segs - 1) * Gap) / Segs;
-  INT32  Lit  = (INT32)((Percent * (UINT32)Segs + 50u) / 100u);
-  INT32  I;
-
-  if (SegW < 4) SegW = 4;
-  for (I = 0; I < Segs; I++) {
-    UINT32  C = (I < Lit) ? FillCol : COL_CARD_ALT;
-    FillRect (Buf, Bw, Bh, X + I * (SegW + Gap), Y, SegW, H, C);
-  }
-}
-
-static VOID
-DrawButton (
-  UINT32                *Buf,
-  INT32                 Bw,
-  INT32                 Bh,
-  const AURORA_UI_RECT  *R,
-  const char            *Label,
-  const char            *SubLabel,
-  BOOLEAN               Active,
-  BOOLEAN               Hovered,
-  BOOLEAN               Focused,
-  UINT32                AccentCol
-  )
-{
-  UINT32  Bg     = Active ? COL_ACCENT_DARK : (Hovered ? COL_CARD_HOVER : COL_CARD_ALT);
-  UINT32  Border = (Focused || Hovered || Active) ? AccentCol : COL_BORDER;
-  UINT32  TxtCol = (Active || Hovered || Focused) ? COL_TEXT_BRIGHT : COL_TEXT;
-
-  FillRect (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Bg);
-  DrawRectOutline (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, (Focused || Active) ? 2 : 1, Border);
-  // Left glowing gaming stripe
-  FillRect (Buf, Bw, Bh, R->X, R->Y, 4, R->H, (Active || Hovered || Focused) ? AccentCol : COL_BORDER);
-
-  if (SubLabel != NULL && SubLabel[0] != '\0') {
-    DrawTextClipped (Buf, Bw, Bh, R->X + 14, R->Y + 14, R->W - 20, Label, TxtCol, 1, TRUE);
-    DrawTextClipped (Buf, Bw, Bh, R->X + 14, R->Y + 42, R->W - 20, SubLabel, COL_TEXT_MUTED, 1, FALSE);
-  } else {
-    INT32  TextY = R->Y + (R->H - 16) / 2;
-    DrawTextClipped (Buf, Bw, Bh, R->X + 14, TextY, R->W - 20, Label, TxtCol, 1, TRUE);
-  }
-}
-
-static VOID
-DrawToggleRow (
-  UINT32                *Buf,
-  INT32                 Bw,
-  INT32                 Bh,
-  const AURORA_UI_RECT  *R,
-  const char            *Label,
-  BOOLEAN               Enabled,
-  BOOLEAN               Hovered,
-  BOOLEAN               Focused
-  )
-{
-  UINT32  Bg     = Hovered ? COL_CARD_HOVER : COL_CARD_ALT;
-  UINT32  Border = (Focused || Hovered) ? COL_BORDER_HI : COL_BORDER;
-  INT32   PillW  = 78;
-  INT32   PillH  = 26;
-  INT32   PillX  = R->X + R->W - PillW - 14;
-  INT32   PillY  = R->Y + (R->H - PillH) / 2;
-
-  FillRect (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Bg);
-  DrawRectOutline (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Focused ? 2 : 1, Border);
-  DrawTextClipped (Buf, Bw, Bh, R->X + 14, R->Y + (R->H - 16) / 2, R->W - PillW - 36, Label, COL_TEXT_BRIGHT, 1, FALSE);
-
-  // Toggle switch pill
-  FillRect (Buf, Bw, Bh, PillX, PillY, PillW, PillH, Enabled ? COL_GREEN_DARK : COL_BG);
-  DrawRectOutline (Buf, Bw, Bh, PillX, PillY, PillW, PillH, 1, Enabled ? COL_GREEN : COL_TEXT_MUTED);
-  if (Enabled) {
-    FillRect (Buf, Bw, Bh, PillX + PillW - 24, PillY + 3, 21, PillH - 6, COL_GREEN);
-    DrawText (Buf, Bw, Bh, PillX + 10, PillY + 5, "ON", COL_GREEN, 1, TRUE);
-  } else {
-    FillRect (Buf, Bw, Bh, PillX + 3, PillY + 3, 21, PillH - 6, COL_TEXT_MUTED);
-    DrawText (Buf, Bw, Bh, PillX + 34, PillY + 5, "OFF", COL_TEXT_MUTED, 1, TRUE);
-  }
-}
-
-static VOID
-DrawChoiceRow (
-  UINT32                *Buf,
-  INT32                 Bw,
-  INT32                 Bh,
-  const AURORA_UI_RECT  *R,
-  const char            *Label,
-  const char            *ValueText,
-  BOOLEAN               Hovered,
-  BOOLEAN               Focused,
-  UINT32                ValColor
-  )
-{
-  UINT32  Bg     = Hovered ? COL_CARD_HOVER : COL_CARD_ALT;
-  UINT32  Border = (Focused || Hovered) ? COL_BORDER_HI : COL_BORDER;
-  INT32   BoxW   = 176;
-  INT32   BoxH   = 28;
-  INT32   BoxX   = R->X + R->W - BoxW - 14;
-  INT32   BoxY   = R->Y + (R->H - BoxH) / 2;
-
-  FillRect (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Bg);
-  DrawRectOutline (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Focused ? 2 : 1, Border);
-  DrawTextClipped (Buf, Bw, Bh, R->X + 14, R->Y + (R->H - 16) / 2, R->W - BoxW - 32, Label, COL_TEXT_BRIGHT, 1, FALSE);
-
-  FillRect (Buf, Bw, Bh, BoxX, BoxY, BoxW, BoxH, COL_BG);
-  DrawRectOutline (Buf, Bw, Bh, BoxX, BoxY, BoxW, BoxH, 1, ValColor);
-  DrawTextClipped (Buf, Bw, Bh, BoxX + 10, BoxY + 6, BoxW - 16, ValueText, ValColor, 1, TRUE);
-}
-
-static VOID
-DrawSliderRow (
-  UINT32                *Buf,
-  INT32                 Bw,
-  INT32                 Bh,
-  const AURORA_UI_RECT  *R,
-  const char            *Label,
-  const char            *ValueText,
-  UINT32                Val,
-  UINT32                MinVal,
-  UINT32                MaxVal,
-  BOOLEAN               Hovered,
-  BOOLEAN               Focused
-  )
-{
-  UINT32  Bg     = Hovered ? COL_CARD_HOVER : COL_CARD_ALT;
-  UINT32  Border = (Focused || Hovered) ? COL_BORDER_HI : COL_BORDER;
-  INT32   TrackX = R->X + 16;
-  INT32   TrackY = R->Y + 34;
-  INT32   TrackW = R->W - 110;
-  INT32   FillW;
-
-  if (TrackW < 40) TrackW = 40;
-  FillW = (MaxVal > MinVal) ? (INT32)(((Val - MinVal) * (UINT32)TrackW) / (MaxVal - MinVal)) : 0;
-
-  FillRect (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Bg);
-  DrawRectOutline (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Focused ? 2 : 1, Border);
-  DrawTextClipped (Buf, Bw, Bh, R->X + 14, R->Y + 8, R->W - 110, Label, COL_TEXT_BRIGHT, 1, FALSE);
-  DrawTextClipped (Buf, Bw, Bh, R->X + R->W - 88, R->Y + 18, 80, ValueText, COL_ACCENT, 1, TRUE);
-
-  // Track + glowing fill + thumb
-  FillRect (Buf, Bw, Bh, TrackX, TrackY, TrackW, 8, COL_BG);
-  DrawRectOutline (Buf, Bw, Bh, TrackX, TrackY, TrackW, 8, 1, COL_BORDER);
-  if (FillW > 0) {
-    FillRect (Buf, Bw, Bh, TrackX + 1, TrackY + 1, FillW, 6, COL_ACCENT);
-  }
-  FillRect (Buf, Bw, Bh, TrackX + FillW - 5, TrackY - 4, 10, 16, COL_TEXT_BRIGHT);
-  DrawRectOutline (Buf, Bw, Bh, TrackX + FillW - 5, TrackY - 4, 10, 16, 1, COL_ACCENT);
-}
-
-static VOID
-DrawKeyValue (
-  UINT32      *Buf,
-  INT32       Bw,
-  INT32       Bh,
-  INT32       X,
-  INT32       Y,
-  INT32       W,
-  const char  *Key,
-  const char  *Val,
-  UINT32      ValCol
-  )
-{
-  DrawTextClipped (Buf, Bw, Bh, X, Y, W / 2, Key, COL_TEXT_MUTED, 1, FALSE);
-  DrawTextClipped (Buf, Bw, Bh, X + W / 2 - 12, Y, W / 2 + 12, Val, ValCol, 1, TRUE);
-}
-
 // ---------------------------------------------------------------------------
-// Tab Renderers
+// Help Modal Overlay (F1)
 // ---------------------------------------------------------------------------
 static VOID
-RenderDashboard (
-  const AURORA_BIOS_STATE  *S,
-  UINT32                   *Buf,
-  INT32                    M,
-  INT32                    BodyY,
-  INT32                    BodyH
+RenderHelpModal (
+  const AURORA_BIOS_STATE  *State,
+  UINT32                   *Buf
   )
 {
-  INT32  Bw     = S->Width;
-  INT32  Bh     = S->Height;
-  INT32  ColGap = 18;
-  INT32  ColW   = (Bw - M * 2 - ColGap * 2) / 3;
-  INT32  Col0X  = M;
-  INT32  Col1X  = M + ColW + ColGap;
-  INT32  Col2X  = M + (ColW + ColGap) * 2;
-  char   Tmp[64];
-  INT32  Y;
-  INT32  I;
+  INT32  W  = State->Width;
+  INT32  H  = State->Height;
+  INT32  MW = 560;
+  INT32  MH = 340;
+  INT32  MX = (W - MW) / 2;
+  INT32  MY = (H - MH) / 2;
+  INT32  Y  = MY + 56;
 
-  // Column 0: Silicon & Platform Telemetry
-  DrawChamferedCard (Buf, Bw, Bh, Col0X, BodyY, ColW, BodyH, COL_CARD_BG, COL_BORDER, COL_ACCENT);
-  DrawText (Buf, Bw, Bh, Col0X + 16, BodyY + 14, "APPLE SILICON TELEMETRY", COL_ACCENT, 1, TRUE);
-  FillRect (Buf, Bw, Bh, Col0X + 16, BodyY + 36, ColW - 32, 1, COL_BORDER);
-
-  Y = BodyY + 52;
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "PLATFORM", S->Info.PlatformName, COL_TEXT_BRIGHT); Y += 32;
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "PROCESSOR", S->Info.SocName, COL_ACCENT); Y += 32;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.CpuCores, 1); StrCatA (Tmp, sizeof (Tmp), " Cores (ARM64)");
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "CPU CORES", Tmp, COL_TEXT_BRIGHT); Y += 32;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.TotalRamMiB / 1024u, 1); StrCatA (Tmp, sizeof (Tmp), " GB Unified LPDDR5X");
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "MEMORY", Tmp, COL_GREEN); Y += 32;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.GopWidth, 1); StrCatA (Tmp, sizeof (Tmp), "x");
-  AppendU64 (Tmp, sizeof (Tmp), S->Info.GopHeight, 1); StrCatA (Tmp, sizeof (Tmp), " @ ");
-  AppendU64 (Tmp, sizeof (Tmp), S->Info.GopBpp, 1); StrCatA (Tmp, sizeof (Tmp), "bpc");
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "DISPLAY", Tmp, COL_TEXT_BRIGHT); Y += 32;
-
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "GPU POOL", S->Info.GpuPoolActive ? "G17G ACTIVE (1024 MB)" : "STANDARD", S->Info.GpuPoolActive ? COL_GREEN : COL_AMBER); Y += 32;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.StorageDeviceCount, 1); StrCatA (Tmp, sizeof (Tmp), " NVMe/Block (");
-  AppendU64 (Tmp, sizeof (Tmp), S->Info.PrimaryDiskGiB, 1); StrCatA (Tmp, sizeof (Tmp), " GB)");
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "STORAGE", Tmp, COL_TEXT_BRIGHT); Y += 32;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.SimplePointerCount + S->Info.AbsPointerCount, 1); StrCatA (Tmp, sizeof (Tmp), " Mouse / ");
-  AppendU64 (Tmp, sizeof (Tmp), S->Info.KeyboardCount, 1); StrCatA (Tmp, sizeof (Tmp), " KB");
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "INPUT HID", Tmp, (S->Info.SimplePointerCount + S->Info.AbsPointerCount) > 0 ? COL_GREEN : COL_AMBER); Y += 32;
-
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "CONFIG ESP", S->Info.EspWritable ? "PERSISTENT FAT32" : "RAM NVRAM", S->Info.EspWritable ? COL_GREEN : COL_AMBER); Y += 32;
-  DrawKeyValue (Buf, Bw, Bh, Col0X + 16, Y, ColW - 32, "FIRMWARE", S->Info.FirmwareVersion, COL_TEXT);
-
-  // Column 1: System Status & Performance Gauges
-  DrawChamferedCard (Buf, Bw, Bh, Col1X, BodyY, ColW, BodyH, COL_CARD_BG, COL_BORDER, COL_GREEN);
-  DrawText (Buf, Bw, Bh, Col1X + 16, BodyY + 14, "SYSTEM HEALTH & GAUGES", COL_GREEN, 1, TRUE);
-  FillRect (Buf, Bw, Bh, Col1X + 16, BodyY + 36, ColW - 32, 1, COL_BORDER);
-
-  Y = BodyY + 54;
-  DrawText (Buf, Bw, Bh, Col1X + 16, Y, "M5 GPU LOCAL POOL CARVEOUT", COL_TEXT, 1, FALSE);
-  DrawText (Buf, Bw, Bh, Col1X + ColW - 96, Y, S->Info.GpuPoolActive ? "100% OK" : "OFF", S->Info.GpuPoolActive ? COL_GREEN : COL_AMBER, 1, TRUE);
-  DrawGaugeBar (Buf, Bw, Bh, Col1X + 16, Y + 24, ColW - 32, 16, S->Info.GpuPoolActive ? 100 : 15, COL_GREEN);
-  Y += 62;
-
+  // Dim backdrop
   {
-    UINT32  ProfPct = (S->Config.PerformanceProfile == AURORA_PROFILE_PERFORMANCE) ? 100 :
-                      (S->Config.PerformanceProfile == AURORA_PROFILE_BALANCED) ? 70 : 40;
-    UINT32  ProfCol = (S->Config.PerformanceProfile == AURORA_PROFILE_PERFORMANCE) ? COL_ACCENT :
-                      (S->Config.PerformanceProfile == AURORA_PROFILE_BALANCED) ? COL_GREEN : COL_AMBER;
-    DrawText (Buf, Bw, Bh, Col1X + 16, Y, "PERFORMANCE PROFILE TARGET", COL_TEXT, 1, FALSE);
-    DrawText (
-      Buf, Bw, Bh, Col1X + ColW - 112, Y,
-      (S->Config.PerformanceProfile == AURORA_PROFILE_PERFORMANCE) ? "MAX PERF" :
-      (S->Config.PerformanceProfile == AURORA_PROFILE_BALANCED) ? "BALANCED" : "QUIET",
-      ProfCol, 1, TRUE
-      );
-    DrawGaugeBar (Buf, Bw, Bh, Col1X + 16, Y + 24, ColW - 32, 16, ProfPct, ProfCol);
-  }
-  Y += 62;
-
-  {
-    UINT32  SpdPct = (UINT32)S->Config.MouseSpeed * 10u;
-    Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Config.MouseSpeed, 1); StrCatA (Tmp, sizeof (Tmp), " / 10");
-    DrawText (Buf, Bw, Bh, Col1X + 16, Y, "POINTER SENSITIVITY", COL_TEXT, 1, FALSE);
-    DrawText (Buf, Bw, Bh, Col1X + ColW - 76, Y, Tmp, COL_ACCENT, 1, TRUE);
-    DrawGaugeBar (Buf, Bw, Bh, Col1X + 16, Y + 24, ColW - 32, 16, SpdPct, COL_ACCENT);
-  }
-  Y += 68;
-
-  // Boot Priority #1 preview box inside center card
-  FillRect (Buf, Bw, Bh, Col1X + 16, Y, ColW - 32, 92, COL_CARD_ALT);
-  DrawRectOutline (Buf, Bw, Bh, Col1X + 16, Y, ColW - 32, 92, 1, COL_BORDER);
-  DrawText (Buf, Bw, Bh, Col1X + 28, Y + 12, "PRIMARY BOOT TARGET (#1)", COL_AMBER, 1, TRUE);
-  if (S->BootEntryCount > 0) {
-    DrawTextClipped (Buf, Bw, Bh, Col1X + 28, Y + 38, ColW - 56, S->BootEntries[0].Description, COL_TEXT_BRIGHT, 1, TRUE);
-    DrawTextClipped (Buf, Bw, Bh, Col1X + 28, Y + 62, ColW - 56, S->BootEntries[0].DeviceHint, COL_TEXT_MUTED, 1, FALSE);
-  } else {
-    DrawText (Buf, Bw, Bh, Col1X + 28, Y + 42, "Windows Boot Manager / Internal NVMe", COL_TEXT_BRIGHT, 1, FALSE);
-  }
-  Y += 110;
-
-  // Quick summary of active mode flags
-  DrawText (Buf, Bw, Bh, Col1X + 16, Y, "DIRECT DCP SCANOUT: ZERO-COPY 2560x1664", COL_GREEN, 1, FALSE); Y += 26;
-  DrawText (Buf, Bw, Bh, Col1X + 16, Y, "CORNER RAINBOW CHECKPOINTS: REMOVED", COL_ACCENT, 1, FALSE); Y += 26;
-  DrawText (Buf, Bw, Bh, Col1X + 16, Y, "FAST 64-BIT GOP BLITTER: ACTIVE", COL_ACCENT, 1, FALSE);
-
-  // Column 2: Quick Profile & Action Deck
-  DrawChamferedCard (Buf, Bw, Bh, Col2X, BodyY, ColW, BodyH, COL_CARD_BG, COL_BORDER, COL_AMBER);
-  DrawText (Buf, Bw, Bh, Col2X + 16, BodyY + 14, "PROFILE & QUICK LAUNCH", COL_AMBER, 1, TRUE);
-  FillRect (Buf, Bw, Bh, Col2X + 16, BodyY + 36, ColW - 32, 1, COL_BORDER);
-
-  DrawText (Buf, Bw, Bh, Col2X + 18, BodyY + 108, "QUICK COMMANDS", COL_TEXT_MUTED, 1, TRUE);
-
-  for (I = AURORA_TAB_COUNT; I < S->ControlCount; I++) {
-    const AURORA_UI_RECT  *R   = &S->Controls[I];
-    BOOLEAN               Hov  = (S->HoveredCtrlIdx == I);
-    BOOLEAN               Foc  = (S->FocusedCtrlIdx == I);
-    switch (R->Id) {
-      case CID_PROFILE_BALANCED:
-        DrawButton (Buf, Bw, Bh, R, "BALANCED", NULL, S->Config.PerformanceProfile == AURORA_PROFILE_BALANCED, Hov, Foc, COL_GREEN);
-        break;
-      case CID_PROFILE_PERFORMANCE:
-        DrawButton (Buf, Bw, Bh, R, "PERF", NULL, S->Config.PerformanceProfile == AURORA_PROFILE_PERFORMANCE, Hov, Foc, COL_ACCENT);
-        break;
-      case CID_PROFILE_QUIET:
-        DrawButton (Buf, Bw, Bh, R, "QUIET", NULL, S->Config.PerformanceProfile == AURORA_PROFILE_QUIET, Hov, Foc, COL_AMBER);
-        break;
-      case CID_BTN_BOOT_OS:
-        DrawButton (Buf, Bw, Bh, R, ">> BOOT WINDOWS / OS NOW", NULL, TRUE, Hov, Foc, COL_GREEN);
-        break;
-      case CID_BTN_UEFI_SHELL:
-        DrawButton (Buf, Bw, Bh, R, ">_ LAUNCH UEFI SHELL", NULL, FALSE, Hov, Foc, COL_ACCENT);
-        break;
-      case CID_BTN_SCAN_USB:
-        DrawButton (Buf, Bw, Bh, R, "[+] SCAN USB MOUSE & KEYBOARD", NULL, FALSE, Hov, Foc, COL_AMBER);
-        break;
-      case CID_BTN_SAVE_REBOOT:
-        DrawButton (Buf, Bw, Bh, R, "[R] SAVE SETTINGS & REBOOT", NULL, FALSE, Hov, Foc, COL_RED);
-        break;
-      default:
-        break;
-    }
-  }
-}
-
-static VOID
-RenderBootManager (
-  const AURORA_BIOS_STATE  *S,
-  UINT32                   *Buf,
-  INT32                    M,
-  INT32                    BodyY,
-  INT32                    BodyH
-  )
-{
-  INT32  Bw     = S->Width;
-  INT32  Bh     = S->Height;
-  INT32  LeftW  = ((Bw - M * 2 - 20) * 58) / 100;
-  INT32  RightX = M + LeftW + 20;
-  INT32  RightW = Bw - M - RightX;
-  INT32  I;
-  char   Tmp[64];
-
-  DrawChamferedCard (Buf, Bw, Bh, M, BodyY, LeftW, BodyH, COL_CARD_BG, COL_BORDER, COL_ACCENT);
-  DrawText (Buf, Bw, Bh, M + 16, BodyY + 14, "UEFI BOOT PRIORITY ORDER (CLICK OR +/- TO REORDER)", COL_ACCENT, 1, TRUE);
-  FillRect (Buf, Bw, Bh, M + 16, BodyY + 36, LeftW - 32, 1, COL_BORDER);
-
-  if (S->BootEntryCount == 0) {
-    DrawText (Buf, Bw, Bh, M + 24, BodyY + 72, "No UEFI Boot#### options enumerated yet.", COL_TEXT_MUTED, 1, FALSE);
-  }
-
-  DrawChamferedCard (Buf, Bw, Bh, RightX, BodyY, RightW, BodyH, COL_CARD_BG, COL_BORDER, COL_AMBER);
-  DrawText (Buf, Bw, Bh, RightX + 16, BodyY + 14, "BOOT CONFIGURATION", COL_AMBER, 1, TRUE);
-  FillRect (Buf, Bw, Bh, RightX + 16, BodyY + 36, RightW - 32, 1, COL_BORDER);
-
-  for (I = AURORA_TAB_COUNT; I < S->ControlCount; I++) {
-    const AURORA_UI_RECT  *R  = &S->Controls[I];
-    BOOLEAN               Hov = (S->HoveredCtrlIdx == I);
-    BOOLEAN               Foc = (S->FocusedCtrlIdx == I);
-
-    if (R->Kind == AURORA_CTRL_BOOT_ROW) {
-      UINT32                    Idx = R->Param;
-      const AURORA_BOOT_ENTRY   *E  = &S->BootEntries[Idx];
-      BOOLEAN                   Sel = (Idx == S->SelectedBootIdx);
-      UINT32                    Bg  = Sel ? COL_ACCENT_DARK : (Hov ? COL_CARD_HOVER : COL_CARD_ALT);
-      UINT32                    Bd  = (Sel || Foc || Hov) ? COL_ACCENT : COL_BORDER;
-
-      FillRect (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Bg);
-      DrawRectOutline (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, (Sel || Foc) ? 2 : 1, Bd);
-      FillRect (Buf, Bw, Bh, R->X, R->Y, 4, R->H, Sel ? COL_GREEN : COL_BORDER);
-
-      Tmp[0] = '#'; Tmp[1] = '\0';
-      AppendU64 (Tmp, sizeof (Tmp), Idx + 1, 1);
-      StrCatA (Tmp, sizeof (Tmp), " [Boot");
-      AppendHex16 (Tmp, sizeof (Tmp), E->OptionNumber);
-      StrCatA (Tmp, sizeof (Tmp), "] ");
-      StrCatA (Tmp, sizeof (Tmp), E->Description);
-      DrawTextClipped (Buf, Bw, Bh, R->X + 14, R->Y + 11, R->W - 24, Tmp, Sel ? COL_TEXT_BRIGHT : COL_TEXT, 1, Sel);
-    } else if (R->Id == CID_BOOT_MOVE_UP) {
-      DrawButton (Buf, Bw, Bh, R, "^ MOVE UP", NULL, FALSE, Hov, Foc, COL_ACCENT);
-    } else if (R->Id == CID_BOOT_MOVE_DOWN) {
-      DrawButton (Buf, Bw, Bh, R, "v MOVE DOWN", NULL, FALSE, Hov, Foc, COL_ACCENT);
-    } else if (R->Id == CID_BOOT_LAUNCH_SEL) {
-      DrawButton (Buf, Bw, Bh, R, ">> BOOT NOW", NULL, TRUE, Hov, Foc, COL_GREEN);
-    } else if (R->Id == CID_SLIDER_TIMEOUT) {
-      Tmp[0] = '\0';
-      if (S->Config.BootTimeoutSec == 0) {
-        StrCopyA (Tmp, sizeof (Tmp), "0s INST");
-      } else {
-        AppendU64 (Tmp, sizeof (Tmp), S->Config.BootTimeoutSec, 1);
-        StrCatA (Tmp, sizeof (Tmp), " sec");
+    INT32  Py;
+    INT32  Px;
+    for (Py = 0; Py < H; Py++) {
+      UINT32  *Row = Buf + Py * W;
+      for (Px = 0; Px < W; Px++) {
+        Row[Px] = ((Row[Px] >> 1) & 0x007F7F7Fu);
       }
-      DrawSliderRow (Buf, Bw, Bh, R, "BIOS Prompt Timeout (0s = Instant)", Tmp, S->Config.BootTimeoutSec, 0, 10, Hov, Foc);
-    } else if (R->Id == CID_TOGGLE_FASTBOOT) {
-      DrawToggleRow (Buf, Bw, Bh, R, "Fast Boot (Zero-Delay Hand-off)", S->Config.FastBoot != 0, Hov, Foc);
-    } else if (R->Id == CID_TOGGLE_SPLASH) {
-      DrawToggleRow (Buf, Bw, Bh, R, "Aurora Boot Splash Graphic", S->Config.BootSplashLogo != 0, Hov, Foc);
-    } else if (R->Id == CID_CHOICE_DEF_TARGET) {
-      const char  *Txt = (S->Config.DefaultBootTarget == AURORA_BOOT_TARGET_OS) ? "WINDOWS / OS" :
-                         (S->Config.DefaultBootTarget == AURORA_BOOT_TARGET_SHELL) ? "UEFI SHELL" : "STAY IN BIOS";
-      DrawChoiceRow (Buf, Bw, Bh, R, "Default Boot Target", Txt, Hov, Foc, COL_ACCENT);
-    }
-  }
-}
-
-static VOID
-RenderHardware (
-  const AURORA_BIOS_STATE  *S,
-  UINT32                   *Buf,
-  INT32                    M,
-  INT32                    BodyY,
-  INT32                    BodyH
-  )
-{
-  INT32  Bw     = S->Width;
-  INT32  Bh     = S->Height;
-  INT32  HalfW  = (Bw - M * 2 - 20) / 2;
-  INT32  RightX = M + HalfW + 20;
-  INT32  I;
-  char   Tmp[64];
-
-  DrawChamferedCard (Buf, Bw, Bh, M, BodyY, HalfW, BodyH, COL_CARD_BG, COL_BORDER, COL_ACCENT);
-  DrawText (Buf, Bw, Bh, M + 16, BodyY + 14, "APPLE M5 GPU & DISPLAY ENGINE", COL_ACCENT, 1, TRUE);
-  FillRect (Buf, Bw, Bh, M + 16, BodyY + 36, HalfW - 32, 1, COL_BORDER);
-
-  DrawChamferedCard (Buf, Bw, Bh, RightX, BodyY, HalfW, BodyH, COL_CARD_BG, COL_BORDER, COL_AMBER);
-  DrawText (Buf, Bw, Bh, RightX + 16, BodyY + 14, "PERIPHERALS & SERIAL TELEMETRY", COL_AMBER, 1, TRUE);
-  FillRect (Buf, Bw, Bh, RightX + 16, BodyY + 36, HalfW - 32, 1, COL_BORDER);
-
-  for (I = AURORA_TAB_COUNT; I < S->ControlCount; I++) {
-    const AURORA_UI_RECT  *R  = &S->Controls[I];
-    BOOLEAN               Hov = (S->HoveredCtrlIdx == I);
-    BOOLEAN               Foc = (S->FocusedCtrlIdx == I);
-
-    switch (R->Id) {
-      case CID_TOGGLE_GPU_POOL:
-        DrawToggleRow (Buf, Bw, Bh, R, "G17G GPU Local Memory Pool (1024 MB)", S->Config.GpuLocalPoolEnable != 0, Hov, Foc);
-        break;
-      case CID_CHOICE_CON_SCALE:
-        DrawChoiceRow (Buf, Bw, Bh, R, "UEFI Console Scaling", (S->Config.ConsoleScaleMode == 2) ? "2x HiDPI" : "1x NATIVE", Hov, Foc, COL_ACCENT);
-        break;
-      case CID_SLIDER_MOUSE_SPEED:
-        Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Config.MouseSpeed, 1); StrCatA (Tmp, sizeof (Tmp), " / 10");
-        DrawSliderRow (Buf, Bw, Bh, R, "Mouse Cursor Sensitivity (Live)", Tmp, S->Config.MouseSpeed, 1, 10, Hov, Foc);
-        break;
-      case CID_CHOICE_SERIAL_DBG: {
-        const char  *Dbg = (S->Config.SerialDebugLevel == AURORA_DEBUG_ERRORS) ? "ERRORS ONLY" :
-                           (S->Config.SerialDebugLevel == AURORA_DEBUG_INFO) ? "INFO + BOOT" : "FULL VERBOSE";
-        DrawChoiceRow (Buf, Bw, Bh, R, "UART Serial Debug Level", Dbg, Hov, Foc, COL_AMBER);
-        break;
-      }
-      case CID_TOGGLE_USB_AUTO:
-        DrawToggleRow (Buf, Bw, Bh, R, "USB HID Auto-Connect at Boot", S->Config.UsbHidAutoConnect != 0, Hov, Foc);
-        break;
-      case CID_TOGGLE_USB_BOOT:
-        DrawToggleRow (Buf, Bw, Bh, R, "Type-C / External USB Boot Media", S->Config.ExternalUsbBoot != 0, Hov, Foc);
-        break;
-      default:
-        break;
     }
   }
 
-  // Informational hardware notes at bottom of cards
-  DrawText (Buf, Bw, Bh, M + 18, BodyY + 292, "HARDWARE DISPLAY PIPELINE:", COL_TEXT_MUTED, 1, TRUE);
-  DrawText (Buf, Bw, Bh, M + 18, BodyY + 318, "- Panel: Native 2560x1664 X2R10G10B10 (30-bit Apple DCP)", COL_TEXT, 1, FALSE);
-  DrawText (Buf, Bw, Bh, M + 18, BodyY + 344, "- GOP Fast Blitter: 64-bit Write-Combining Burst Active", COL_GREEN, 1, FALSE);
-  DrawText (Buf, Bw, Bh, M + 18, BodyY + 370, "- Native Windows WDDM: AuroraD3D11 + Direct DCP Scanout", COL_ACCENT, 1, FALSE);
+  FillRect (Buf, W, H, MX, MY, MW, MH, 0x000A0A0Au);
+  DrawRectBorder (Buf, W, H, MX, MY, MW, MH, COL_ORANGE);
+  FillGradV (Buf, W, H, MX + 1, MY + 1, MW - 2, 36, 0x003D1806u, 0x00160702u);
+  DrawTextCentered (Buf, W, H, &mAuroraFontBold, MX, MY + 1, MW, 36, COL_ORANGE_HI, "Aurora UEFI Setup - Controls & Shortcuts");
 
-  DrawText (Buf, Bw, Bh, RightX + 18, BodyY + 292, "PERSISTENCE BACKING:", COL_TEXT_MUTED, 1, TRUE);
-  DrawText (Buf, Bw, Bh, RightX + 18, BodyY + 318, "- UEFI Runtime Variable: AuroraBiosConfig", COL_TEXT, 1, FALSE);
-  DrawText (Buf, Bw, Bh, RightX + 18, BodyY + 344, "- NVMe ESP Mirror: \\EFI\\Aurora\\bios.cfg (CRC32 verified)", COL_GREEN, 1, FALSE);
-  DrawText (Buf, Bw, Bh, RightX + 18, BodyY + 370, "- Survives full power cycles across emulated NVRAM resets", COL_TEXT, 1, FALSE);
-}
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 0 * 30, COL_WHITE, "Trackpad / Mouse : Move cursor, click or tap-to-click any control");
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 1 * 30, COL_WHITE, "F2               : Switch between Easy Mode and Advanced Mode");
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 2 * 30, COL_WHITE, "Up / Down / Tab  : Select setting or button");
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 3 * 30, COL_WHITE, "Left / Right / Enter : Toggle or cycle setting value");
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 4 * 30, COL_WHITE, "F7               : Load Optimized Defaults");
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 5 * 30, COL_WHITE, "F10              : Save Settings & Boot OS");
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 6 * 30, COL_WHITE, "F11              : Launch UEFI Shell");
+  DrawTextFace (Buf, W, H, &mAuroraFontBody, MX + 28, Y + 7 * 30, COL_WHITE, "ESC              : Discard & Exit Setup");
 
-static VOID
-RenderDiagnostics (
-  const AURORA_BIOS_STATE  *S,
-  UINT32                   *Buf,
-  INT32                    M,
-  INT32                    BodyY,
-  INT32                    BodyH
-  )
-{
-  INT32  Bw     = S->Width;
-  INT32  Bh     = S->Height;
-  INT32  HalfW  = (Bw - M * 2 - 20) / 2;
-  INT32  RightX = M + HalfW + 20;
-  INT32  Y;
-  INT32  I;
-  char   Tmp[64];
-
-  // Left Card: Hardware & Storage Inventory
-  DrawChamferedCard (Buf, Bw, Bh, M, BodyY, HalfW, BodyH, COL_CARD_BG, COL_BORDER, COL_GREEN);
-  DrawText (Buf, Bw, Bh, M + 16, BodyY + 14, "LIVE HARDWARE & STORAGE INVENTORY", COL_GREEN, 1, TRUE);
-  FillRect (Buf, Bw, Bh, M + 16, BodyY + 36, HalfW - 32, 1, COL_BORDER);
-
-  Y = BodyY + 56;
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.StorageDeviceCount, 1); StrCatA (Tmp, sizeof (Tmp), " handles");
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, HalfW - 36, "BLOCK I/O HANDLES", Tmp, COL_TEXT_BRIGHT); Y += 34;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.PrimaryDiskGiB, 1); StrCatA (Tmp, sizeof (Tmp), " GiB (Apple ANS NVMe)");
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, HalfW - 36, "PRIMARY STORAGE", Tmp, COL_GREEN); Y += 34;
-
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, HalfW - 36, "ESP CONFIG FILE", S->Info.EspConfigFound ? "FOUND (CRC32 VALID)" : "WILL CREATE ON SAVE", S->Info.EspConfigFound ? COL_GREEN : COL_AMBER); Y += 34;
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, HalfW - 36, "ESP WRITE ACCESS", S->Info.EspWritable ? "WRITABLE FAT32" : "READ-ONLY / ABSENT", S->Info.EspWritable ? COL_GREEN : COL_RED); Y += 34;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->BootEntryCount, 1); StrCatA (Tmp, sizeof (Tmp), " boot entries");
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, HalfW - 36, "UEFI BOOT OPTIONS", Tmp, COL_ACCENT); Y += 34;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.UptimeSec, 1); StrCatA (Tmp, sizeof (Tmp), " seconds");
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, HalfW - 36, "BIOS SESSION UPTIME", Tmp, COL_TEXT_BRIGHT);
-
-  // Right Card: Live Mouse + Keyboard Interactive Test Bench
-  DrawChamferedCard (Buf, Bw, Bh, RightX, BodyY, HalfW, BodyH, COL_CARD_BG, COL_BORDER, COL_ACCENT);
-  DrawText (Buf, Bw, Bh, RightX + 16, BodyY + 14, "LIVE MOUSE & KEYBOARD TEST BENCH", COL_ACCENT, 1, TRUE);
-  FillRect (Buf, Bw, Bh, RightX + 16, BodyY + 36, HalfW - 32, 1, COL_BORDER);
-
-  Y = BodyY + 56;
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.SimplePointerCount, 1);
-  DrawKeyValue (Buf, Bw, Bh, RightX + 18, Y, HalfW - 36, "SIMPLE POINTER (USB MOUSE)", Tmp, S->Info.SimplePointerCount > 0 ? COL_GREEN : COL_AMBER); Y += 34;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.AbsPointerCount, 1);
-  DrawKeyValue (Buf, Bw, Bh, RightX + 18, Y, HalfW - 36, "ABSOLUTE POINTER (HID)", Tmp, S->Info.AbsPointerCount > 0 ? COL_GREEN : COL_AMBER); Y += 34;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.KeyboardCount, 1);
-  DrawKeyValue (Buf, Bw, Bh, RightX + 18, Y, HalfW - 36, "TEXT INPUT (KB / SERIAL)", Tmp, S->Info.KeyboardCount > 0 ? COL_GREEN : COL_AMBER); Y += 34;
-
-  Tmp[0] = '\0'; StrCatA (Tmp, sizeof (Tmp), "("); AppendI32 (Tmp, sizeof (Tmp), S->MouseX);
-  StrCatA (Tmp, sizeof (Tmp), ", "); AppendI32 (Tmp, sizeof (Tmp), S->MouseY);
-  StrCatA (Tmp, sizeof (Tmp), ")  Btn="); StrCatA (Tmp, sizeof (Tmp), S->MouseLeftDown ? "DOWN" : "UP");
-  DrawKeyValue (Buf, Bw, Bh, RightX + 18, Y, HalfW - 36, "CURSOR POSITION", Tmp, COL_ACCENT); Y += 34;
-
-  Tmp[0] = '\0'; StrCatA (Tmp, sizeof (Tmp), "dX="); AppendI32 (Tmp, sizeof (Tmp), S->Info.LastRawDx);
-  StrCatA (Tmp, sizeof (Tmp), "  dY="); AppendI32 (Tmp, sizeof (Tmp), S->Info.LastRawDy);
-  DrawKeyValue (Buf, Bw, Bh, RightX + 18, Y, HalfW - 36, "LAST RAW MOUSE DELTA", Tmp, COL_TEXT_BRIGHT); Y += 34;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Info.MouseClicks, 1); StrCatA (Tmp, sizeof (Tmp), " clicks / ");
-  AppendU64 (Tmp, sizeof (Tmp), S->Info.KeyPresses, 1); StrCatA (Tmp, sizeof (Tmp), " keys");
-  DrawKeyValue (Buf, Bw, Bh, RightX + 18, Y, HalfW - 36, "INTERACTION EVENTS", Tmp, COL_GREEN);
-
-  for (I = AURORA_TAB_COUNT; I < S->ControlCount; I++) {
-    const AURORA_UI_RECT  *R  = &S->Controls[I];
-    BOOLEAN               Hov = (S->HoveredCtrlIdx == I);
-    BOOLEAN               Foc = (S->FocusedCtrlIdx == I);
-    if (R->Id == CID_DIAG_SCAN_USB) {
-      DrawButton (Buf, Bw, Bh, R, "[+] SCAN USB HID", NULL, FALSE, Hov, Foc, COL_AMBER);
-    } else if (R->Id == CID_DIAG_RESET_INPUT) {
-      DrawButton (Buf, Bw, Bh, R, "RESET COUNTERS", NULL, FALSE, Hov, Foc, COL_ACCENT);
-    }
-  }
-}
-
-static VOID
-RenderSaveExit (
-  const AURORA_BIOS_STATE  *S,
-  UINT32                   *Buf,
-  INT32                    M,
-  INT32                    BodyY,
-  INT32                    BodyH
-  )
-{
-  INT32   Bw       = S->Width;
-  INT32   Bh       = S->Height;
-  INT32   LeftW    = ((Bw - M * 2 - 20) * 42) / 100;
-  INT32   RightX   = M + LeftW + 20;
-  INT32   RightW   = Bw - M - RightX;
-  UINT32  Modified = AuroraBiosCountModified (S);
-  INT32   Y;
-  INT32   I;
-  char    Tmp[64];
-
-  // Left Summary Card
-  DrawChamferedCard (Buf, Bw, Bh, M, BodyY, LeftW, BodyH, COL_CARD_BG, COL_BORDER, Modified > 0 ? COL_AMBER : COL_GREEN);
-  DrawText (Buf, Bw, Bh, M + 16, BodyY + 14, "CONFIGURATION SUMMARY", Modified > 0 ? COL_AMBER : COL_GREEN, 1, TRUE);
-  FillRect (Buf, Bw, Bh, M + 16, BodyY + 36, LeftW - 32, 1, COL_BORDER);
-
-  Y = BodyY + 56;
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), Modified, 1); StrCatA (Tmp, sizeof (Tmp), " setting(s) changed");
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, LeftW - 36, "UNSAVED CHANGES", Tmp, Modified > 0 ? COL_AMBER : COL_GREEN); Y += 38;
-
-  DrawKeyValue (
-    Buf, Bw, Bh, M + 18, Y, LeftW - 36, "PROFILE",
-    (S->Config.PerformanceProfile == AURORA_PROFILE_PERFORMANCE) ? "PERFORMANCE" :
-    (S->Config.PerformanceProfile == AURORA_PROFILE_BALANCED) ? "BALANCED" : "QUIET",
-    COL_ACCENT
-    ); Y += 32;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Config.BootTimeoutSec, 1); StrCatA (Tmp, sizeof (Tmp), "s");
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, LeftW - 36, "BIOS TIMEOUT", Tmp, COL_TEXT_BRIGHT); Y += 32;
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, LeftW - 36, "FAST BOOT", S->Config.FastBoot ? "ON" : "OFF", COL_TEXT_BRIGHT); Y += 32;
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, LeftW - 36, "GPU LOCAL POOL", S->Config.GpuLocalPoolEnable ? "ENABLED" : "DISABLED", COL_GREEN); Y += 32;
-
-  Tmp[0] = '\0'; AppendU64 (Tmp, sizeof (Tmp), S->Config.MouseSpeed, 1); StrCatA (Tmp, sizeof (Tmp), " / 10");
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, LeftW - 36, "MOUSE SPEED", Tmp, COL_ACCENT); Y += 32;
-  DrawKeyValue (Buf, Bw, Bh, M + 18, Y, LeftW - 36, "BOOT ORDER", S->BootOrderDirty ? "MODIFIED" : "UNCHANGED", S->BootOrderDirty ? COL_AMBER : COL_TEXT);
-
-  // Right Action Grid
-  DrawChamferedCard (Buf, Bw, Bh, RightX, BodyY, RightW, BodyH, COL_CARD_BG, COL_BORDER, COL_ACCENT);
-  DrawText (Buf, Bw, Bh, RightX + 16, BodyY + 14, "SAVE, EXIT & POWER CONTROLS", COL_ACCENT, 1, TRUE);
-  FillRect (Buf, Bw, Bh, RightX + 16, BodyY + 36, RightW - 32, 1, COL_BORDER);
-
-  for (I = AURORA_TAB_COUNT; I < S->ControlCount; I++) {
-    const AURORA_UI_RECT  *R  = &S->Controls[I];
-    BOOLEAN               Hov = (S->HoveredCtrlIdx == I);
-    BOOLEAN               Foc = (S->FocusedCtrlIdx == I);
-
-    switch (R->Id) {
-      case CID_EXIT_SAVE_BOOT:
-        DrawButton (Buf, Bw, Bh, R, "SAVE & BOOT OS", "Write NVRAM + ESP & launch OS", TRUE, Hov, Foc, COL_GREEN);
-        break;
-      case CID_EXIT_SAVE_REBOOT:
-        DrawButton (Buf, Bw, Bh, R, "SAVE & REBOOT", "Commit changes & cold reset", FALSE, Hov, Foc, COL_ACCENT);
-        break;
-      case CID_EXIT_DISCARD_BOOT:
-        DrawButton (Buf, Bw, Bh, R, "DISCARD & BOOT", "Revert changes & continue boot", FALSE, Hov, Foc, COL_AMBER);
-        break;
-      case CID_EXIT_LOAD_DEFAULTS:
-        DrawButton (Buf, Bw, Bh, R, "LOAD DEFAULTS", "Reset to optimal M5 J813 profile", FALSE, Hov, Foc, COL_AMBER);
-        break;
-      case CID_EXIT_SHELL:
-        DrawButton (Buf, Bw, Bh, R, "UEFI SHELL", "Open interactive EFI Shell", FALSE, Hov, Foc, COL_ACCENT);
-        break;
-      case CID_EXIT_POWER_OFF:
-        DrawButton (Buf, Bw, Bh, R, "POWER OFF", "Shut down Apple Silicon host", FALSE, Hov, Foc, COL_RED);
-        break;
-      default:
-        break;
-    }
-  }
+  DrawTextCentered (Buf, W, H, &mAuroraFontSmall, MX, MY + MH - 36, MW, 24, COL_ORANGE_HI, "Press any key or click anywhere to close");
 }
 
 // ---------------------------------------------------------------------------
-// Full Backbuffer Render + Crisp Arrow Mouse Cursor Sprite
+// Complete Frame Renderer
 // ---------------------------------------------------------------------------
 VOID
 AuroraBiosRender (
-  AURORA_BIOS_STATE  *S,
-  UINT32             *Buf
+  AURORA_BIOS_STATE  *State,
+  UINT32             *BackBuffer
   )
 {
-  static const char  *TabLabels[AURORA_TAB_COUNT] = {
-    "[F1] DASHBOARD",
-    "[F2] BOOT MANAGER",
-    "[F3] HARDWARE & GPU",
-    "[F4] DIAGNOSTICS",
-    "[F5] SAVE & EXIT"
+  static const char  *UtilLabels[6] = {
+    "Help (F1)", "Input Info", "Load Defaults (F7)",
+    "Save & Exit (F10)", "UEFI Shell (F11)", "Boot OS (ESC)"
   };
-  INT32  Bw    = S->Width;
-  INT32  Bh    = S->Height;
-  INT32  M     = 24;
-  INT32  BodyY = 122;
-  INT32  BodyH = Bh - BodyY - 52;
+  INT32  W = State->Width;
+  INT32  H = State->Height;
   INT32  I;
-  char   ClockStr[32];
 
-  if (Buf == NULL || Bw <= 0 || Bh <= 0) {
-    return;
+  // 1. Pure obsidian-black background (1:1 Gigabyte canvas)
+  FillRect (BackBuffer, W, H, 0, 0, W, H, COL_BLACK);
+
+  // Subtle dark warm metallic header background above orange streak
+  FillGradV (BackBuffer, W, H, 0, 0, W, 50, 0x0016100Cu, COL_BLACK);
+
+  // 2. Top-left bold white AURORA wordmark
+  DrawAuroraLogo (BackBuffer, W, H, 28, 13);
+
+  // 3. Signature top horizontal molten-orange light bar
+  DrawOrangeLightBar (BackBuffer, W, H, 51, 6);
+
+  // 4. Slanted EASY MODE / ADVANCED MODE tabs (Controls[0..1])
+  for (I = 0; I < State->ControlCount; I++) {
+    const AURORA_UI_RECT  *R = &State->Controls[I];
+    if (R->Kind == AURORA_CTRL_MODE_TAB) {
+      BOOLEAN  Act = ((AURORA_BIOS_MODE)R->Param == State->Mode);
+      BOOLEAN  Hov = (I == State->HoveredCtrlIdx);
+      DrawSlantedModeTab (
+        BackBuffer, W, H, R->X, R->Y, R->W, R->H, Act, Hov,
+        (R->Param == AURORA_MODE_EASY) ? "EASY MODE" : "ADVANCED MODE"
+        );
+    } else if (R->Kind == AURORA_CTRL_UTIL_BTN) {
+      BOOLEAN  Hov = (I == State->HoveredCtrlIdx);
+      BOOLEAN  Foc = (I == State->FocusedCtrlIdx);
+      const char  *Lbl = UtilLabels[R->Param % 6u];
+      if (R->Param == 1u && State->Info.MtpKbReady) {
+        Lbl = State->Info.MtpTpReady ? "MTP: KB+TP LIVE" : "MTP: KB LIVE";
+      }
+      DrawMetallicButton (
+        BackBuffer, W, H, R->X, R->Y, R->W, R->H, Hov, Foc,
+        (R->Param == 1u && State->Info.MtpKbReady) ? COL_GREEN : ((Hov || Foc) ? COL_WHITE : COL_TEXT_PRI),
+        Lbl
+        );
+    }
   }
 
-  // Deep carbon background + subtle top header band
-  FillRect (Buf, Bw, Bh, 0, 0, Bw, Bh, COL_BG);
-  FillRect (Buf, Bw, Bh, 0, 0, Bw, 56, COL_HEADER_BG);
-  FillRect (Buf, Bw, Bh, 0, 56, Bw, 2, COL_ACCENT);
-  // Subtle gaming corner accent bar
-  FillRect (Buf, Bw, Bh, 0, 0, 6, 56, COL_ACCENT);
-
-  // Header Brand Title
-  DrawText (Buf, Bw, Bh, 22, 10, "AURORA", COL_ACCENT, 2, TRUE);
-  DrawText (Buf, Bw, Bh, 140, 10, "BIOS", COL_TEXT_BRIGHT, 2, TRUE);
-  DrawText (Buf, Bw, Bh, 224, 20, "//  APPLE M5 J813 GAMING UEFI", COL_TEXT_MUTED, 1, TRUE);
-
-  // Right-side Live Telemetry Badges in Header
-  ClockStr[0] = '\0';
-  AppendU64 (ClockStr, sizeof (ClockStr), S->Info.ClockHour, 2); StrCatA (ClockStr, sizeof (ClockStr), ":");
-  AppendU64 (ClockStr, sizeof (ClockStr), S->Info.ClockMin, 2);  StrCatA (ClockStr, sizeof (ClockStr), ":");
-  AppendU64 (ClockStr, sizeof (ClockStr), S->Info.ClockSec, 2);
-  FillRect (Buf, Bw, Bh, Bw - 116, 12, 94, 32, COL_CARD_ALT);
-  DrawRectOutline (Buf, Bw, Bh, Bw - 116, 12, 94, 32, 1, COL_BORDER);
-  DrawText (Buf, Bw, Bh, Bw - 102, 20, ClockStr, COL_ACCENT, 1, TRUE);
-
-  // Dirty changes badge if any modified
+  // Top-right clock & live status indicator
   {
-    UINT32  Mod = AuroraBiosCountModified (S);
-    if (Mod > 0) {
-      char  ModStr[32];
-      ModStr[0] = '\0'; AppendU64 (ModStr, sizeof (ModStr), Mod, 1); StrCatA (ModStr, sizeof (ModStr), " UNSAVED");
-      FillRect (Buf, Bw, Bh, Bw - 236, 12, 110, 32, COL_AMBER_DARK);
-      DrawRectOutline (Buf, Bw, Bh, Bw - 236, 12, 110, 32, 1, COL_AMBER);
-      DrawText (Buf, Bw, Bh, Bw - 224, 20, ModStr, COL_AMBER, 1, TRUE);
+    char  Clk[16];
+    char  Hh[4];
+    char  Mm[4];
+    char  Ss[4];
+    if (State->Info.ClockHour != 0u || State->Info.ClockMin != 0u || State->Info.ClockSec != 0u) {
+      BiosFmt2D (Hh, State->Info.ClockHour);
+      BiosFmt2D (Mm, State->Info.ClockMin);
+      BiosFmt2D (Ss, State->Info.ClockSec);
+    } else {
+      BiosFmt2D (Hh, (State->Info.UptimeSec / 3600u) % 24u);
+      BiosFmt2D (Mm, (State->Info.UptimeSec / 60u) % 60u);
+      BiosFmt2D (Ss, State->Info.UptimeSec % 60u);
     }
+    BiosStrCpy (Clk, sizeof (Clk), Hh);
+    BiosStrCat (Clk, sizeof (Clk), ":");
+    BiosStrCat (Clk, sizeof (Clk), Mm);
+    BiosStrCat (Clk, sizeof (Clk), ":");
+    BiosStrCat (Clk, sizeof (Clk), Ss);
+    // Live blinking heartbeat dot every second
+    FillRect (BackBuffer, W, H, W - 102, 20, 6, 6, (State->Info.UptimeSec & 1u) ? COL_ORANGE_HI : COL_ORANGE_DEEP);
+    DrawTextFace (BackBuffer, W, H, &mAuroraFontSmall, W - 90, 16, COL_TEXT_SEC, Clk);
   }
 
-  // Top Navigation Tabs
-  for (I = 0; I < AURORA_TAB_COUNT && I < S->ControlCount; I++) {
-    const AURORA_UI_RECT  *R      = &S->Controls[I];
-    BOOLEAN               Active  = ((INT32)S->ActiveTab == I);
-    BOOLEAN               Hov     = (S->HoveredCtrlIdx == I);
-    BOOLEAN               Foc     = (S->FocusedCtrlIdx == I);
-    UINT32                Bg      = Active ? COL_ACCENT_DARK : (Hov ? COL_CARD_HOVER : COL_CARD_BG);
-    UINT32                Bd      = Active ? COL_ACCENT : ((Foc || Hov) ? COL_BORDER_HI : COL_BORDER);
-    UINT32                TxtCol  = Active ? COL_TEXT_BRIGHT : (Hov ? COL_ACCENT : COL_TEXT);
-
-    FillRect (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, Bg);
-    DrawRectOutline (Buf, Bw, Bh, R->X, R->Y, R->W, R->H, (Active || Foc) ? 2 : 1, Bd);
-    if (Active) {
-      FillRect (Buf, Bw, Bh, R->X, R->Y + R->H - 3, R->W, 3, COL_ACCENT);
-    }
-    DrawTextClipped (Buf, Bw, Bh, R->X + 12, R->Y + 11, R->W - 20, TabLabels[I], TxtCol, 1, Active);
+  // 5. Render Active Mode Content
+  if (State->Mode == AURORA_MODE_EASY) {
+    RenderEasyMode (State, BackBuffer);
+  } else {
+    RenderAdvancedMode (State, BackBuffer);
   }
 
-  // Active Tab Body
-  switch (S->ActiveTab) {
-    case AURORA_TAB_DASHBOARD: RenderDashboard (S, Buf, M, BodyY, BodyH);   break;
-    case AURORA_TAB_BOOT:      RenderBootManager (S, Buf, M, BodyY, BodyH); break;
-    case AURORA_TAB_HARDWARE:  RenderHardware (S, Buf, M, BodyY, BodyH);    break;
-    case AURORA_TAB_DIAG:      RenderDiagnostics (S, Buf, M, BodyY, BodyH); break;
-    case AURORA_TAB_EXIT:      RenderSaveExit (S, Buf, M, BodyY, BodyH);    break;
-    default: break;
+  // 6. Bottom Status Bar + Signature Molten-Orange Bottom Edge Streak
+  DrawTextFace (BackBuffer, W, H, &mAuroraFontSmall, 24, H - 36, State->StatusColor, State->StatusMsg);
+  DrawTextFace (BackBuffer, W, H, &mAuroraFontSmall, W - 404, H - 36, COL_TEXT_MUTED, "F1: Help   F2: Easy/Advanced   F7: Defaults   F10: Save & Exit");
+  DrawOrangeLightBar (BackBuffer, W, H, H - 6, 6);
+
+  // 7. Optional Help Modal Overlay
+  if (State->ShowHelpModal) {
+    RenderHelpModal (State, BackBuffer);
   }
-
-  // Bottom Status / Hotkey Footer Bar
-  FillRect (Buf, Bw, Bh, 0, Bh - 38, Bw, 38, COL_FOOTER_BG);
-  FillRect (Buf, Bw, Bh, 0, Bh - 38, Bw, 1, COL_BORDER);
-  FillRect (Buf, Bw, Bh, 14, Bh - 25, 8, 12, S->StatusColor ? S->StatusColor : COL_ACCENT);
-  DrawTextClipped (Buf, Bw, Bh, 30, Bh - 27, Bw - 44, S->StatusMsg, S->StatusColor ? S->StatusColor : COL_TEXT, 1, FALSE);
-
-  S->FullRedrawNeeded = FALSE;
 }
 
+// ---------------------------------------------------------------------------
+// Crisp Pointer Arrow Sprite (White Fill, Pure Black Outline, Subtle Orange Edge)
+// ---------------------------------------------------------------------------
 VOID
 AuroraBiosDrawCursor (
-  UINT32  *Buf,
+  UINT32  *BackBuffer,
   INT32   Width,
   INT32   Height,
   INT32   MouseX,
   INT32   MouseY
   )
 {
-  // Crisp 14x20 gaming arrow cursor: 'X'=dark outline, '#'=bright white, 'C'=cyan glow core
-  static const char  *Sprite[20] = {
-    "X.............",
-    "XX............",
-    "X#X...........",
-    "X##X..........",
-    "X#C#X.........",
-    "X#CC#X........",
-    "X#CCC#X.......",
-    "X#CCCC#X......",
-    "X#CCCCC#X.....",
-    "X#CCCCCC#X....",
-    "X#CCCCCCC#X...",
-    "X#CCCCCCCC#X..",
-    "X#CCCCCXXXXX..",
-    "X#CC#CCX......",
-    "X#C#X#C#X.....",
-    "X##X.X#C#X....",
-    "XX...X#C#X....",
-    "......X##X....",
-    "......X##X....",
-    ".......XX....."
+  static const char  *Sprite[18] = {
+    "X...............",
+    "XX..............",
+    "XWX.............",
+    "XWWX............",
+    "XWWWX...........",
+    "XWWWWX..........",
+    "XWWWWWX.........",
+    "XWWWWWWX........",
+    "XWWWWWWWX.......",
+    "XWWWWWWWWX......",
+    "XWWWWWWWWWX.....",
+    "XWWWWWWXXXXX....",
+    "XWWXOWWX........",
+    "XWX.XWWX........",
+    "XX...XWWX.......",
+    "X....XWWX.......",
+    "......XX........",
+    "................"
   };
-  INT32  Py;
-  INT32  Px;
+  INT32  Sy;
+  INT32  Sx;
 
-  if (Buf == NULL) {
-    return;
-  }
-  for (Py = 0; Py < 20; Py++) {
-    INT32  Dy = MouseY + Py;
-    if (Dy < 0 || Dy >= Height) {
-      continue;
-    }
-    for (Px = 0; Px < 14; Px++) {
-      INT32  Dx = MouseX + Px;
-      char   C  = Sprite[Py][Px];
-      if (C == '.' || Dx < 0 || Dx >= Width) {
-        continue;
-      }
+  for (Sy = 0; Sy < 18; Sy++) {
+    for (Sx = 0; Sx < 16; Sx++) {
+      char  C = Sprite[Sy][Sx];
       if (C == 'X') {
-        Buf[(UINTN)Dy * (UINTN)Width + (UINTN)Dx] = 0x0002060Du;
-      } else if (C == '#') {
-        Buf[(UINTN)Dy * (UINTN)Width + (UINTN)Dx] = COL_TEXT_BRIGHT;
-      } else {
-        Buf[(UINTN)Dy * (UINTN)Width + (UINTN)Dx] = COL_ACCENT;
+        PutPx (BackBuffer, Width, Height, MouseX + Sx, MouseY + Sy, COL_BLACK);
+      } else if (C == 'W') {
+        PutPx (BackBuffer, Width, Height, MouseX + Sx, MouseY + Sy, COL_WHITE);
+      } else if (C == 'O') {
+        PutPx (BackBuffer, Width, Height, MouseX + Sx, MouseY + Sy, COL_ORANGE_HI);
       }
     }
   }

@@ -1,10 +1,11 @@
 /** @file
-  Aurora Silicon Gaming UEFI BIOS - UEFI Application Entry Point.
+  Aurora Silicon UEFI Setup - UEFI Application Entry Point.
 
-  Provides a real mouse + keyboard interactive gaming UEFI BIOS for Apple M5
+  Provides a mouse, trackpad, and keyboard interactive UEFI Setup for Apple M5
   (J813 / T8142) with zero-lag dirty-rect double-buffered GOP rendering,
-  live hardware telemetry, interactive UEFI Boot Manager, and dual-backed
-  persistent configuration (UEFI NVRAM + NVMe ESP \EFI\Aurora\bios.cfg).
+  native Apple MTP DockChannel keyboard + multitouch trackpad input, live
+  FPWM0 keyboard backlight control, interactive UEFI Boot Manager, and
+  dual-backed persistent configuration (UEFI NVRAM + NVMe ESP).
 
   Copyright (c) 2026 Aurora Silicon
   SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -20,6 +21,7 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PcdLib.h>
 #include <Library/PrintLib.h>
+#include <Library/TimerLib.h>
 #include <Library/UefiApplicationEntryPoint.h>
 #include <Library/UefiBootManagerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -35,13 +37,15 @@
 #include <Protocol/UsbIo.h>
 
 #include "AuroraBiosConfig.h"
+#include "AuroraMtpInput.h"
 
 STATIC EFI_GUID  mAuroraBiosConfigGuid = AURORA_BIOS_CONFIG_GUID_INIT;
 
 typedef struct {
   EFI_GRAPHICS_OUTPUT_PROTOCOL       *Gop;
-  UINT32                             *SceneBuf;   // Logical Width * Height (0x00RRGGBB, no cursor)
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL      *BltScratch; // Physical dirty-rect staging buffer
+  UINT32                             *SceneBuf;     // Logical Width * Height (0x00RRGGBB, no cursor)
+  UINT32                             *ScratchScene; // Pre-allocated dirty-rect scratch (no per-frame alloc)
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL      *BltScratch;   // Physical dirty-rect staging buffer
   UINTN                              BltScratchPixels;
 
   EFI_SIMPLE_POINTER_PROTOCOL        **SimplePtrs;
@@ -54,8 +58,19 @@ typedef struct {
   EFI_BOOT_MANAGER_LOAD_OPTION       *BootOptions;
   UINTN                              BootOptionCount;
 
+  AURORA_MTP_CONTEXT                 Mtp;
+  AURORA_KBL_CONTEXT                 Kbl;
   AURORA_BIOS_STATE                  State;
 } AURORA_BIOS_HOST;
+
+STATIC
+UINT32
+BiosNowMs (
+  VOID
+  )
+{
+  return (UINT32)(GetTimeInNanoSecond (GetPerformanceCounter ()) / 1000000ULL);
+}
 
 // ---------------------------------------------------------------------------
 // ASCII Conversion Helper
@@ -93,10 +108,10 @@ LoadConfigFromEsp (
   OUT BOOLEAN             *EspWritable
   )
 {
-  EFI_STATUS                       Status;
-  EFI_HANDLE                       *Handles = NULL;
-  UINTN                            Count    = 0;
-  UINTN                            I;
+  EFI_STATUS  Status;
+  EFI_HANDLE  *Handles = NULL;
+  UINTN       Count    = 0;
+  UINTN       I;
 
   *EspWritable = FALSE;
   Status = gBS->LocateHandleBuffer (
@@ -125,7 +140,6 @@ LoadConfigFromEsp (
       continue;
     }
 
-    // Check whether this volume has an \EFI directory (ESP)
     {
       EFI_FILE_PROTOCOL  *EfiDir = NULL;
       if (!EFI_ERROR (Root->Open (Root, &EfiDir, L"\\EFI", EFI_FILE_MODE_READ, 0)) && EfiDir != NULL) {
@@ -193,7 +207,6 @@ SaveConfigToEsp (
     if (EFI_ERROR (Fs->OpenVolume (Fs, &Root)) || Root == NULL) {
       continue;
     }
-    // Prefer a volume that already holds \EFI
     if (EFI_ERROR (Root->Open (Root, &EfiDir, L"\\EFI", EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0)) || EfiDir == NULL) {
       Root->Close (Root);
       continue;
@@ -242,20 +255,18 @@ LoadBiosConfig (
   )
 {
   AURORA_BIOS_CONFIG  Loaded;
-  UINTN               VarSize = sizeof (Loaded);
+  UINTN               VarSize     = sizeof (Loaded);
   EFI_STATUS          Status;
   BOOLEAN             EspWritable = FALSE;
 
   AuroraBiosConfigSetDefaults (&Host->State.Config);
 
-  // 1. Prefer persistent ESP config if valid (survives emulated NVRAM resets)
   Status = LoadConfigFromEsp (&Loaded, &EspWritable);
   Host->State.Info.EspWritable = EspWritable;
   if (!EFI_ERROR (Status)) {
     CopyMem (&Host->State.Config, &Loaded, sizeof (Loaded));
     Host->State.Info.EspConfigFound = TRUE;
   } else {
-    // 2. Fallback to UEFI runtime variable
     Status = gRT->GetVariable (
                     AURORA_BIOS_CONFIG_VAR_NAME,
                     &mAuroraBiosConfigGuid,
@@ -357,7 +368,6 @@ DiscoverInputProtocols (
 
   FreeInputProtocols (Host);
 
-  // Relative Mouse (USB Mouse / UsbMouseDxe)
   if (!EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiSimplePointerProtocolGuid, NULL, &Count, &Handles)) && Count > 0) {
     Host->SimplePtrs = AllocateZeroPool (Count * sizeof (EFI_SIMPLE_POINTER_PROTOCOL *));
     if (Host->SimplePtrs != NULL) {
@@ -373,7 +383,6 @@ DiscoverInputProtocols (
     Handles = NULL;
   }
 
-  // Absolute Mouse / Pointer (UsbMouseAbsolutePointerDxe / HID Touchpad)
   Count = 0;
   if (!EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiAbsolutePointerProtocolGuid, NULL, &Count, &Handles)) && Count > 0) {
     Host->AbsPtrs = AllocateZeroPool (Count * sizeof (EFI_ABSOLUTE_POINTER_PROTOCOL *));
@@ -390,7 +399,6 @@ DiscoverInputProtocols (
     Handles = NULL;
   }
 
-  // Extended Keyboard Input (UsbKbDxe / TerminalDxe / ConSplitter)
   Count = 0;
   if (!EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiSimpleTextInputExProtocolGuid, NULL, &Count, &Handles)) && Count > 0) {
     Host->TextInEx = AllocateZeroPool (Count * sizeof (EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *));
@@ -420,7 +428,6 @@ ScanUsbHidOnDemand (
   UINTN       Count    = 0;
   UINTN       I;
 
-  // Connect already-enumerated USB I/O handles (UsbKbDxe, UsbMouseDxe, UsbMouseAbsolutePointerDxe)
   if (!EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiUsbIoProtocolGuid, NULL, &Count, &Handles)) && Count > 0) {
     for (I = 0; I < Count; I++) {
       gBS->ConnectController (Handles[I], NULL, NULL, TRUE);
@@ -453,7 +460,6 @@ PopulateTelemetryAndBootOptions (
     }
   }
 
-  // Block storage inventory
   if (!EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &Count, &Handles)) && Count > 0) {
     Host->State.Info.StorageDeviceCount = (UINT32)Count;
     for (I = 0; I < Count; I++) {
@@ -470,7 +476,6 @@ PopulateTelemetryAndBootOptions (
   }
   Host->State.Info.PrimaryDiskGiB = MaxBytes / (1024ULL * 1024ULL * 1024ULL);
 
-  // Enumerate live UEFI Boot#### options
   EfiBootManagerRefreshAllBootOption ();
   Host->BootOptions = EfiBootManagerGetLoadOptions (&Host->BootOptionCount, LoadOptionTypeBoot);
   Host->State.BootEntryCount = 0;
@@ -514,7 +519,7 @@ UpdateClock (
 }
 
 // ---------------------------------------------------------------------------
-// Dirty-Rect Double-Buffered Fast GOP Presenter
+// Dirty-Rect Double-Buffered Fast GOP Presenter (Zero Per-Frame Allocations)
 // ---------------------------------------------------------------------------
 STATIC
 VOID
@@ -522,25 +527,25 @@ PresentDirtyRect (
   IN OUT AURORA_BIOS_HOST  *Host
   )
 {
-  AURORA_BIOS_STATE  *S = &Host->State;
-  INT32              Scale = S->UiScale;
+  AURORA_BIOS_STATE  *S     = &Host->State;
+  INT32              Scale  = S->UiScale;
   INT32              X1, Y1, X2, Y2;
   INT32              Lw, Lh, Pw, Ph;
   INT32              Ly, Lx, Sy, Sx;
-  UINT32             *TmpSceneRow = NULL;
   BOOLEAN            DrawCur;
 
-  if (Host->Gop == NULL || Host->SceneBuf == NULL) {
+  if (Host->Gop == NULL || Host->SceneBuf == NULL || Host->ScratchScene == NULL) {
     return;
   }
 
   if (S->FullRedrawNeeded) {
     AuroraBiosRender (S, Host->SceneBuf);
-    S->Dirty.Valid = TRUE;
-    S->Dirty.MinX  = 0;
-    S->Dirty.MinY  = 0;
-    S->Dirty.MaxX  = S->Width;
-    S->Dirty.MaxY  = S->Height;
+    S->FullRedrawNeeded = FALSE;
+    S->Dirty.Valid      = TRUE;
+    S->Dirty.MinX       = 0;
+    S->Dirty.MinY       = 0;
+    S->Dirty.MaxX       = S->Width;
+    S->Dirty.MaxY       = S->Height;
   }
 
   if (!S->Dirty.Valid) {
@@ -569,30 +574,23 @@ PresentDirtyRect (
     return;
   }
 
-  // Temporarily overlay cursor into a tiny scratch copy of the dirty rect, or
-  // stamp directly while converting SceneBuf -> GOP BLT pixels!
   DrawCur = S->MouseVisible &&
-            (S->MouseX < X2) && (S->MouseX + 14 > X1) &&
+            (S->MouseX < X2) && (S->MouseX + 18 > X1) &&
             (S->MouseY < Y2) && (S->MouseY + 20 > Y1);
-
-  TmpSceneRow = AllocatePool ((UINTN)Lw * (UINTN)Lh * sizeof (UINT32));
-  if (TmpSceneRow == NULL) {
-    return;
-  }
 
   for (Ly = 0; Ly < Lh; Ly++) {
     CopyMem (
-      TmpSceneRow + (UINTN)Ly * (UINTN)Lw,
+      Host->ScratchScene + (UINTN)Ly * (UINTN)Lw,
       Host->SceneBuf + (UINTN)(Y1 + Ly) * (UINTN)S->Width + (UINTN)X1,
       (UINTN)Lw * sizeof (UINT32)
       );
   }
   if (DrawCur) {
-    AuroraBiosDrawCursor (TmpSceneRow, Lw, Lh, S->MouseX - X1, S->MouseY - Y1);
+    AuroraBiosDrawCursor (Host->ScratchScene, Lw, Lh, S->MouseX - X1, S->MouseY - Y1);
   }
 
   for (Ly = 0; Ly < Lh; Ly++) {
-    CONST UINT32  *SrcRow = TmpSceneRow + (UINTN)Ly * (UINTN)Lw;
+    CONST UINT32  *SrcRow = Host->ScratchScene + (UINTN)Ly * (UINTN)Lw;
     for (Sy = 0; Sy < Scale; Sy++) {
       EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *DstRow =
         Host->BltScratch + (UINTN)(Ly * Scale + Sy) * (UINTN)Pw;
@@ -610,8 +608,6 @@ PresentDirtyRect (
     }
   }
 
-  FreePool (TmpSceneRow);
-
   Host->Gop->Blt (
                Host->Gop,
                Host->BltScratch,
@@ -627,7 +623,7 @@ PresentDirtyRect (
 }
 
 // ---------------------------------------------------------------------------
-// Input Polling (Keyboard + SimplePointer + AbsolutePointer)
+// Input Polling (Native Apple MTP DockChannel + UEFI ConIn / Pointer)
 // ---------------------------------------------------------------------------
 STATIC
 AURORA_BIOS_KEY
@@ -647,8 +643,10 @@ TranslateInputKey (
     case SCAN_F3:    return AURORA_KEY_F3;
     case SCAN_F4:    return AURORA_KEY_F4;
     case SCAN_F5:    return AURORA_KEY_F5;
+    case SCAN_F7:    return AURORA_KEY_F7;
     case SCAN_F9:    return AURORA_KEY_F9;
     case SCAN_F10:   return AURORA_KEY_F10;
+    case SCAN_F11:   return AURORA_KEY_F11;
     default: break;
   }
 
@@ -685,51 +683,25 @@ HandleRawKey (
   IN UINT32                KeyShiftState
   )
 {
-  // Allow WASD cursor motion and C left-click for smooth cursor control even
-  // over keyboard/serial when no hardware pointer is attached.
-  switch (Key->UnicodeChar) {
-    case L'w':
-    case L'W':
-      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY - 18, FALSE);
-      return;
-    case L's':
-    case L'S':
-      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY + 18, FALSE);
-      return;
-    case L'a':
-    case L'A':
-      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX - 18, Host->State.MouseY, FALSE);
-      return;
-    case L'd':
-    case L'D':
-      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX + 18, Host->State.MouseY, FALSE);
-      return;
-    case L'c':
-    case L'C':
-      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY, TRUE);
-      AuroraBiosHandleMouseMove (&Host->State, Host->State.MouseX, Host->State.MouseY, FALSE);
-      return;
-    default:
-      break;
-  }
-
-  {
-    AURORA_BIOS_KEY  K = TranslateInputKey (Key, KeyShiftState);
-    if (K != AURORA_KEY_NONE) {
-      AuroraBiosHandleKey (&Host->State, K);
-    }
+  AURORA_BIOS_KEY  K = TranslateInputKey (Key, KeyShiftState);
+  if (K != AURORA_KEY_NONE) {
+    AuroraBiosHandleKey (&Host->State, K);
   }
 }
 
 STATIC
 VOID
 PollInputs (
-  IN OUT AURORA_BIOS_HOST  *Host
+  IN OUT AURORA_BIOS_HOST  *Host,
+  IN     UINT32            NowMs
   )
 {
   UINTN  I;
 
-  // 1. Poll Extended Keyboard Protocols
+  // 1. Poll Native Apple MTP DockChannel (Built-in MacBook Air Keyboard + Trackpad!)
+  AuroraMtpHwPoll (&Host->Mtp, NowMs, &Host->State);
+
+  // 2. Poll Extended Keyboard Protocols (USB / Serial Terminal / ConIn)
   if (Host->TextInExCount > 0) {
     for (I = 0; I < Host->TextInExCount; I++) {
       EFI_KEY_DATA  KeyData;
@@ -744,13 +716,12 @@ PollInputs (
     }
   }
 
-  // 2. Poll Relative USB Mice (EFI_SIMPLE_POINTER_PROTOCOL)
+  // 3. Poll Relative USB Mice (EFI_SIMPLE_POINTER_PROTOCOL)
   for (I = 0; I < Host->SimplePtrCount; I++) {
     EFI_SIMPLE_POINTER_STATE  St;
     if (!EFI_ERROR (Host->SimplePtrs[I]->GetState (Host->SimplePtrs[I], &St))) {
       INT32  Dx = St.RelativeMovementX;
       INT32  Dy = St.RelativeMovementY;
-      // Normalize high-DPI mouse resolution if reported
       if (Host->SimplePtrs[I]->Mode != NULL) {
         if (Host->SimplePtrs[I]->Mode->ResolutionX > 8) {
           Dx = (INT32)((INT64)Dx * 4 / (INT64)Host->SimplePtrs[I]->Mode->ResolutionX);
@@ -759,11 +730,13 @@ PollInputs (
           Dy = (INT32)((INT64)Dy * 4 / (INT64)Host->SimplePtrs[I]->Mode->ResolutionY);
         }
       }
-      AuroraBiosHandleMouseDelta (&Host->State, Dx, Dy, St.LeftButton);
+      if (Dx != 0 || Dy != 0 || St.LeftButton != Host->State.MouseLeftDown) {
+        AuroraBiosHandleMouseDelta (&Host->State, Dx, Dy, St.LeftButton);
+      }
     }
   }
 
-  // 3. Poll Absolute Pointing Devices (EFI_ABSOLUTE_POINTER_PROTOCOL)
+  // 4. Poll Absolute Pointing Devices (EFI_ABSOLUTE_POINTER_PROTOCOL)
   for (I = 0; I < Host->AbsPtrCount; I++) {
     EFI_ABSOLUTE_POINTER_STATE  St;
     EFI_ABSOLUTE_POINTER_MODE   *Mode = Host->AbsPtrs[I]->Mode;
@@ -779,7 +752,7 @@ PollInputs (
 }
 
 // ---------------------------------------------------------------------------
-// UEFI Shell & Boot Option Launchers
+// Screen Clear & UEFI Shell Launcher
 // ---------------------------------------------------------------------------
 STATIC
 VOID
@@ -837,7 +810,7 @@ LaunchInternalShell (
 }
 
 // ---------------------------------------------------------------------------
-// Main Application Entry Point
+// Main Application Entry Point (Non-Blocking 125 Hz Live Loop)
 // ---------------------------------------------------------------------------
 EFI_STATUS
 EFIAPI
@@ -848,9 +821,9 @@ AuroraBiosEntryPoint (
 {
   AURORA_BIOS_HOST  *Host;
   EFI_STATUS        Status;
-  EFI_EVENT         TickTimer = NULL;
-  BOOLEAN           Running   = TRUE;
-  UINT32            LastSec   = 0xFFFFFFFFu;
+  BOOLEAN           Running     = TRUE;
+  UINT32            StartMs;
+  UINT32            LastSecTick = 0;
 
   Host = AllocateZeroPool (sizeof (AURORA_BIOS_HOST));
   if (Host == NULL) {
@@ -859,12 +832,11 @@ AuroraBiosEntryPoint (
 
   Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Host->Gop);
   if (EFI_ERROR (Status) || Host->Gop == NULL || Host->Gop->Mode == NULL || Host->Gop->Mode->Info == NULL) {
-    Print (L"Aurora BIOS: Graphics Output Protocol not found (%r)\r\n", Status);
+    Print (L"Aurora UEFI Setup: Graphics Output Protocol not found (%r)\r\n", Status);
     FreePool (Host);
     return Status;
   }
 
-  // Disable watchdog timer while user is interactively configuring BIOS
   gBS->SetWatchdogTimer (0, 0, 0, NULL);
 
   AuroraBiosStateInit (
@@ -875,15 +847,17 @@ AuroraBiosEntryPoint (
   Host->State.Info.GopBpp =
     (Host->Gop->Mode->Info->PixelFormat == PixelBitMask) ? 30u : 32u;
 
-  Host->SceneBuf = AllocateZeroPool ((UINTN)Host->State.Width * (UINTN)Host->State.Height * sizeof (UINT32));
+  Host->SceneBuf     = AllocateZeroPool ((UINTN)Host->State.Width * (UINTN)Host->State.Height * sizeof (UINT32));
+  Host->ScratchScene = AllocatePool ((UINTN)Host->State.Width * (UINTN)Host->State.Height * sizeof (UINT32));
   Host->BltScratchPixels =
     (UINTN)(Host->State.Width * Host->State.UiScale) *
     (UINTN)(Host->State.Height * Host->State.UiScale);
   Host->BltScratch = AllocatePool (Host->BltScratchPixels * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
 
-  if (Host->SceneBuf == NULL || Host->BltScratch == NULL) {
-    if (Host->SceneBuf != NULL)   FreePool (Host->SceneBuf);
-    if (Host->BltScratch != NULL) FreePool (Host->BltScratch);
+  if (Host->SceneBuf == NULL || Host->ScratchScene == NULL || Host->BltScratch == NULL) {
+    if (Host->SceneBuf != NULL)     FreePool (Host->SceneBuf);
+    if (Host->ScratchScene != NULL) FreePool (Host->ScratchScene);
+    if (Host->BltScratch != NULL)   FreePool (Host->BltScratch);
     FreePool (Host);
     return EFI_OUT_OF_RESOURCES;
   }
@@ -891,60 +865,74 @@ AuroraBiosEntryPoint (
   LoadBiosConfig (Host);
   PopulateTelemetryAndBootOptions (Host);
   DiscoverInputProtocols (Host);
+
+  // Light up built-in MacBook Air keyboard LEDs via SoC FPWM0 immediately!
+  Host->State.Info.KblActive = AuroraKblHwInit (
+                                 &Host->Kbl,
+                                 AuroraBiosKblLevelToPwm (Host->State.Config.KbdBacklightLevel)
+                                 );
+
+  // Bring up built-in MacBook Air Keyboard + MultiTouch Trackpad over MTP DockChannel!
+  (VOID)AuroraMtpHwInit (&Host->Mtp);
+  Host->State.Info.MtpActive    = Host->Mtp.Available;
+  Host->State.Info.MtpKbReady   = Host->Mtp.Keyboard.Ready;
+  Host->State.Info.MtpTpReady   = (Host->Mtp.MultiTouch.Ready || Host->Mtp.MultiTouch.Enabled);
+  Host->State.Info.MtpFwLoaded  = Host->Mtp.FwLoaded;
+  Host->State.Info.MtpPacketsRx = Host->Mtp.PacketsRx;
+  AsciiStrCpyS (Host->State.Info.MtpFwSource, sizeof (Host->State.Info.MtpFwSource), Host->Mtp.FwSource);
+
   UpdateClock (Host);
   AuroraBiosBuildLayout (&Host->State);
   Host->State.FullRedrawNeeded = TRUE;
 
   DEBUG ((
     DEBUG_ERROR,
-    "[AURORA BIOS] LIVE at %ux%u (%ux HiDPI, %u bpp) | BootEntries=%u | Ptr=%u+%u KB=%u\r\n"
-    "[AURORA BIOS] Controls: 1-5/F1-F5 Tabs | Arrows/Tab Nav | WASD Move Cursor | C Click | Enter/Space | F10 Save&Boot | ESC Exit\r\n",
+    "[AURORA SETUP] LIVE at %ux%u (%ux HiDPI, %u bpp) | BootEntries=%u | MTP: KB=%u TP=%u FW=%a | KBL=%u\r\n",
     Host->State.Info.GopWidth,
     Host->State.Info.GopHeight,
     (UINT32)Host->State.UiScale,
     Host->State.Info.GopBpp,
     Host->State.BootEntryCount,
-    Host->State.Info.SimplePointerCount,
-    Host->State.Info.AbsPointerCount,
-    Host->State.Info.KeyboardCount
+    Host->State.Info.MtpKbReady ? 1u : 0u,
+    Host->State.Info.MtpTpReady ? 1u : 0u,
+    Host->State.Info.MtpFwSource,
+    Host->State.Info.KblActive ? 1u : 0u
     ));
 
   if (gST->ConOut != NULL) {
     gST->ConOut->EnableCursor (gST->ConOut, FALSE);
   }
 
-  // 16ms (~60 Hz) periodic event for smooth cursor polling & live clock
-  Status = gBS->CreateEvent (EVT_TIMER, TPL_CALLBACK, NULL, NULL, &TickTimer);
-  if (!EFI_ERROR (Status)) {
-    gBS->SetTimer (TickTimer, TimerPeriodic, 160000); // 16 ms in 100ns units
-  }
+  StartMs     = BiosNowMs ();
+  LastSecTick = 0;
 
   while (Running) {
-    PresentDirtyRect (Host);
-    PollInputs (Host);
+    UINT32  NowMs     = BiosNowMs ();
+    UINT32  ElapsedS  = (NowMs - StartMs) / 1000u;
 
+    PresentDirtyRect (Host);
+    PollInputs (Host, NowMs);
     Host->State.TickCount++;
-    if ((Host->State.TickCount % 60u) == 0) {
-      Host->State.Info.UptimeSec++;
+
+    // Guaranteed live 1-second monotonic tick (never stalls even without RTC)
+    if (ElapsedS != LastSecTick) {
+      LastSecTick = ElapsedS;
+      Host->State.Info.UptimeSec = ElapsedS;
       UpdateClock (Host);
-      if (Host->State.Info.ClockSec != LastSec) {
-        LastSec = Host->State.Info.ClockSec;
-        // Re-render scene in RAM and dirty only the small top-right clock box
-        // (and diagnostics tab if open) instead of re-blitting all 17 MiB.
-        AuroraBiosRender (&Host->State, Host->SceneBuf);
-        if (Host->State.ActiveTab == AURORA_TAB_DIAG) {
-          Host->State.Dirty.Valid = TRUE;
-          Host->State.Dirty.MinX  = 0;
-          Host->State.Dirty.MinY  = 0;
-          Host->State.Dirty.MaxX  = Host->State.Width;
-          Host->State.Dirty.MaxY  = Host->State.Height;
-        } else {
-          Host->State.Dirty.Valid = TRUE;
-          Host->State.Dirty.MinX  = Host->State.Width - 120;
-          Host->State.Dirty.MinY  = 10;
-          Host->State.Dirty.MaxX  = Host->State.Width - 16;
-          Host->State.Dirty.MaxY  = 46;
-        }
+      AuroraBiosRender (&Host->State, Host->SceneBuf);
+      // Partial dirty-rect update for clock, uptime, and live Peripherals/SysInfo readouts
+      Host->State.Dirty.Valid = TRUE;
+      Host->State.Dirty.MinX  = Host->State.Width - 115;
+      Host->State.Dirty.MinY  = 10;
+      Host->State.Dirty.MaxX  = Host->State.Width - 10;
+      Host->State.Dirty.MaxY  = 40;
+      if (Host->State.Mode == AURORA_MODE_EASY) {
+        // Also refresh Easy Mode Uptime hero readout & Peripherals packet counter
+        if (780 < Host->State.Dirty.MinX) Host->State.Dirty.MinX = 674;
+        Host->State.Dirty.MaxY = 534;
+      } else {
+        Host->State.Dirty.MinX = 0;
+        Host->State.Dirty.MaxY = Host->State.Height;
       }
     }
 
@@ -952,14 +940,19 @@ AuroraBiosEntryPoint (
       case AURORA_ACTION_NONE:
         break;
 
+      case AURORA_ACTION_SET_KBD_BACKLIGHT:
+        AuroraKblHwSetBrightness (&Host->Kbl, Host->State.PendingActionArg);
+        Host->State.PendingAction = AURORA_ACTION_NONE;
+        break;
+
       case AURORA_ACTION_SAVE_CONFIG:
         SaveBiosConfig (Host);
         AuroraBiosSetStatus (
           &Host->State,
           Host->State.Info.EspWritable
-            ? "Settings saved to NVRAM + ESP:\\EFI\\Aurora\\bios.cfg"
+            ? "Settings saved to UEFI NVRAM + ESP:\\EFI\\Aurora\\bios.cfg"
             : "Settings saved to UEFI NVRAM",
-          0x0010B981u
+          0x0022C55Eu
           );
         Host->State.PendingAction = AURORA_ACTION_NONE;
         break;
@@ -990,10 +983,10 @@ AuroraBiosEntryPoint (
         ScanUsbHidOnDemand (Host);
         AuroraBiosSetStatus (
           &Host->State,
-          (Host->SimplePtrCount + Host->AbsPtrCount) > 0
-            ? "USB HID scan complete: Mouse + Keyboard detected!"
-            : "USB HID scan complete (plug USB mouse/KB into Type-C port or use keyboard)",
-          (Host->SimplePtrCount + Host->AbsPtrCount) > 0 ? 0x0010B981u : 0x00F59E0Bu
+          (Host->State.Info.MtpKbReady || (Host->SimplePtrCount + Host->AbsPtrCount) > 0)
+            ? "Input scan complete: Built-in MTP / HID devices active"
+            : "Input scan complete",
+          0x0022C55Eu
           );
         Host->State.PendingAction = AURORA_ACTION_NONE;
         break;
@@ -1012,11 +1005,10 @@ AuroraBiosEntryPoint (
                 gST->ConOut->EnableCursor (gST->ConOut, TRUE);
               }
               EfiBootManagerBoot (&Host->BootOptions[K]);
-              // If boot returned (e.g. failed or exited), resume BIOS cleanly
               if (gST->ConOut != NULL) {
                 gST->ConOut->EnableCursor (gST->ConOut, FALSE);
               }
-              AuroraBiosSetStatus (&Host->State, "Boot option returned to Aurora BIOS", 0x00F59E0Bu);
+              AuroraBiosSetStatus (&Host->State, "Boot option returned to Aurora UEFI Setup", 0x00F59E0Bu);
               break;
             }
           }
@@ -1034,7 +1026,7 @@ AuroraBiosEntryPoint (
         if (gST->ConOut != NULL) {
           gST->ConOut->EnableCursor (gST->ConOut, FALSE);
         }
-        AuroraBiosSetStatus (&Host->State, "Returned from UEFI Shell", 0x0000E5FFu);
+        AuroraBiosSetStatus (&Host->State, "Returned from UEFI Shell", 0x00FF8533u);
         break;
 
       case AURORA_ACTION_POWER_OFF:
@@ -1049,18 +1041,11 @@ AuroraBiosEntryPoint (
     }
 
     if (Running) {
-      if (TickTimer != NULL) {
-        UINTN  EvtIdx;
-        gBS->WaitForEvent (1, &TickTimer, &EvtIdx);
-      } else {
-        gBS->Stall (16000);
-      }
+      // Non-blocking 8 ms (~125 Hz) stall: guaranteed never to hang on WaitForEvent
+      gBS->Stall (8000);
     }
   }
 
-  if (TickTimer != NULL) {
-    gBS->CloseEvent (TickTimer);
-  }
   ClearGopScreen (Host->Gop);
   if (gST->ConOut != NULL) {
     gST->ConOut->EnableCursor (gST->ConOut, TRUE);
@@ -1070,11 +1055,9 @@ AuroraBiosEntryPoint (
   }
   FreeInputProtocols (Host);
   FreePool (Host->SceneBuf);
+  FreePool (Host->ScratchScene);
   FreePool (Host->BltScratch);
   FreePool (Host);
 
-  // Return EFI_ABORTED so MsPlatform.c:PlatformBootManagerPriorityBoot does not
-  // immediately re-open BootManagerMenu a second time, and proceeds straight to
-  // normal OS boot (bootmgfw.efi).
   return EFI_ABORTED;
 }

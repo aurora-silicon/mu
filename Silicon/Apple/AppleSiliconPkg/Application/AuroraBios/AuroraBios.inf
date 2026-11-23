@@ -1,9 +1,10 @@
 ## @file
-#  Aurora Silicon Gaming UEFI BIOS Application.
+#  Aurora Silicon UEFI Setup Application.
 #
-#  Interactive Mouse + Keyboard gaming-style UEFI BIOS for Apple Silicon M5
-#  (J813) with double-buffered dirty-rect GOP compositing, live hardware
-#  telemetry, UEFI Boot Manager priority editor, and NVRAM + ESP persistence.
+#  Interactive Mouse, Trackpad, and Keyboard UEFI Setup for Apple Silicon M5
+#  (J813) with double-buffered dirty-rect GOP compositing, native Apple MTP
+#  DockChannel keyboard + multitouch trackpad driver, FPWM0 keyboard backlight
+#  control, UEFI Boot Manager priority editor, and NVRAM + ESP persistence.
 #
 #  Copyright (c) 2026 Aurora Silicon
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -14,7 +15,7 @@
   BASE_NAME                      = AuroraBios
   FILE_GUID                      = 8F3C9A10-4D2B-4E7A-91C5-3A8E7D2F01B4
   MODULE_TYPE                    = UEFI_APPLICATION
-  VERSION_STRING                 = 1.0
+  VERSION_STRING                 = 2.0
   ENTRY_POINT                    = AuroraBiosEntryPoint
 
 [Sources]
@@ -22,6 +23,10 @@
   AuroraBiosCore.c
   AuroraBiosConfig.h
   AuroraBiosFont.h
+  AuroraMtpInput.c
+  AuroraMtpInput.h
+  AuroraNtfsReader.c
+  AuroraNtfsReader.h
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -31,13 +36,17 @@
   AppleSiliconPkg/AppleSiliconPkg.dec
 
 [LibraryClasses]
+  AppleDTLib
   BaseLib
   BaseMemoryLib
+  CacheMaintenanceLib
   DebugLib
   DevicePathLib
+  IoLib
   MemoryAllocationLib
   PcdLib
   PrintLib
+  TimerLib
   UefiApplicationEntryPoint
   UefiBootManagerLib
   UefiBootServicesTableLib
