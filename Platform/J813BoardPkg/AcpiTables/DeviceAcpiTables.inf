@@ -21,6 +21,7 @@
   DBG2.aslc
   DSDT.asl
   FADT.aslc
+  KBL.asl
   MTP.asl
   SMCG.asl
   N1.asl
