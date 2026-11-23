@@ -27,6 +27,7 @@
   UefiBootServicesTableLib
   UefiDriverEntryPoint
   BaseMemoryLib
+  CpuLib
   DebugLib
   CompilerIntrinsicsLib
   CacheMaintenanceLib
@@ -39,6 +40,7 @@
   gEfiEdidDiscoveredProtocolGuid ## PRODUCES
   gEfiEdidActiveProtocolGuid ## PRODUCES
   gEfiCpuArchProtocolGuid
+  gEfiTimerArchProtocolGuid
 
 [FixedPcd]
   gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferWidth

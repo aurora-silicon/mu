@@ -2055,8 +2055,8 @@ RenderEasyMode (
 
     // Row 2 Col 2: Input Rate
     DrawTextFace (Buf, W, H, &mAuroraFontSmall, C2, R2, COL_TEXT_SEC, "Input Poll Rate");
-    DrawTextFace (Buf, W, H, &mAuroraFontHero, C2, R2 + 18, COL_WHITE, "125");
-    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C2 + MeasureText (&mAuroraFontHero, "125") + 6, R2 + 32, COL_TEXT_SEC, "Hz");
+    DrawTextFace (Buf, W, H, &mAuroraFontHero, C2, R2 + 18, COL_WHITE, "1000");
+    DrawTextFace (Buf, W, H, &mAuroraFontSmall, C2 + MeasureText (&mAuroraFontHero, "1000") + 6, R2 + 32, COL_TEXT_SEC, "Hz");
 
     // Row 2 Col 3: Live Uptime (ticks visibly every second!)
     DrawTextFace (Buf, W, H, &mAuroraFontSmall, C3, R2, COL_TEXT_SEC, "Setup Uptime");

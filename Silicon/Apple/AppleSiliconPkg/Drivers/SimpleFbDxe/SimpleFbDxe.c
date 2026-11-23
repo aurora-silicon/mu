@@ -9,6 +9,7 @@
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/CacheMaintenanceLib.h>
+#include <Library/CpuLib.h>
 #include <Library/DebugLib.h>
 #include <Library/DxeServicesTableLib.h>
 #include <Library/FrameBufferBltLib.h>
@@ -21,6 +22,7 @@
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/EdidActive.h>
 #include <Protocol/EdidDiscovered.h>
+#include <Protocol/Timer.h>
 
 /// Defines
 /*
@@ -517,6 +519,30 @@ DisplayBlt(
       Width, Height, Delta, mModeScale[This->Mode->Mode]);
 
   gBS->RestoreTPL(Tpl);
+
+  // When running under Aura's BGRA->X2R10G10B10 shadow converter, EL2 converts
+  // 160 scanlines per guest WFI (paced up to 60 FPS). Flushing large full-screen
+  // draws/clears with a brief WFI burst at TPL_APPLICATION makes early Mu boot
+  // screens snap in within ~12 ms instead of crawling at the 1 Hz tick floor.
+  if (!EFI_ERROR(Status) &&
+      Tpl == TPL_APPLICATION &&
+      GetInterruptState() &&
+      (Height * mModeScale[This->Mode->Mode]) >= 256) {
+    STATIC BOOLEAN mTimerPresent = FALSE;
+    if (!mTimerPresent) {
+      VOID *TimerProto = NULL;
+      if (!EFI_ERROR(gBS->LocateProtocol(&gEfiTimerArchProtocolGuid, NULL, &TimerProto)) &&
+          TimerProto != NULL) {
+        mTimerPresent = TRUE;
+      }
+    }
+    if (mTimerPresent) {
+      UINTN Pass;
+      for (Pass = 0; Pass < 12; Pass++) {
+        CpuSleep();
+      }
+    }
+  }
 
   return EFI_ERROR(Status) ? Status : EFI_SUCCESS;
 }

@@ -1270,6 +1270,7 @@ HandleDecodedPacket (
       // Log initial status reports + first 10 non-heartbeat touch/button frames
       if (Ctx->TpReports <= 2u ||
           (Pkt->Payload[0] != 0x60u && Pkt->Payload[0] != 0x52u && Ctx->TpTouchLogs < 10u)) {
+        UINTN  OffShift = (Pkt->PayloadLength >= 39u && ((Pkt->PayloadLength - 39u) % 30u) == 0u) ? 1u : 0u;
         if (Pkt->Payload[0] != 0x60u && Pkt->Payload[0] != 0x52u) {
           Ctx->TpTouchLogs++;
         }
@@ -1282,8 +1283,8 @@ HandleDecodedPacket (
           (Pkt->PayloadLength > 1u) ? Pkt->Payload[1] : 0u,
           (Pkt->PayloadLength > 2u) ? Pkt->Payload[2] : 0u,
           (Pkt->PayloadLength > 3u) ? Pkt->Payload[3] : 0u,
-          (Pkt->PayloadLength > 23u) ? Pkt->Payload[23] : 0u,
-          (Pkt->PayloadLength > 24u) ? Pkt->Payload[24] : 0u,
+          (Pkt->PayloadLength > 22u + OffShift) ? Pkt->Payload[22u + OffShift] : 0u,
+          (Pkt->PayloadLength > 23u + OffShift) ? Pkt->Payload[23u + OffShift] : 0u,
           Decoded ? 1u : 0u,
           (Events != NULL) ? (Events->DeltaX - PrevDx) : 0,
           (Events != NULL) ? (Events->DeltaY - PrevDy) : 0

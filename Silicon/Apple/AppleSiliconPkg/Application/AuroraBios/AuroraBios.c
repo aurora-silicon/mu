@@ -16,6 +16,7 @@
 #include <Guid/FileInfo.h>
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
+#include <Library/CpuLib.h>
 #include <Library/DebugLib.h>
 #include <Library/DevicePathLib.h>
 #include <Library/MemoryAllocationLib.h>
@@ -1049,11 +1050,12 @@ AuroraBiosEntryPoint (
 
   DEBUG ((
     DEBUG_ERROR,
-    "[AURORA SETUP] LIVE at %ux%u (%ux HiDPI, %u bpp) | BootEntries=%u | MTP: KB=%u TP=%u FW=%a | KBL=%u\r\n",
+    "[AURORA SETUP] LIVE at %ux%u (%ux HiDPI, %u bpp, IRQ=%u) | BootEntries=%u | MTP: KB=%u TP=%u FW=%a | KBL=%u\r\n",
     Host->State.Info.GopWidth,
     Host->State.Info.GopHeight,
     (UINT32)Host->State.UiScale,
     Host->State.Info.GopBpp,
+    GetInterruptState () ? 1u : 0u,
     Host->State.BootEntryCount,
     Host->State.Info.MtpKbReady ? 1u : 0u,
     Host->State.Info.MtpTpReady ? 1u : 0u,
@@ -1206,8 +1208,15 @@ AuroraBiosEntryPoint (
     }
 
     if (Running) {
-      // Non-blocking 4 ms (~250 Hz) poll for ultra-smooth low-latency trackpad motion
-      gBS->Stall (4000);
+      // Yield via architectural WFI (CpuSleep): on Aura EL2 this drives the
+      // unlocked 60 FPS BGRA->X2R10G10B10 scanout converter (160 lines/WFI)
+      // and 1 kHz MTP IOP mailbox pump while eliminating 3.8M/s CNTPCT spin
+      // traps from gBS->Stall()!
+      if (GetInterruptState ()) {
+        CpuSleep ();
+      } else {
+        gBS->Stall (4000);
+      }
     }
   }
 
