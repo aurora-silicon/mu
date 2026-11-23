@@ -228,10 +228,11 @@ typedef struct {
 
 // Complete UEFI Setup UI State
 typedef struct {
-  // Logical canvas geometry (e.g. 1280x832 on 2560x1664 HiDPI with Scale=2)
+  // Logical canvas geometry (e.g. 1280x800 below 64px MacBook Air notch on 2560x1664)
   INT32                 Width;
   INT32                 Height;
   INT32                 UiScale;
+  INT32                 TopInsetPx;  // Physical pixels kept pure black at top for camera notch
 
   AURORA_BIOS_CONFIG    Config;
   AURORA_BIOS_CONFIG    SavedConfig;

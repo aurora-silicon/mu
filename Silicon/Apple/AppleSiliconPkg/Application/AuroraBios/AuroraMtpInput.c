@@ -839,50 +839,60 @@ UefiBlkIoReadBytes (
 {
   UEFI_BLKIO_READ_CTX  *C = (UEFI_BLKIO_READ_CTX *)Context;
   UINT32               Bs;
-  UINT64               StartLba;
-  UINT64               EndLba;
-  UINTN                InBlockOff;
-  UINTN                TotalBlocks;
-  UINTN                ReadBytes;
-  EFI_STATUS           Status;
+  UINTN                MaxChunkBlocks;
+  UINT8                *Dst = (UINT8 *)OutBuffer;
+  UINTN                Done = 0;
 
   if (C == NULL || C->BlkIo == NULL || C->BlockSize == 0u || Length == 0u) {
     return FALSE;
   }
-  Bs          = C->BlockSize;
-  StartLba    = ByteOffset / Bs;
-  InBlockOff  = (UINTN)(ByteOffset % Bs);
-  EndLba      = (ByteOffset + Length - 1ULL) / Bs;
-  TotalBlocks = (UINTN)(EndLba - StartLba + 1ULL);
-  ReadBytes   = TotalBlocks * (UINTN)Bs;
-
-  if (EndLba > C->BlkIo->Media->LastBlock) {
-    return FALSE;
+  Bs = C->BlockSize;
+  MaxChunkBlocks = (65536u / Bs);
+  if (MaxChunkBlocks == 0u) {
+    MaxChunkBlocks = 1u;
   }
 
-  if (ReadBytes > C->BounceCap) {
-    if (C->BounceBuf != NULL) {
-      FreePool (C->BounceBuf);
-    }
-    C->BounceBuf = AllocatePool (ReadBytes);
-    if (C->BounceBuf == NULL) {
-      C->BounceCap = 0;
+  while (Done < Length) {
+    UINT64      CurOff      = ByteOffset + (UINT64)Done;
+    UINT64      StartLba    = CurOff / Bs;
+    UINTN       InBlockOff  = (UINTN)(CurOff % Bs);
+    UINTN       Rem         = Length - Done;
+    UINTN       NeedBlocks  = (InBlockOff + Rem + Bs - 1u) / Bs;
+    UINTN       TakeBlocks  = (NeedBlocks < MaxChunkBlocks) ? NeedBlocks : MaxChunkBlocks;
+    UINTN       ReadBytes   = TakeBlocks * (UINTN)Bs;
+    UINTN       AvailBytes  = ReadBytes - InBlockOff;
+    UINTN       CopyBytes   = (Rem < AvailBytes) ? Rem : AvailBytes;
+    EFI_STATUS  Status;
+
+    if (StartLba + (UINT64)TakeBlocks - 1ULL > C->BlkIo->Media->LastBlock) {
       return FALSE;
     }
-    C->BounceCap = ReadBytes;
-  }
 
-  Status = C->BlkIo->ReadBlocks (
-                       C->BlkIo,
-                       C->BlkIo->Media->MediaId,
-                       StartLba,
-                       ReadBytes,
-                       C->BounceBuf
-                       );
-  if (EFI_ERROR (Status)) {
-    return FALSE;
+    if (ReadBytes > C->BounceCap) {
+      if (C->BounceBuf != NULL) {
+        FreePool (C->BounceBuf);
+      }
+      C->BounceBuf = AllocatePool (ReadBytes);
+      if (C->BounceBuf == NULL) {
+        C->BounceCap = 0;
+        return FALSE;
+      }
+      C->BounceCap = ReadBytes;
+    }
+
+    Status = C->BlkIo->ReadBlocks (
+                         C->BlkIo,
+                         C->BlkIo->Media->MediaId,
+                         StartLba,
+                         ReadBytes,
+                         C->BounceBuf
+                         );
+    if (EFI_ERROR (Status)) {
+      return FALSE;
+    }
+    CopyMem (Dst + Done, C->BounceBuf + InBlockOff, CopyBytes);
+    Done += CopyBytes;
   }
-  CopyMem (OutBuffer, C->BounceBuf + InBlockOff, Length);
   return TRUE;
 }
 
@@ -954,6 +964,7 @@ LoadTrackpadFirmwareContainer (
                   &Count,
                   &Handles
                   );
+  DEBUG ((DEBUG_ERROR, "[AURORA MTP] Scanning %u BlockIo handles for NTFS tpmtfw.bin\r\n", (UINT32)Count));
   if (!EFI_ERROR (Status) && Handles != NULL) {
     UEFI_BLKIO_READ_CTX  RdCtx;
     ZeroMem (&RdCtx, sizeof (RdCtx));
@@ -962,6 +973,7 @@ LoadTrackpadFirmwareContainer (
       EFI_BLOCK_IO_PROTOCOL  *BlkIo = NULL;
       UINT64                 PartBytes;
       UINTN                  FoundLen = 0;
+      UINT8                  BootSig[16];
 
       if (EFI_ERROR (gBS->HandleProtocol (Handles[I], &gEfiBlockIoProtocolGuid, (VOID **)&BlkIo)) ||
           BlkIo == NULL || BlkIo->Media == NULL || !BlkIo->Media->MediaPresent) {
@@ -973,6 +985,18 @@ LoadTrackpadFirmwareContainer (
       PartBytes       = (BlkIo->Media->LastBlock + 1ULL) * (UINT64)BlkIo->Media->BlockSize;
       RdCtx.BlkIo     = BlkIo;
       RdCtx.BlockSize = BlkIo->Media->BlockSize;
+
+      ZeroMem (BootSig, sizeof (BootSig));
+      if (UefiBlkIoReadBytes (&RdCtx, 0ULL, sizeof (BootSig), BootSig) &&
+          BootSig[3] == 'N' && BootSig[4] == 'T' && BootSig[5] == 'F' && BootSig[6] == 'S') {
+        DEBUG ((
+          DEBUG_ERROR,
+          "[AURORA MTP] Found NTFS partition #%u (bs=%u size=%Lu MiB)\r\n",
+          (UINT32)I,
+          BlkIo->Media->BlockSize,
+          PartBytes / (1024ULL * 1024ULL)
+          ));
+      }
 
       if (AuroraNtfsReadFile (
             UefiBlkIoReadBytes,

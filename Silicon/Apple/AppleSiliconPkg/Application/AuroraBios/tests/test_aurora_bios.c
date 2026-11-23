@@ -63,7 +63,7 @@ TestConfigAndUi (
   assert (AuroraBiosConfigValidate (&Cfg));
 
   AuroraBiosStateInit (&S, 2560, 1664);
-  assert (S.Width == 1280 && S.Height == 832 && S.UiScale == 2);
+  assert (S.Width == 1280 && S.Height == 800 && S.UiScale == 2 && S.TopInsetPx == 64);
   assert (S.Mode == AURORA_MODE_EASY);
 
   S.Info.CpuCores       = 10u;

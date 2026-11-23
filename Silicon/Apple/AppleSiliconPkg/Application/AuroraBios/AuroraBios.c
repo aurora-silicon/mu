@@ -420,6 +420,27 @@ DiscoverInputProtocols (
 
 STATIC
 VOID
+ConnectStoragePartitions (
+  VOID
+  )
+{
+  EFI_HANDLE  *Handles = NULL;
+  UINTN       Count    = 0;
+  UINTN       I;
+
+  // Connect raw NVMe/disk BlockIo handles so DiskIoDxe -> PartitionDxe -> Fat.efi
+  // publish all GPT logical partitions (FAT ESP + Windows NTFS C:) before we
+  // read \EFI\Aurora\bios.cfg or \Windows\System32\drivers\tpmtfw.bin.
+  if (!EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &Count, &Handles)) && Count > 0) {
+    for (I = 0; I < Count; I++) {
+      gBS->ConnectController (Handles[I], NULL, NULL, TRUE);
+    }
+    FreePool (Handles);
+  }
+}
+
+STATIC
+VOID
 ScanUsbHidOnDemand (
   IN OUT AURORA_BIOS_HOST  *Host
   )
@@ -453,10 +474,13 @@ PopulateTelemetryAndBootOptions (
   Host->State.Info.TotalRamMiB   = PcdGet64 (PcdSystemMemorySize) / (1024ULL * 1024ULL);
   Host->State.Info.GpuPoolActive = PcdGetBool (PcdAppleJ813GpuLocalPool);
 
+  // Populate firmware version string cleanly (avoid bare "1.0")
   {
     CONST CHAR16  *FwVer = (CONST CHAR16 *)PcdGetPtr (PcdFirmwareVersionString);
-    if (FwVer != NULL && FwVer[0] != L'\0') {
+    if (FwVer != NULL && FwVer[0] != L'\0' && StrLen (FwVer) >= 6) {
       UnicodeToAsciiSafe (Host->State.Info.FirmwareVersion, sizeof (Host->State.Info.FirmwareVersion), FwVer);
+    } else {
+      AsciiStrCpyS (Host->State.Info.FirmwareVersion, sizeof (Host->State.Info.FirmwareVersion), "Aurora Mu 2026");
     }
   }
 
@@ -615,7 +639,7 @@ PresentDirtyRect (
                0,
                0,
                (UINTN)(X1 * Scale),
-               (UINTN)(Y1 * Scale),
+               (UINTN)(Y1 * Scale + S->TopInsetPx),
                (UINTN)Pw,
                (UINTN)Ph,
                (UINTN)Pw * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
@@ -862,6 +886,7 @@ AuroraBiosEntryPoint (
     return EFI_OUT_OF_RESOURCES;
   }
 
+  ConnectStoragePartitions ();
   LoadBiosConfig (Host);
   PopulateTelemetryAndBootOptions (Host);
   DiscoverInputProtocols (Host);
@@ -902,6 +927,8 @@ AuroraBiosEntryPoint (
   if (gST->ConOut != NULL) {
     gST->ConOut->EnableCursor (gST->ConOut, FALSE);
   }
+  // Clear full physical screen (including top 64px notch strip) to pure obsidian black
+  ClearGopScreen (Host->Gop);
 
   StartMs     = BiosNowMs ();
   LastSecTick = 0;

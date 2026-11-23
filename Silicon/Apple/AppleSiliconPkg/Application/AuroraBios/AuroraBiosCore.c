@@ -420,14 +420,30 @@ AuroraBiosStateInit (
 {
   BiosZero (State, sizeof (*State));
 
-  if (GopWidth >= 2000 && GopHeight >= 1200) {
-    State->UiScale = 2;
-    State->Width   = GopWidth / 2;
-    State->Height  = GopHeight / 2;
-  } else {
-    State->UiScale = 1;
-    State->Width   = (GopWidth >= 640) ? GopWidth : 1280;
-    State->Height  = (GopHeight >= 480) ? GopHeight : 800;
+  // On Apple Silicon notched Retina panels (e.g. 2560x1664 = 64px notch + 2560x1600,
+  // 3024x1964 = 74px notch + 3024x1890, 3456x2234 = 74px notch + 3456x2160), keep the
+  // notch strip pure black so the entire BIOS header sits cleanly below the notch!
+  State->TopInsetPx = 0;
+  if (GopWidth == 2560 && GopHeight == 1664) {
+    State->TopInsetPx = 64;
+  } else if ((GopWidth == 3024 && GopHeight == 1964) ||
+             (GopWidth == 3456 && GopHeight == 2234)) {
+    State->TopInsetPx = 74;
+  } else if (GopHeight > 1600 && (GopHeight % 100) != 0 && (GopHeight % 64) == 0) {
+    State->TopInsetPx = 64;
+  }
+
+  {
+    INT32  UsableH = GopHeight - State->TopInsetPx;
+    if (GopWidth >= 2000 && UsableH >= 1200) {
+      State->UiScale = 2;
+      State->Width   = GopWidth / 2;
+      State->Height  = UsableH / 2;
+    } else {
+      State->UiScale = 1;
+      State->Width   = (GopWidth >= 640) ? GopWidth : 1280;
+      State->Height  = (UsableH >= 480) ? UsableH : 800;
+    }
   }
 
   AuroraBiosConfigSetDefaults (&State->Config);
