@@ -55,6 +55,9 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer|0x10220004000
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosCpuIdentifier|"T8142"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosCpuModel|"Apple M5"
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosECoreMaxFreqMhz|2700
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosPCoreMaxFreqMhz|3516
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosBootFreqMhz|3516
 
   #
   # Serial port base address. This is uart0 from the J704 ADT.
