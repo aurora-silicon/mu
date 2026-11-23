@@ -311,7 +311,30 @@ TestMtpProtocolAndDecoders (
     assert (On == 960u && Off == 0u);
   }
 
-  printf ("  [PASS] MTP DockChannel protocol, HIDF, Keyboard, Trackpad, FPWM KBL\n");
+  // 7. UEFI -> Windows MTP Preboot Handoff record build/validate/tamper check
+  {
+    AURORA_MTP_CONTEXT          Ctx;
+    AURORA_MTP_PREBOOT_HANDOFF  Handoff;
+    memset (&Ctx, 0, sizeof (Ctx));
+    Ctx.Stm.Ready        = TRUE;
+    Ctx.Keyboard.Ready   = TRUE;
+    Ctx.MultiTouch.Ready = TRUE;
+    Ctx.TxSeq[0]         = 7u;
+    Ctx.TxSeq[1]         = 3u;
+    Ctx.CapturedInitLen  = sizeof (CapturedAck);
+    memcpy (Ctx.CapturedInit, CapturedAck, sizeof (CapturedAck));
+    assert (AuroraMtpBuildPrebootHandoff (&Ctx, &Handoff));
+    assert (Handoff.Magic == AURORA_MTP_HANDOFF_MAGIC);
+    assert (Handoff.Flags == (AURORA_MTP_HANDOFF_FLAG_STM_READY |
+                              AURORA_MTP_HANDOFF_FLAG_KB_READY |
+                              AURORA_MTP_HANDOFF_FLAG_MT_READY));
+    assert (Handoff.TxSeq[0] == 7u && Handoff.TxSeq[1] == 3u);
+    assert (AuroraMtpValidatePrebootHandoff (&Handoff));
+    Handoff.InitStream[0] ^= 0xFFu;
+    assert (!AuroraMtpValidatePrebootHandoff (&Handoff));
+  }
+
+  printf ("  [PASS] MTP DockChannel protocol, HIDF, Keyboard, Trackpad, FPWM KBL, OS Handoff\n");
 }
 
 // ---------------------------------------------------------------------------

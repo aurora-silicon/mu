@@ -806,6 +806,99 @@ AuroraKblComputeCycles (
   }
 }
 
+// ---------------------------------------------------------------------------
+// UEFI -> Windows AppleMtpHid.sys Preboot Handoff Builder & Validator
+// ---------------------------------------------------------------------------
+static UINT32
+MtpCrc32Update (
+  UINT32       Crc,
+  const UINT8  *Data,
+  UINTN        Len
+  )
+{
+  UINTN   I;
+  UINT32  Bit;
+
+  for (I = 0; I < Len; I++) {
+    Crc ^= (UINT32)Data[I];
+    for (Bit = 0; Bit < 8u; Bit++) {
+      if ((Crc & 1u) != 0u) {
+        Crc = (Crc >> 1) ^ 0xEDB88320u;
+      } else {
+        Crc >>= 1;
+      }
+    }
+  }
+  return Crc;
+}
+
+static UINT32
+MtpComputeHandoffCrc32 (
+  const AURORA_MTP_PREBOOT_HANDOFF  *H
+  )
+{
+  UINT32  Crc = 0xFFFFFFFFu;
+  Crc = MtpCrc32Update (Crc, (const UINT8 *)H, 32u);
+  Crc = MtpCrc32Update (Crc, H->InitStream, H->InitStreamLen);
+  return ~Crc;
+}
+
+BOOLEAN
+AuroraMtpBuildPrebootHandoff (
+  const AURORA_MTP_CONTEXT    *Ctx,
+  AURORA_MTP_PREBOOT_HANDOFF  *OutHandoff
+  )
+{
+  UINT32  Flags = 0;
+
+  if (Ctx == NULL || OutHandoff == NULL) {
+    return FALSE;
+  }
+  if (Ctx->CapturedInitLen == 0u || Ctx->CapturedInitLen > AURORA_MTP_HANDOFF_MAX_INIT) {
+    return FALSE;
+  }
+
+  if (Ctx->Stm.Ready) {
+    Flags |= AURORA_MTP_HANDOFF_FLAG_STM_READY;
+  }
+  if (Ctx->Keyboard.Ready) {
+    Flags |= AURORA_MTP_HANDOFF_FLAG_KB_READY;
+  }
+  if (Ctx->MultiTouch.Ready) {
+    Flags |= AURORA_MTP_HANDOFF_FLAG_MT_READY;
+  }
+
+  MTP_ZERO (OutHandoff, sizeof (*OutHandoff));
+  OutHandoff->Magic         = AURORA_MTP_HANDOFF_MAGIC;
+  OutHandoff->Version       = AURORA_MTP_HANDOFF_VERSION;
+  OutHandoff->Flags         = Flags;
+  OutHandoff->InitStreamLen = Ctx->CapturedInitLen;
+  MTP_COPY (OutHandoff->TxSeq, Ctx->TxSeq, sizeof (OutHandoff->TxSeq));
+  MTP_COPY (OutHandoff->InitStream, Ctx->CapturedInit, Ctx->CapturedInitLen);
+  OutHandoff->Reserved      = 0u;
+  OutHandoff->Crc32         = MtpComputeHandoffCrc32 (OutHandoff);
+  return TRUE;
+}
+
+BOOLEAN
+AuroraMtpValidatePrebootHandoff (
+  const AURORA_MTP_PREBOOT_HANDOFF  *Handoff
+  )
+{
+  if (Handoff == NULL) {
+    return FALSE;
+  }
+  if (Handoff->Magic != AURORA_MTP_HANDOFF_MAGIC ||
+      Handoff->Version != AURORA_MTP_HANDOFF_VERSION) {
+    return FALSE;
+  }
+  if (Handoff->InitStreamLen == 0u ||
+      Handoff->InitStreamLen > AURORA_MTP_HANDOFF_MAX_INIT) {
+    return FALSE;
+  }
+  return (Handoff->Crc32 == MtpComputeHandoffCrc32 (Handoff));
+}
+
 // ===========================================================================
 // UEFI Hardware Driver Section (AArch64 Mu Runtime)
 // ===========================================================================
@@ -1209,6 +1302,16 @@ HandleDecodedPacket (
   if (Pkt->Interface == AURORA_MTP_IFACE_COMM) {
     if (Pkt->PayloadLength >= 1u) {
       if (Pkt->Payload[0] == AURORA_MTP_EVENT_INIT) {
+        // Capture verbatim raw DockChannel INIT packet for Windows AppleMtpHid handoff
+        if (Ctx->Stream.Length > 0u &&
+            Ctx->Stream.Length <= sizeof (Ctx->CapturedInit) - Ctx->CapturedInitLen) {
+          MTP_COPY (
+            Ctx->CapturedInit + Ctx->CapturedInitLen,
+            Ctx->Stream.Buffer,
+            Ctx->Stream.Length
+            );
+          Ctx->CapturedInitLen += Ctx->Stream.Length;
+        }
         HandleInitPacket (Ctx, Pkt);
       } else if (Pkt->Payload[0] == AURORA_MTP_EVENT_READY && Pkt->PayloadLength >= 4u) {
         UINT8  ReadyIface = Pkt->Payload[1];
@@ -1751,7 +1854,37 @@ AuroraMtpHwInit (
   }
 
   Ctx->Initialized = (Ctx->Keyboard.Ready || Ctx->MultiTouch.Ready || Ctx->MultiTouch.Enabled);
+  if (Ctx->Available) {
+    AuroraMtpHwPublishHandoff (Ctx);
+  }
   return Ctx->Initialized;
+}
+
+VOID
+AuroraMtpHwPublishHandoff (
+  IN OUT AURORA_MTP_CONTEXT  *Ctx
+  )
+{
+  AURORA_MTP_PREBOOT_HANDOFF  *Dst;
+
+  if (Ctx == NULL || !Ctx->Available || Ctx->StagingVa == 0ULL ||
+      Ctx->StagingSize < AURORA_MTP_HANDOFF_OFFSET + sizeof (AURORA_MTP_PREBOOT_HANDOFF)) {
+    return;
+  }
+
+  Dst = (AURORA_MTP_PREBOOT_HANDOFF *)(UINTN)(Ctx->StagingVa + AURORA_MTP_HANDOFF_OFFSET);
+  if (AuroraMtpBuildPrebootHandoff (Ctx, Dst)) {
+    WriteBackInvalidateDataCacheRange ((VOID *)Dst, sizeof (*Dst));
+    MemoryFence ();
+    DEBUG ((
+      DEBUG_ERROR,
+      "[AURORA MTP] Published OS handoff at 0x%Lx flags=0x%x initBytes=%u crc=0x%08x\r\n",
+      Ctx->StagingVa + AURORA_MTP_HANDOFF_OFFSET,
+      Dst->Flags,
+      Dst->InitStreamLen,
+      Dst->Crc32
+      ));
+  }
 }
 
 VOID

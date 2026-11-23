@@ -1126,6 +1126,7 @@ AuroraBiosEntryPoint (
 
       case AURORA_ACTION_SAVE_AND_BOOT:
         SaveBiosConfig (Host);
+        AuroraMtpHwPublishHandoff (&Host->Mtp);
         Host->State.PendingAction = AURORA_ACTION_NONE;
         Running = FALSE;
         break;
@@ -1138,6 +1139,7 @@ AuroraBiosEntryPoint (
         break;
 
       case AURORA_ACTION_DISCARD_AND_BOOT:
+        AuroraMtpHwPublishHandoff (&Host->Mtp);
         Host->State.PendingAction = AURORA_ACTION_NONE;
         Running = FALSE;
         break;
@@ -1167,6 +1169,7 @@ AuroraBiosEntryPoint (
           for (K = 0; K < Host->BootOptionCount; K++) {
             if ((UINT16)Host->BootOptions[K].OptionNumber == OptNum) {
               SaveBiosConfig (Host);
+              AuroraMtpHwPublishHandoff (&Host->Mtp);
               ClearGopScreen (Host->Gop);
               if (gST->ConOut != NULL) {
                 gST->ConOut->EnableCursor (gST->ConOut, TRUE);
@@ -1185,6 +1188,7 @@ AuroraBiosEntryPoint (
 
       case AURORA_ACTION_LAUNCH_SHELL:
         Host->State.PendingAction = AURORA_ACTION_NONE;
+        AuroraMtpHwPublishHandoff (&Host->Mtp);
         ClearGopScreen (Host->Gop);
         if (gST->ConOut != NULL) {
           gST->ConOut->EnableCursor (gST->ConOut, TRUE);

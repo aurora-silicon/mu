@@ -64,6 +64,27 @@
 #define AURORA_J813_MTP_STAGING_DVA 0x01800000ULL
 #define AURORA_J813_MTP_STAGING_SZ  0x00100000ULL
 
+// UEFI -> Windows AppleMtpHid.sys Preboot Handoff Record (at Staging + 0xF8000,
+// 28 KiB below the 0xFF000 telemetry page and > 910 KiB above tpmtfw-j813.bin).
+#define AURORA_MTP_HANDOFF_OFFSET         0x000F8000u
+#define AURORA_MTP_HANDOFF_MAGIC          0x4850544Du  // 'MTPH'
+#define AURORA_MTP_HANDOFF_VERSION        1u
+#define AURORA_MTP_HANDOFF_MAX_INIT       4096u
+#define AURORA_MTP_HANDOFF_FLAG_STM_READY (1u << 0)
+#define AURORA_MTP_HANDOFF_FLAG_KB_READY  (1u << 1)
+#define AURORA_MTP_HANDOFF_FLAG_MT_READY  (1u << 2)
+
+typedef struct {
+  UINT32  Magic;
+  UINT32  Version;
+  UINT32  Flags;
+  UINT32  InitStreamLen;
+  UINT8   TxSeq[AURORA_DC_MAX_IFACE];
+  UINT32  Crc32;
+  UINT32  Reserved;
+  UINT8   InitStream[AURORA_MTP_HANDOFF_MAX_INIT];
+} AURORA_MTP_PREBOOT_HANDOFF;
+
 // FPWM Keyboard Backlight constants
 #define AURORA_KBL_FPWM_CTRL        0x00u
 #define AURORA_KBL_FPWM_OFF_CYCLES  0x18u
@@ -177,6 +198,10 @@ typedef struct {
   UINT32                    KbReports;
   UINT32                    TpReports;
   UINT32                    TpTouchLogs;
+
+  // Verbatim DockChannel 0xF0 INIT packets captured for OS driver handoff
+  UINT32                    CapturedInitLen;
+  UINT8                     CapturedInit[AURORA_MTP_HANDOFF_MAX_INIT];
 } AURORA_MTP_CONTEXT;
 
 typedef struct {
@@ -278,6 +303,17 @@ AuroraKblComputeCycles (
   UINT32  *OffCycles
   );
 
+BOOLEAN
+AuroraMtpBuildPrebootHandoff (
+  const AURORA_MTP_CONTEXT    *Ctx,
+  AURORA_MTP_PREBOOT_HANDOFF  *OutHandoff
+  );
+
+BOOLEAN
+AuroraMtpValidatePrebootHandoff (
+  const AURORA_MTP_PREBOOT_HANDOFF  *Handoff
+  );
+
 // ---------------------------------------------------------------------------
 // UEFI Hardware Runtime Entrypoints
 // ---------------------------------------------------------------------------
@@ -286,6 +322,11 @@ AuroraKblComputeCycles (
 BOOLEAN
 AuroraMtpHwInit (
   OUT AURORA_MTP_CONTEXT  *Ctx
+  );
+
+VOID
+AuroraMtpHwPublishHandoff (
+  IN OUT AURORA_MTP_CONTEXT  *Ctx
   );
 
 VOID
